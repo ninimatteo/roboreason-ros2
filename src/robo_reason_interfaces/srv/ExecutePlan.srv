@@ -1,0 +1,9 @@
+# Request: plan to validate and execute + initial scene state
+string plan_json
+string scene_json
+---
+# Response: execution outcome
+bool success
+string final_state_json
+string report
+string error_message

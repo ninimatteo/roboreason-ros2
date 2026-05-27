@@ -1,0 +1,13 @@
+name: roboreason_ros2
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - groq
+    - python-dotenv
+    - pydantic>=2.0
+    - treelib
+    - pandas

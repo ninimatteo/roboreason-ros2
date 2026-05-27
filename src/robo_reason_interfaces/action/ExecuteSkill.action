@@ -1,0 +1,12 @@
+# Goal: skill to execute on the robot
+string skill_name
+string skill_args_json
+---
+# Result: execution outcome
+bool success
+string result_json
+string error_message
+---
+# Feedback: progress during execution
+string status
+float32 progress

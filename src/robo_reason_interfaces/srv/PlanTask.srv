@@ -1,0 +1,8 @@
+# Request: user command + scene description
+string user_command
+string scene_json
+---
+# Response: generated discrete plan
+bool success
+string plan_json
+string error_message
