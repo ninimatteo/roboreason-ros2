@@ -31,49 +31,64 @@ You type a command
 ```
 roboreason-ros2/
 ├── src/
-│   ├── robo_reason_interfaces/      # ROS2 service + action definitions
+│   ├── robo_reason_interfaces/       # ROS2 service + action definitions (CMake)
 │   │   ├── srv/
 │   │   │   ├── PlanTask.srv
 │   │   │   └── ExecutePlan.srv
 │   │   └── action/
 │   │       └── ExecuteSkill.action
 │   │
-│   └── robo_reason_real/            # Main Python package
-│       ├── config/
-│       │   └── scene_mock.json      # Default scene (table + 4 cubes + 2 zones)
-│       ├── launch/
-│       │   ├── dry_run.launch.py          # Full system (CLI included)
-│       │   └── dry_run_services.launch.py # Services only (no CLI)
-│       └── robo_reason_real/
-│           ├── schemas.py           # Skill definitions and JSON helpers
-│           ├── world_state.py       # Software model of the scene
-│           ├── plan_validator.py    # Pre-flight plan checker
-│           ├── command_grounding.py # Validates user command against scene
-│           ├── task_interface_node.py
-│           ├── llm_planner_node.py
-│           ├── plan_manager_node.py
-│           ├── fake_skill_executor_node.py
-│           ├── ur5_skill_executor_node.py
-│           └── reasoning/
-│               ├── embodied_agent.py
-│               ├── llm_client.py
-│               ├── extraction_classes.py  # UR5Action Pydantic model
-│               ├── skills.py              # UR5 skill descriptions
-│               ├── predicates.py
-│               ├── fhp_ffhp.py
-│               ├── react.py
-│               ├── cot_sc.py
-│               ├── always_act.py
-│               ├── self_refine.py
-│               ├── tot.py
-│               └── prompts/
-│                   ├── fhp_ffhp_prompts.py
-│                   ├── react_prompts.py
-│                   ├── cot_sc_prompts.py
-│                   ├── always_act_prompts.py
-│                   ├── self_refine_prompts.py
-│                   ├── tot_prompts.py
-│                   └── predicates_prompts.py
+│   ├── robo_reason_prompts/          # All LLM prompt templates (no nodes)
+│   │   └── robo_reason_prompts/
+│   │       ├── fhp_ffhp_prompts.py
+│   │       ├── react_prompts.py
+│   │       ├── cot_sc_prompts.py
+│   │       ├── always_act_prompts.py
+│   │       ├── self_refine_prompts.py
+│   │       ├── tot_prompts.py
+│   │       └── predicates_prompts.py
+│   │
+│   ├── robo_reason_reasoning/        # LLM client + 7 reasoning methods (no nodes)
+│   │   └── robo_reason_reasoning/
+│   │       ├── embodied_agent.py     # Orchestrates reasoning method selection
+│   │       ├── llm_client.py         # GROQ API wrapper
+│   │       ├── extraction_classes.py # UR5Action Pydantic model
+│   │       ├── skills.py             # UR5 skill descriptions for LLM
+│   │       ├── predicates.py
+│   │       ├── fhp_ffhp.py
+│   │       ├── react.py
+│   │       ├── cot_sc.py
+│   │       ├── always_act.py
+│   │       ├── self_refine.py
+│   │       └── tot.py
+│   │
+│   ├── robo_reason_planner/          # LLM planner node
+│   │   └── robo_reason_planner/
+│   │       ├── llm_planner_node.py   # exposes /plan_task service
+│   │       └── command_grounding.py  # validates user command against scene
+│   │
+│   ├── robo_reason_manager/          # Plan manager node
+│   │   └── robo_reason_manager/
+│   │       ├── plan_manager_node.py  # exposes /execute_plan service
+│   │       ├── world_state.py        # software model of the scene
+│   │       ├── plan_validator.py     # pre-flight plan checker
+│   │       └── schemas.py            # skill definitions and JSON helpers
+│   │
+│   ├── robo_reason_executor/         # Skill executor nodes
+│   │   └── robo_reason_executor/
+│   │       ├── fake_skill_executor_node.py   # dry-run (Phase 0)
+│   │       └── ur5_skill_executor_node.py    # real UR5cb (Phase 1)
+│   │
+│   ├── robo_reason_task_interface/   # Terminal CLI node
+│   │   ├── config/
+│   │   │   └── scene_mock.json       # default scene (table + 4 cubes + 2 zones)
+│   │   └── robo_reason_task_interface/
+│   │       └── task_interface_node.py
+│   │
+│   └── robo_reason_bringup/          # Launch files only (no Python code)
+│       └── launch/
+│           ├── dry_run.launch.py           # full system (CLI included)
+│           └── dry_run_services.launch.py  # services only (no CLI)
 ```
 
 ---
@@ -125,10 +140,10 @@ Feedback:
 
 ## ROS2 Nodes
 
-### `task_interface_node`
+### `task_interface_node` (`robo_reason_task_interface`)
 Interactive terminal. Loads `scene_mock.json`, prompts you for a command, calls `/plan_task`, then `/execute_plan`, and prints the result. This is your entry point.
 
-### `llm_planner_node`
+### `llm_planner_node` (`robo_reason_planner`)
 Exposes the `/plan_task` service. In mock mode it returns a hardcoded plan. In LLM mode it instantiates an `EmbodiedAgent` and runs the selected reasoning method until `move_home` or `end_of_simulation`.
 
 **Parameters:**
@@ -140,13 +155,13 @@ Exposes the `/plan_task` service. In mock mode it returns a hardcoded plan. In L
 | `model_name` | string | `"groq/llama4-scout-17b"` | LLM model |
 | `temperature` | double | 0.0 | LLM temperature |
 
-### `plan_manager_node`
+### `plan_manager_node` (`robo_reason_manager`)
 Exposes the `/execute_plan` service. Validates the plan against the scene, then executes each skill one at a time via the `/execute_skill` action server. Updates world state after each step and publishes logs.
 
-### `fake_skill_executor_node`
+### `fake_skill_executor_node` (`robo_reason_executor`)
 Phase 0 dry-run. Accepts any skill, publishes fake progress (30% → 70% → 100%), waits 0.3s per step, always returns success. No robot required.
 
-### `ur5_skill_executor_node`
+### `ur5_skill_executor_node` (`robo_reason_executor`)
 Phase 1 real robot. Drop-in replacement for the fake executor. Uses `UR5CBPrimitives` to compute IK and send joint trajectories. Requires the `ur5cb_interface_node` in the workspace.
 
 ---
@@ -228,7 +243,7 @@ class UR5Action(BaseModel):
 
 ### Environment variables
 
-Create `src/robo_reason_real/.env`:
+Create `src/robo_reason_planner/.env` (loaded by `llm_planner_node`):
 ```
 GROQ_API_KEY=gsk_your_key_here
 ```
@@ -247,13 +262,16 @@ source install/setup.bash
 
 ```bash
 # Phase 0 — dry run with mock LLM (no API key needed)
-ros2 launch robo_reason_real dry_run.launch.py use_mock_llm:=true
+ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=true
 
 # Phase 0 — dry run with real LLM
-ros2 launch robo_reason_real dry_run.launch.py use_mock_llm:=false reasoning_method:=fhp
+ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=false reasoning_method:=fhp
 
 # Services only (no CLI, use ros2 service call manually)
-ros2 launch robo_reason_real dry_run_services.launch.py use_mock_llm:=true
+ros2 launch robo_reason_bringup dry_run_services.launch.py use_mock_llm:=true
+
+# Run the CLI separately (two-terminal approach)
+ros2 run robo_reason_task_interface task_interface_node
 ```
 
 ---
@@ -262,7 +280,7 @@ ros2 launch robo_reason_real dry_run_services.launch.py use_mock_llm:=true
 
 When you want to test on the real robot, swap the executor:
 
-1. Build `ur5cb_interface_node` in the same workspace
+1. Build `ur5cb_interface_node` in the same workspace (requires `ros-humble-ur`)
 2. In the launch file change `fake_skill_executor_node` → `ur5_skill_executor_node`
 
 Everything else (planner, manager, interfaces) stays identical.
@@ -270,6 +288,12 @@ Everything else (planner, manager, interfaces) stays identical.
 ---
 
 ## Design Notes
+
+### Why separate packages?
+Each package has a single responsibility. You can replace, test, or evolve any layer independently. For example:
+- Swap `robo_reason_prompts` to change how the LLM is instructed without touching any node.
+- Swap `robo_reason_executor` nodes without touching the planner or manager.
+- Develop `robo_reason_reasoning` methods in isolation without a running robot.
 
 ### Why two executors?
 Phase 0 (`fake`) lets you validate the LLM reasoning and ROS2 plumbing with zero hardware risk. Phase 1 (`ur5`) is a drop-in swap. The action server interface is identical — the planner and manager never know which is running.
