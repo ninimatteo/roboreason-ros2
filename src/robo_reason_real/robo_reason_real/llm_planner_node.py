@@ -115,6 +115,14 @@ class LLMPlannerNode(Node):
             if eos:
                 break
 
+        self.get_logger().info(
+            f'[LLMPlanner] Plan generated — task: "{user_command}", '
+            f'method: {self._reasoning_method}, model: {self._model_name}, '
+            f'steps: {len(plan_steps)}'
+        )
+        for i, step in enumerate(plan_steps):
+            self.get_logger().info(f'[LLMPlanner]   Step {i+1}: {step.get("action_name", "unknown")}')
+
         return {
             'task_summary': user_command,
             'reasoning_method': self._reasoning_method,
