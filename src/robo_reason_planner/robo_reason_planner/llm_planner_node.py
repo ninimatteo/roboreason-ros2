@@ -12,7 +12,7 @@ ROS2 parameters:
 
 import rclpy
 from rclpy.node import Node
-import json
+import json, dotenv
 
 from robo_reason_interfaces.srv import PlanTask
 from robo_reason_planner.command_grounding import check_command_grounding
@@ -28,6 +28,8 @@ class LLMPlannerNode(Node):
         self.declare_parameter('reasoning_method', 'fhp')
         self.declare_parameter('model_name', 'groq/llama4-scout-17b')
         self.declare_parameter('temperature', 0.1)
+
+        dotenv.load_dotenv()  # Load .env for API keys if present
 
         self._use_mock = self.get_parameter('use_mock_llm').value
         self._reasoning_method = self.get_parameter('reasoning_method').value
@@ -90,6 +92,8 @@ class LLMPlannerNode(Node):
             'user_request': user_command,
             'environment_map': scene_json,
         }
+        
+        self.get_logger().info(f'[LLMPlanner] Starting plan generation with \n{observation}')
 
         plan_steps = []
         max_steps = 25
@@ -114,6 +118,14 @@ class LLMPlannerNode(Node):
 
             if eos:
                 break
+
+        self.get_logger().info(
+            f'[LLMPlanner] Plan generated — task: "{user_command}", '
+            f'method: {self._reasoning_method}, model: {self._model_name}, '
+            f'steps: {len(plan_steps)}'
+        )
+        for i, step in enumerate(plan_steps):
+            self.get_logger().info(f'[LLMPlanner]   Step {i+1}: {step.get("action_name", "unknown")}')
 
         return {
             'task_summary': user_command,

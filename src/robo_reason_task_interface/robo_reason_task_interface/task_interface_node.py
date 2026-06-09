@@ -12,6 +12,8 @@ import rclpy
 from rclpy.node import Node
 from ament_index_python.packages import get_package_share_directory
 import json
+import threading
+import time
 import os
 
 from robo_reason_interfaces.srv import PlanTask, ExecutePlan
@@ -24,6 +26,12 @@ class TaskInterfaceNode(Node):
 
         self._plan_client = self.create_client(PlanTask, '/plan_task')
         self._exec_client = self.create_client(ExecutePlan, '/execute_plan')
+
+        # Prepare for interactive input in a separate thread to avoid blocking the ROS spin loop
+        self._input_thread = threading.Thread(
+            target=self._interactive_loop, daemon=True
+        )
+        self._input_thread.start()
 
         # Load scene from package share
         pkg_share = get_package_share_directory('robo_reason_task_interface')
@@ -72,7 +80,11 @@ class TaskInterfaceNode(Node):
             plan_req.scene_json = self._scene_json
 
             plan_future = self._plan_client.call_async(plan_req)
-            rclpy.spin_until_future_complete(self, plan_future)
+            # rclpy.spin_until_future_complete(self, plan_future)  - old
+            # Wait safely for the future to finish without spinning the node again
+            while not plan_future.done():
+                time.sleep(0.1)
+
             plan_resp = plan_future.result()
 
             if not plan_resp.success:
