@@ -19,6 +19,7 @@ Install:
 """
 
 import json
+import math
 import threading
 import time
 
@@ -31,6 +32,7 @@ from rclpy.node import Node
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from robo_reason_interfaces.action import ExecuteSkill
+from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
 from ur_msgs.srv import SetIO
 
@@ -81,12 +83,14 @@ class UR5SkillExecutorNode(Node):
     # Home configuration (radians)
     HOME_JOINTS = [-1.5708, -1.5708, -1.5708, -1.5708, 1.5708, 0.0]
 
-    # Fixed gripper orientation: pointing straight down (top-down grasp)
-    _GRIP_QUAT = [0.0, -0.707, 0.707, 0.0]
+    # Gripper orientation for top-down (z) approach (qw, qx, qy, qz)
+    _GRIP_QUAT_Z = [0.0, -0.707, 0.707, 0.0]
+    # For horizontal approaches the rotation is computed dynamically from the
+    # EE→object direction — no fixed quaternion needed.
 
     # TCP offset (metres) — adjust to match your tool + gripper stack
     # _TCP_OFFSET = (0.148, -0.128, 0.265)
-    _TCP_OFFSET = (0.0, 0.0, -0.16) #OnRobot Gripper
+    _TCP_OFFSET = (0.0, 0.0, 0.16) #OnRobot Gripper
 
     def __init__(self):
         super().__init__('ur5_skill_executor_node')
@@ -103,9 +107,23 @@ class UR5SkillExecutorNode(Node):
 
         self._cb_group = ReentrantCallbackGroup()
 
-        # Robot model for IK
+        # Robot model for IK and FK
         self._robot_model = rtb.models.DH.UR5()
         self._robot_model.tool = SE3(*self._TCP_OFFSET)
+
+        # Cache of current joint positions — updated by /joint_states subscriber
+        self._current_joints = None
+        self._joint_lock = threading.Lock()
+
+        # State from last 'approach' — reused by 'pick' and 'release'
+        self._last_approach_R = None      # rotation matrix
+        self._last_approach_hover = None  # hover position [x, y, z]
+        self.create_subscription(
+            JointState,
+            '/joint_states',
+            self._joint_state_cb,
+            10,
+        )
 
         # --- Action client: joint trajectory controller ---
         self._traj_client = ActionClient(
@@ -136,29 +154,101 @@ class UR5SkillExecutorNode(Node):
         )
 
     # -------------------------------------------------------------------------
+    # Joint state callback
+    # -------------------------------------------------------------------------
+
+    def _joint_state_cb(self, msg: JointState):
+        """Cache the latest joint positions keyed by UR5_JOINT_NAMES order."""
+        name_to_pos = dict(zip(msg.name, msg.position))
+        joints = [name_to_pos.get(n) for n in UR5_JOINT_NAMES]
+        if all(j is not None for j in joints):
+            with self._joint_lock:
+                self._current_joints = joints
+
+    def _get_ee_position(self):
+        """Return current EE [x, y, z] via FK, or None if joints not yet received."""
+        with self._joint_lock:
+            joints = list(self._current_joints) if self._current_joints else None
+        if joints is None:
+            return None
+        T = self._robot_model.fkine(joints)
+        return list(T.t)  # [x, y, z]
+
+    # -------------------------------------------------------------------------
     # IK helpers
     # -------------------------------------------------------------------------
 
-    def _compute_ik(self, x: float, y: float, z: float):
-        """Return joint angles for a top-down end-effector pose at [x, y, z]."""
-        qw, qx, qy, qz = self._GRIP_QUAT
-        uq = UnitQuaternion([qw, qx, qy, qz])
-        T = SE3(x, y, z) * SE3(rt2tr(uq.R, [0.0, 0.0, 0.0]))
-        sol = self._robot_model.ikine_LM(T, q0=self.HOME_JOINTS)
+    def _compute_ik(self, x: float, y: float, z: float, R=None):
+        """
+        Return joint angles for end-effector at [x, y, z] with rotation matrix R.
+        If R is None, uses the default top-down orientation (_GRIP_QUAT_Z).
+        Uses current joint positions as IK seed for faster convergence.
+        """
+        if R is None:
+            uq = UnitQuaternion(self._GRIP_QUAT_Z)
+            R = uq.R
+        T = SE3(rt2tr(R, [x, y, z]))
+        with self._joint_lock:
+            q0 = list(self._current_joints) if self._current_joints else self.HOME_JOINTS
+        sol = self._robot_model.ikine_LM(T, q0=q0)
         if sol.success:
             return list(sol.q)
         self.get_logger().warn(f'[UR5Executor] IK failed for [{x:.3f}, {y:.3f}, {z:.3f}]')
         return None
 
-    def _approach_pose(self, target: list, offset: float, direction: str) -> list:
-        """Return hover position above/beside the target."""
-        x, y, z = target
-        if direction == 'x':
-            return [x - offset, y, z]
-        elif direction == 'y':
-            return [x, y - offset, z]
-        else:  # default: z
-            return [x, y, z + offset]
+    def _horizontal_approach(self, target: list, offset: float):
+        """
+        Compute hover position and rotation matrix for a horizontal (side) approach.
+
+        Strategy:
+          1. Get current EE position via FK.
+          2. Project EE→object direction onto the horizontal plane.
+          3. Hover = object_center + offset * unit_vec_toward_EE
+             (approach from the side closest to the robot).
+          4. Rotation: gripper horizontal, tool-z pointing from hover toward object,
+             tool-x pointing down (fingers hang vertically for a stable side grasp).
+
+        Returns (hover_pos, R) or raises RuntimeError if FK unavailable.
+        """
+        obj_x, obj_y, obj_z = target
+
+        ee_pos = self._get_ee_position()
+        if ee_pos is None:
+            raise RuntimeError(
+                'Joint states not yet received — cannot compute horizontal approach direction.'
+            )
+
+        # Horizontal unit vector from object toward EE (best approach side)
+        dx = ee_pos[0] - obj_x
+        dy = ee_pos[1] - obj_y
+        dist_xy = math.sqrt(dx ** 2 + dy ** 2)
+        if dist_xy < 1e-3:
+            self.get_logger().warn(
+                '[UR5Executor] EE is directly above object — defaulting approach to +x.'
+            )
+            dx, dy = 1.0, 0.0
+        else:
+            dx /= dist_xy
+            dy /= dist_xy
+
+        # Hover position: approach from the EE side
+        hover = [obj_x + dx * offset, obj_y + dy * offset, obj_z]
+
+        # Approach direction: from hover toward object = [-dx, -dy, 0]
+        theta = math.atan2(-dy, -dx)  # angle that tool-z must point
+
+        # Rotation matrix for horizontal gripper pointing at angle theta:
+        #   R = Rz(theta) * Ry(pi/2)
+        #   → tool-z = [cos θ, sin θ, 0]  (toward object)
+        #   → tool-x = [0, 0, -1]          (fingers point down)
+        #   → tool-y = [-sin θ, cos θ, 0]  (horizontal, perpendicular)
+        R = (SE3.Rz(theta) * SE3.Ry(math.pi / 2)).R
+
+        self.get_logger().info(
+            f'[UR5Executor] Horizontal approach: angle={math.degrees(theta):.1f}° '
+            f'hover={[round(v, 3) for v in hover]}'
+        )
+        return hover, R
 
     # -------------------------------------------------------------------------
     # Joint trajectory
@@ -194,6 +284,114 @@ class UR5SkillExecutorNode(Node):
         )
         if not done.wait(timeout=duration_sec + 10.0):
             self.get_logger().error('[UR5Executor] Trajectory goal timed out.')
+            return False
+
+        return result_holder[0] is not None
+
+    def _move_linear(self, target_xyz: list, R=None,
+                     duration_sec: float = 2.0, steps: int = 40) -> bool:
+        """
+        Move the EE in a straight Cartesian line to target_xyz, maintaining
+        orientation R throughout.
+
+        Generates `steps` intermediate poses along the line from current EE
+        position to target, solves IK for each using the previous solution as
+        seed (keeping wrist configuration consistent), and sends all waypoints
+        as a single trajectory.
+        """
+        if not self._traj_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error('[UR5Executor] Trajectory action server not available.')
+            return False
+
+        # Current EE position as start
+        start_xyz = self._get_ee_position()
+        if start_xyz is None:
+            self.get_logger().error('[UR5Executor] No joint states — cannot compute linear path.')
+            return False
+
+        if R is None:
+            uq = UnitQuaternion(self._GRIP_QUAT_Z)
+            R = uq.R
+
+        # Seed from current joints
+        with self._joint_lock:
+            q_seed = list(self._current_joints) if self._current_joints else self.HOME_JOINTS
+
+        # --- Phase 1: solve IK for all waypoints ---
+        q_solutions = []
+        for i in range(1, steps + 1):
+            alpha = i / steps
+            x = start_xyz[0] + alpha * (target_xyz[0] - start_xyz[0])
+            y = start_xyz[1] + alpha * (target_xyz[1] - start_xyz[1])
+            z = start_xyz[2] + alpha * (target_xyz[2] - start_xyz[2])
+
+            T = SE3(rt2tr(R, [x, y, z]))
+            sol = self._robot_model.ikine_LM(T, q0=q_seed)
+            if not sol.success:
+                self.get_logger().warn(
+                    f'[UR5Executor] Linear IK failed at step {i}/{steps} '
+                    f'[{x:.3f},{y:.3f},{z:.3f}] — skipping waypoint.'
+                )
+                continue
+            q_seed = list(sol.q)
+            q_solutions.append(q_seed)
+
+        if not q_solutions:
+            self.get_logger().error('[UR5Executor] Linear path: no valid IK solutions found.')
+            return False
+
+        # --- Phase 2: assign timestamps and finite-difference velocities ---
+        # Uniform time spacing.
+        n = len(q_solutions)
+        timestamps = [duration_sec * (idx + 1) / n for idx in range(n)]
+
+        # Finite difference velocities:
+        #   v[0]   = 0  (start from rest)
+        #   v[i]   = (q[i+1] - q[i-1]) / (t[i+1] - t[i-1])  for 0 < i < n-1
+        #   v[n-1] = 0  (stop at end)
+        # This gives the spline controller a smooth velocity profile through all
+        # waypoints without forcing a stop at each one.
+        velocities = []
+        for idx in range(n):
+            if idx == 0 or idx == n - 1:
+                velocities.append([0.0] * 6)
+            else:
+                dt = timestamps[idx + 1] - timestamps[idx - 1]
+                v = [(q_solutions[idx + 1][j] - q_solutions[idx - 1][j]) / dt
+                     for j in range(6)]
+                velocities.append(v)
+
+        points = []
+        for idx, (q, v, t) in enumerate(zip(q_solutions, velocities, timestamps)):
+            secs = int(t)
+            nsecs = int((t - secs) * 1e9)
+            pt = JointTrajectoryPoint()
+            pt.positions = q
+            pt.velocities = v
+            pt.time_from_start = Duration(sec=secs, nanosec=nsecs)
+            points.append(pt)
+
+        if not points:
+            self.get_logger().error('[UR5Executor] Linear path: no valid points after timing.')
+            return False
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory.joint_names = UR5_JOINT_NAMES
+        goal.trajectory.points = points
+
+        done = threading.Event()
+        result_holder = [None]
+
+        def _done_cb(future):
+            result_holder[0] = future.result()
+            done.set()
+
+        future = self._traj_client.send_goal_async(goal)
+        future.add_done_callback(
+            lambda f: f.result().get_result_async().add_done_callback(_done_cb)
+        )
+        if not done.wait(timeout=duration_sec + 10.0):
+            self.get_logger().error('[UR5Executor] Linear trajectory timed out.')
             return False
 
         return result_holder[0] is not None
@@ -261,13 +459,25 @@ class UR5SkillExecutorNode(Node):
     def _dispatch_skill(self, skill_name: str, args: dict, goal_handle, feedback):
         if skill_name == 'approach':
             target = args['target_position']
-            offset = args.get('offset', 0.1)
+            offset = args.get('offset', 0.05)
             direction = args.get('approach_direction', 'z')
-            hover = self._approach_pose(target, offset, direction)
-            joints = self._compute_ik(*hover)
+
+            if direction == 'z':
+                hover = [target[0], target[1], target[2] + offset]
+                R = None  # _compute_ik will use default _GRIP_QUAT_Z
+                joints = self._compute_ik(*hover)
+            else:
+                hover, R = self._horizontal_approach(target, offset)
+                joints = self._compute_ik(*hover, R=R)
+
             if joints is None:
-                raise ValueError(f'IK failed for approach position {hover}')
-            feedback.status = 'Moving to approach position'
+                raise ValueError(f'IK failed for approach position (dir={direction})')
+
+            # Store approach state so pick/release can maintain orientation and retract
+            self._last_approach_R = R
+            self._last_approach_hover = hover
+
+            feedback.status = f'Moving to approach position (dir={direction})'
             feedback.progress = 0.3
             goal_handle.publish_feedback(feedback)
             if not self._move_to_joints(joints, duration_sec=3.0):
@@ -276,15 +486,13 @@ class UR5SkillExecutorNode(Node):
         elif skill_name == 'pick':
             target = args['target_position']
             force = float(args.get('force', 40.0))
-            joints = self._compute_ik(*target)
-            if joints is None:
-                raise ValueError(f'IK failed for pick position {target}')
-            feedback.status = 'Moving to grasp position'
+            feedback.status = 'Linear move to grasp position'
             feedback.progress = 0.3
             goal_handle.publish_feedback(feedback)
-            if not self._move_to_joints(joints, duration_sec=3.0):
-                raise RuntimeError('move_to failed during pick')
-            feedback.status = f'Closing gripper (force_threshold={force}N)'
+            # Linear Cartesian motion from hover to grasp — maintains orientation
+            if not self._move_linear(target, R=self._last_approach_R, duration_sec=3.0):
+                raise RuntimeError('linear move failed during pick')
+            feedback.status = 'Closing gripper'
             feedback.progress = 0.7
             goal_handle.publish_feedback(feedback)
             if not self._gripper_close(force=force):
@@ -293,19 +501,38 @@ class UR5SkillExecutorNode(Node):
         elif skill_name == 'release':
             release_pos = args['release_position']
             open_force = float(args.get('open_force', 20.0))
-            joints = self._compute_ik(*release_pos)
-            if joints is None:
-                raise ValueError(f'IK failed for release position {release_pos}')
-            feedback.status = 'Moving to release position'
-            feedback.progress = 0.3
+
+            # 1. Linear move down to release position (mirrors pick)
+            feedback.status = 'Linear move to release position'
+            feedback.progress = 0.2
             goal_handle.publish_feedback(feedback)
-            if not self._move_to_joints(joints, duration_sec=3.0):
-                raise RuntimeError('move_to failed during release')
+            if not self._move_linear(release_pos, R=self._last_approach_R, duration_sec=3.0):
+                raise RuntimeError('linear move failed during release')
+
+            # 2. Open gripper
             feedback.status = 'Opening gripper'
-            feedback.progress = 0.7
+            feedback.progress = 0.5
             goal_handle.publish_feedback(feedback)
             if not self._gripper_open(force=open_force):
                 raise RuntimeError('gripper open failed')
+
+            # 3. Retract linearly back to the approach hover position
+            retract_target = self._last_approach_hover
+            if retract_target is None:
+                self.get_logger().warn(
+                    '[UR5Executor] release: no hover position stored — '
+                    'call approach before release so the node knows where to retract.'
+                )
+            else:
+                feedback.status = 'Retracting to hover position'
+                feedback.progress = 0.7
+                goal_handle.publish_feedback(feedback)
+                if not self._move_linear(retract_target, R=self._last_approach_R, duration_sec=3.0):
+                    raise RuntimeError('linear retract failed during release')
+
+            # Clear approach state — next sequence starts fresh
+            self._last_approach_R = None
+            self._last_approach_hover = None
 
         elif skill_name == 'move_home':
             feedback.status = 'Moving to home'
