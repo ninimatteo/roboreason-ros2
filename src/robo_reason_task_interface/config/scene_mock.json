@@ -25,34 +25,34 @@
     }
   },
   "objects": {
-    "red_cube": {
+    "black_indented_cube": {
       "type": "cube",
-      "color": "red",
-      "position": [0.45, -0.15, 0.025],
-      "size": [0.05, 0.05, 0.05],
+      "color": "black",
+      "position": [-0.2, -0.5, 0.02],
+      "size": [0.005, 0.005, 0.0045],
       "state": "on_table",
       "graspable": true
     },
-    "blue_cube": {
-      "type": "cube",
-      "color": "blue",
-      "position": [0.55, 0.12, 0.025],
-      "size": [0.05, 0.05, 0.05],
+    "black_exagon": {
+      "type": "exagon",
+      "color": "black",
+      "position": [-0.3, -0.6, 0.02],
+      "size": [0.005, 0.005, 0.0045],
       "state": "on_table",
       "graspable": true
     },
-    "green_cube": {
+    "black_extruded_cube": {
       "type": "cube",
-      "color": "green",
-      "position": [0.38, 0.08, 0.025],
-      "size": [0.05, 0.05, 0.05],
+      "color": "black",
+      "position": [0.0, -0.4, 0.05],
+      "size": [0.005, 0.005, 0.012],
       "state": "on_table",
       "graspable": true
     },
-    "yellow_cube": {
-      "type": "cube",
-      "color": "yellow",
-      "position": [0.62, -0.08, 0.025],
+    "black_cylinder": {
+      "type": "cylinder",
+      "color": "black",
+      "position": [-0.1, -0.7, 0.02],
       "size": [0.05, 0.05, 0.05],
       "state": "on_table",
       "graspable": true
@@ -63,14 +63,14 @@
       "type": "zone",
       "color": "white",
       "label": "A",
-      "position": [0.72, -0.22, 0.0],
+      "position": [0.55, -0.20, 0.05],
       "size": [0.15, 0.15, 0.01]
     },
     "zone_b": {
       "type": "zone",
       "color": "white",
       "label": "B",
-      "position": [0.72, 0.22, 0.0],
+      "position": [0.55, -0.50, 0.05],
       "size": [0.15, 0.15, 0.01]
     }
   }
