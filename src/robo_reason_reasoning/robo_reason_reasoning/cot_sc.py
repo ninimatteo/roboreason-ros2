@@ -2,23 +2,22 @@
 import json
 from collections import Counter, namedtuple
 
-from robo_reason_reasoning.reasoning_method import LLMReasoningMethod
+from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-from robo_reason_prompts.cot_sc_prompts import plan_prompt
-from robo_reason_reasoning.llm_client import LLMClient
+# pyrefly: ignore [missing-import]
+from robo_reason_prompts.cot_sc_prompts import CotScPrompts
 
 
-class CoTSC(LLMReasoningMethod):
+class CoTSC(ReasoningMethod):
     """
     CoT-SC: generates K independent plans, selects the most consistent one.
     Returns one action per call from the selected plan.
     """
 
-    def __init__(self, skills: str = '', action_placeholder: str = '',
-                 verbose: bool = False, llm_parameters: dict = {},
-                 k: int = 5, **kwargs):
+    def __init__(self, client_parameters: dict = None, client_type: str = 'llm', skills: str = '', action_placeholder: str = '',
+                 verbose: bool = False, k: int = 5, **kwargs):
+        super().__init__(client_parameters=client_parameters, client_type=client_type, **kwargs)
         assert k >= 2, "K must be >= 2."
-        self.llm = LLMClient(**llm_parameters)
         self.method_name = 'cot-sc'
         self.k = k
         self.user_request = ''
@@ -33,21 +32,24 @@ class CoTSC(LLMReasoningMethod):
         self._verbose_print(f"Setting user request: {user_request}")
         self.user_request = user_request
 
-    def get_llm_usage_metrics(self):
-        return self.llm.usage_metrics
+    def generate_plan(self, environment_map: str, user_request: str, image=None) -> list:
+        plan_prompt = CotScPrompts.get_prompts(use_vlm=self.use_vlm)
+        
+        format_args = {
+            'skills': self.skills,
+            'user_request': user_request,
+            'action_placeholder1': self.action_placeholder,
+            'action_placeholder2': self.action_placeholder,
+        }
+        if not self.use_vlm:
+            format_args['environment_map'] = environment_map
 
-    def generate_plan(self, environment_map: str, user_request: str) -> list:
-        msg = plan_prompt.format(
-            environment_map=environment_map,
-            skills=self.skills,
-            user_request=user_request,
-            action_placeholder1=self.action_placeholder,
-            action_placeholder2=self.action_placeholder,
-        )
-        resp = self.llm(
+        msg = plan_prompt.format(**format_args)
+        resp = self._call_client(
             system_message="You are a planning agent. Generate plans based on the user's request and environment.",
             user_message=msg,
             force_json=True,
+            image=image
         )
         try:
             return json.loads(resp).get('plan', [])
@@ -72,14 +74,14 @@ class CoTSC(LLMReasoningMethod):
 
     def __call__(self, force_replan: bool = False, **kwargs):
         assert 'user_request' in kwargs
-        assert 'environment_map' in kwargs
 
-        env_map = kwargs['environment_map']
+        env_map = kwargs.get('environment_map', '')
         user_req = kwargs['user_request']
+        image = kwargs.get('image', None)
 
         if (user_req != self.user_request and not self.task_plan) or force_replan:
             self.set_user_request(user_req)
-            plans = [self.generate_plan(env_map, user_req) for _ in range(self.k)]
+            plans = [self.generate_plan(env_map, user_req, image=image) for _ in range(self.k)]
             most_common = self.aggregate_plans(plans)
             self.task_plan = self.select_consistent_plan(plans, most_common)
             self._verbose_print('CoT-SC trace', {

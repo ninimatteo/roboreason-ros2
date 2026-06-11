@@ -6,8 +6,15 @@ Changes from original:
 - Action type: UR5Action (replaces Action/SymbolicAction)
 - No symbolic mode (always coordinate-based for real robot)
 - Import paths use robo_reason_real.reasoning.*
+- Supports both LLM and VLM foundation clients.
 """
+from numpy import test
+from inspect import trace
 from collections import namedtuple
+import os
+import traceback
+import dotenv
+
 
 from robo_reason_reasoning.fhp_ffhp import FHP
 from robo_reason_reasoning.react import React
@@ -19,35 +26,40 @@ from robo_reason_reasoning.predicates import Predicates
 from robo_reason_reasoning.skills import UR5Skills
 from robo_reason_reasoning.extraction_classes import UR5Action
 
+dotenv.load_dotenv()
 
 class EmbodiedAgent:
     """
-    Orchestrates LLM-based reasoning for UR5 manipulation tasks.
+    Orchestrates Foundation Model-based reasoning for robotic manipulation tasks.
 
     Supported reasoning modes:
       fhp, ffhp, react, cot_sc, tot, always_act, self_refine
     """
 
-    def __init__(self, reasoning_mode: str, llm_parameters: dict,
+    def __init__(self, reasoning_mode: str, client_parameters: dict, client_type: str = 'llm',
                  verbose: bool = False, **kwargs):
 
         self.verbose = verbose
         self.reasoning_mode = reasoning_mode.lower()
         self.instance_name = kwargs.get("instance_name", "EmbodiedAgent")
+        self.client_type = client_type.lower()
 
         self.predicates = Predicates.get_all_predicates()
-        self.skills, self.action_placeholder = UR5Skills.get_embodiment_data()
+        self.skills, self.action_placeholder = UR5Skills.get_embodiment_data(
+            use_vlm=(self.client_type == 'vlm')
+        )
         self.eos_placeholder = UR5Skills.get_eos_example()
 
-        self.llm_parameters = llm_parameters
-        assert 'model_name' in llm_parameters, "llm_parameters must include 'model_name'."
+        self.client_parameters = client_parameters
+        assert 'model_name' in client_parameters, "client_parameters must include 'model_name'."
 
         self.step_counter = 0
         self._output = namedtuple('AgentOutput', ['action', 'end_of_simulation'])
 
         mode = self.reasoning_mode
         common = dict(
-            llm_parameters=llm_parameters,
+            client_parameters=client_parameters,
+            client_type=client_type,
             skills=self.skills,
             action_placeholder=self.action_placeholder,
             verbose=verbose,
@@ -93,10 +105,12 @@ class EmbodiedAgent:
     # -------------------------------------------------------------------------
 
     def get_used_tokens(self) -> int:
-        return self.reasoning_method.llm.get_total_used_tokens()
+        if hasattr(self.reasoning_method.client, 'get_total_used_tokens'):
+            return self.reasoning_method.client.get_total_used_tokens()
+        return 0
 
     def get_detailed_token_usage(self):
-        return self.reasoning_method.llm.usage_metrics
+        return self.reasoning_method.get_llm_usage_metrics()
 
     def get_current_step(self) -> int:
         return self.reasoning_method.step_counter
@@ -112,12 +126,15 @@ class EmbodiedAgent:
 
         observation must contain:
           - 'user_request': str
-          - 'environment_map': str (scene JSON or description)
+          - 'environment_map': str (scene JSON or description) OR 'image': local image path (if using VLM)
 
         Returns a namedtuple(action: UR5Action, end_of_simulation: bool).
         """
-        assert all(k in observation for k in ['user_request', 'environment_map']), \
-            "Observation must include 'user_request' and 'environment_map'."
+        assert 'user_request' in observation, "Observation must include 'user_request'."
+        if self.client_type != 'vlm':
+            assert 'environment_map' in observation, "Observation must include 'environment_map' when not using a VLM."
+        else:
+            assert 'image' in observation or 'environment_map' in observation, "Observation must include 'image' or 'environment_map' when using a VLM."
 
         print(f"\n({self.instance_name}) Thinking...\n")
 
@@ -131,3 +148,82 @@ class EmbodiedAgent:
             f"Expected UR5Action, got {type(action)}."
 
         return self._output(action=action, end_of_simulation=end_of_simulation)
+
+
+if __name__ == "__main__":
+    import os
+    import json
+    
+    test_dir = os.path.join(os.path.dirname(__file__), 'test')
+    user_request = "Pick up one object base on your preference and place it at the center of the table"
+    
+    # ---------------------------------------------------------
+    # LLM Test
+    # ---------------------------------------------------------
+    print("Testing LLM EmbodiedAgent Execution")
+    llm_params = {
+        'model_name': 'groq/llama4-scout-17b',
+        'temperature': 0.0,
+
+    }
+    llm_agent = EmbodiedAgent(
+        reasoning_mode='fhp',
+        client_parameters=llm_params,
+        client_type='llm',
+        verbose=True
+    )
+    print("LLM Agent created successfully.")
+    
+    text_path = os.path.join(test_dir, 'scene_mock.json')
+    if os.path.exists(text_path):
+        with open(text_path, 'r') as f:
+            env_map = json.dumps(json.load(f))
+            
+        observation_llm = {
+            'user_request': user_request,
+            'environment_map': env_map
+        }
+        
+        print(f"\n--- Running LLM Agent Step ---")
+        try:
+            output = llm_agent.step(observation_llm)
+            print(f"LLM output action: \n{output.action}")
+            print(f"LLM full plan generated: \n{llm_agent.get_current_plan()}")
+        except Exception as e:
+            print(f"LLM execution failed: {traceback.print_exc()}")
+    else:
+        print(f"\nSkipping LLM execution: '{text_path}' not found. Please add a valid test_env.json inside test/.")
+
+    # ---------------------------------------------------------
+    # VLM Test
+    # ---------------------------------------------------------
+    for test_image in ['vlm_test_ego.jpg', 'vlm_test_ext.jpg']:
+        print("\nTesting VLM EmbodiedAgent Execution on {}.".format(test_image))
+        vlm_params = {
+            'model_name': 'nebius/qwen3-2.5-70b',
+            'temperature': 0.0,
+        }
+        vlm_agent = EmbodiedAgent(
+            reasoning_mode='fhp',
+            client_parameters=vlm_params,
+            client_type='vlm',
+            verbose=True
+        )
+        print("VLM Agent created successfully.")
+        
+        image_path = os.path.join(test_dir, test_image)
+        if os.path.exists(image_path):
+            observation_vlm = {
+                'user_request': user_request,
+                'image': image_path
+            }
+            
+            print(f"\n--- Running VLM Agent Step ---")
+            try:
+                output = vlm_agent.step(observation_vlm)
+                print(f"VLM output action: \n{output.action}")
+                print(f"VLM full plan generated: \n{vlm_agent.get_current_plan()}")
+            except Exception as e:
+                print(f"VLM execution failed: {traceback.print_exc()}")
+        else:
+            print(f"\nSkipping VLM execution: '{image_path}' not found. Please add a valid test_image.jpg inside test/.")

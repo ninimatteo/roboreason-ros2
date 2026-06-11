@@ -39,18 +39,19 @@ class UR5Action(BaseModel):
     A single UR5 skill primitive action with its parameters.
 
     Supported skills: approach, pick, release, move_home, wait
-    All positions are in the robot base frame (meters).
+    Positions are in the robot base frame (meters) for LLMs [x, y, z] 
+    or in the image frame (pixels) for VLMs [h, w].
     """
     action_name: str = Field(
         description='Skill name: approach | pick | release | move_home | wait'
     )
     target_position: Optional[List[float]] = Field(
         default=None,
-        description='[x, y, z] in robot base frame — used by approach and pick'
+        description='[x, y, z] in robot base frame (LLM) or [h, w] in image frame (VLM) — used by approach and pick'
     )
     release_position: Optional[List[float]] = Field(
         default=None,
-        description='[x, y, z] in robot base frame — used by release'
+        description='[x, y, z] in robot base frame (LLM) or [h, w] in image frame (VLM) — used by release'
     )
     offset: Optional[float] = Field(
         default=0.1,

@@ -1,6 +1,9 @@
 """CoT-SC prompt templates — adapted for UR5 from RoboReason-Lab."""
 
-plan_prompt = """
+class CotScPrompts:
+    @staticmethod
+    def get_prompts(use_vlm: bool = False):
+        plan_prompt = """
 Your task is to plan a sequence of actions to achieve the user's request, based on the information below:
 
 **Environment Description** The physical information about the environment: \n{environment_map}
@@ -23,3 +26,7 @@ Your task is to plan a sequence of actions to achieve the user's request, based 
 Respond strictly in the JSON format specified above.
 Think step by step, starting from the current state of the environment and the user's request.
 """
+        if use_vlm:
+            plan_prompt = plan_prompt.replace("{environment_map}", "Infer from image")
+            
+        return plan_prompt
