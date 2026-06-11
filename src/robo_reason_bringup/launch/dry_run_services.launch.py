@@ -38,7 +38,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'model_name',
-            default_value='groq/llama4-scout-17b',
+            default_value='groq/openai-oss-120b',
             description='LLM model name (e.g. groq/llama4-scout-17b, groq/llama3.3-70b)'
         ),
         DeclareLaunchArgument(

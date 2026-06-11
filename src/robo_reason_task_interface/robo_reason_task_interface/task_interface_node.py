@@ -44,17 +44,6 @@ class TaskInterfaceNode(Node):
         self._exec_client.wait_for_service()
         self.get_logger().info('[TaskInterface] Services ready.')
 
-        # Run the interactive loop in a timer (non-blocking spin)
-        self._timer = self.create_timer(0.5, self._run_once)
-        self._ran = False
-
-    def _run_once(self):
-        if self._ran:
-            return
-        self._ran = True
-        self._timer.cancel()
-        self._interactive_loop()
-
     def _interactive_loop(self):
         while True:
             print('\n' + '=' * 60)
@@ -106,7 +95,8 @@ class TaskInterfaceNode(Node):
             exec_req.scene_json = self._scene_json
 
             exec_future = self._exec_client.call_async(exec_req)
-            rclpy.spin_until_future_complete(self, exec_future)
+            while not exec_future.done():
+                time.sleep(0.1)
             exec_resp = exec_future.result()
 
             if exec_resp.success:

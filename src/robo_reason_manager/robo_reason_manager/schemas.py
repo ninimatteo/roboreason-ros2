@@ -50,3 +50,15 @@ def apply_skill_defaults(skill_name: str, args: dict) -> dict:
     """Fill in default values for optional skill args."""
     defaults = SKILL_DEFAULTS.get(skill_name, {})
     return {**defaults, **args}
+
+
+def normalize_plan(plan: list) -> list:
+    """Fix common LLM parameter name aliases before validation."""
+    for step in plan:
+        skill = step.get('action_name', '').lower()
+        # LLMs often use target_position instead of release_position for release
+        if skill == 'release' and step.get('release_position') is None:
+            fallback = step.get('target_position')
+            if fallback:
+                step['release_position'] = fallback
+    return plan

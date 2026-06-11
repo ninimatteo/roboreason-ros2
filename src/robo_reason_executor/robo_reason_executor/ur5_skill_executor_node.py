@@ -153,6 +153,16 @@ class UR5SkillExecutorNode(Node):
             f'[UR5Executor] Ready — REAL ROBOT mode (robot_ip={self._robot_ip}).'
         )
 
+        # Move to home once the trajectory server is available
+        self._startup_timer = self.create_timer(1.0, self._startup_move_home)
+
+    def _startup_move_home(self):
+        if not self._traj_client.server_is_ready():
+            return  # keep waiting
+        self._startup_timer.cancel()
+        self.get_logger().info('[UR5Executor] Moving to home position on startup.')
+        self._move_to_joints(self.HOME_JOINTS, duration_sec=4.0)
+
     # -------------------------------------------------------------------------
     # Joint state callback
     # -------------------------------------------------------------------------
@@ -486,6 +496,10 @@ class UR5SkillExecutorNode(Node):
         elif skill_name == 'pick':
             target = args['target_position']
             force = float(args.get('force', 40.0))
+            feedback.status = 'Opening gripper before grasp'
+            feedback.progress = 0.1
+            goal_handle.publish_feedback(feedback)
+            self._gripper_open()
             feedback.status = 'Linear move to grasp position'
             feedback.progress = 0.3
             goal_handle.publish_feedback(feedback)

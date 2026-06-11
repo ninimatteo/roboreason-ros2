@@ -276,14 +276,46 @@ ros2 run robo_reason_task_interface task_interface_node
 
 ---
 
+## Phase 1 — Real robot
+
+Use `real_robot.launch.py` to bring up the full stack against the real UR5.
+
+**Prerequisites** (before launching):
+1. Load `ec_with_gripper.urp` on the pendant and press **Play**
+2. Launch the UR5 ROS2 driver in a separate terminal:
+   ```bash
+   ros2 launch ur_robot_driver ur_control.launch.py \
+     ur_type:=ur5 robot_ip:=192.168.2.60 reverse_ip:=192.168.2.80 \
+     use_fake_hardware:=false \
+     initial_joint_controller:=scaled_joint_trajectory_controller
+   ```
+3. Export your Groq API key: `export GROQ_API_KEY=gsk_...`
+
+**Terminal 1 — all background nodes:**
+```bash
+ros2 launch robo_reason_bringup real_robot.launch.py
+```
+
+**Terminal 2 — interactive CLI:**
+```bash
+ros2 run robo_reason_task_interface task_interface_node
+```
+
+**Optional overrides:**
+```bash
+ros2 launch robo_reason_bringup real_robot.launch.py \
+  reasoning_method:=cot_sc \
+  model_name:=groq/llama3.3-70b \
+  temperature:=0.0
+```
+
+> **Model note:** only `groq/llama*` models work reliably (`llama4-scout-17b`, `llama3.3-70b`, `llama3.1-8b`). Other models in the registry do not produce a parseable plan.
+
+---
+
 ## Phase 0 → Phase 1 transition
 
-When you want to test on the real robot, swap the executor:
-
-1. Build `ur5cb_interface_node` in the same workspace (requires `ros-humble-ur`)
-2. In the launch file change `fake_skill_executor_node` → `ur5_skill_executor_node`
-
-Everything else (planner, manager, interfaces) stays identical.
+When you want to test on the real robot, use `real_robot.launch.py` instead of `dry_run.launch.py` — it starts `ur5_skill_executor_node` in place of `fake_skill_executor_node`. Everything else (planner, manager, interfaces) stays identical.
 
 ---
 

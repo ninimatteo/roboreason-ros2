@@ -26,7 +26,7 @@ class LLMPlannerNode(Node):
 
         self.declare_parameter('use_mock_llm', True)
         self.declare_parameter('reasoning_method', 'fhp')
-        self.declare_parameter('model_name', 'groq/llama4-scout-17b')
+        self.declare_parameter('model_name', 'groq/openai-oss-120b')
         self.declare_parameter('temperature', 0.1)
 
         dotenv.load_dotenv()  # Load .env for API keys if present

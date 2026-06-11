@@ -43,11 +43,11 @@ class WorldState:
         y_lim = limits.get('y', [-10, 10])
         z_lim = limits.get('z', [-10, 10])
         x, y, z = position[0], position[1], position[2]
-        return (x_lim[0] <= x <= x_lim[1] and
-                y_lim[0] <= y <= y_lim[1] and
-                z_lim[0] <= z <= z_lim[1])
+        return (min(x_lim) <= x <= max(x_lim) and
+                min(y_lim) <= y <= max(y_lim) and
+                min(z_lim) <= z <= max(z_lim))
 
-    def find_object_near(self, position: list, tolerance: float = 0.08) -> str:
+    def find_object_near(self, position: list, tolerance: float = 0.08, xy_only: bool = False) -> str:
         """Return the id of the object closest to position (within tolerance), or None."""
         best_id = None
         best_dist = float('inf')
@@ -55,7 +55,10 @@ class WorldState:
             obj_pos = obj.get('position')
             if obj_pos is None:
                 continue
-            dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(position, obj_pos)))
+            if xy_only:
+                dist = math.sqrt((position[0] - obj_pos[0]) ** 2 + (position[1] - obj_pos[1]) ** 2)
+            else:
+                dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(position, obj_pos)))
             if dist < tolerance and dist < best_dist:
                 best_dist = dist
                 best_id = obj_id
@@ -67,7 +70,8 @@ class WorldState:
 
         if skill == 'pick':
             target_pos = args.get('target_position')
-            obj_id = self.find_object_near(target_pos) if target_pos else None
+            # Match on XY only: grasp Z is at the bottom of the object, not its centre
+            obj_id = self.find_object_near(target_pos, xy_only=True) if target_pos else None
             if obj_id:
                 self.state['objects'][obj_id]['state'] = 'held'
                 self.state['objects'][obj_id]['position'] = None
