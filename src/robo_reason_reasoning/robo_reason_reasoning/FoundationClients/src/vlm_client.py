@@ -6,10 +6,7 @@ try:
     from google import genai
 except ImportError:
     genai = None
-try:
-    from .base_client import BaseFoundationClient
-except ImportError:
-    from src.base_client import BaseFoundationClient
+from .base_client import BaseFoundationClient
 
 class VLMClient(BaseFoundationClient):
     """
