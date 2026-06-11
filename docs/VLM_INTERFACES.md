@@ -19,14 +19,24 @@ Agree on these contracts first so everyone can develop and test independently
 ```
 task_interface ──/plan_task(user_command)──► PLANNER
                                               │
-                                              ├─ 1. GetImage ──────────► CAMERA NODE ── returns RGB frame
+                                              ├─ 1. GetImage (call_async, awaited) ──► CAMERA NODE ── returns RGB frame
                                               │
-                                              ├─ 2. agent.step(task, image) ──► VLM AGENT ── returns plan in PIXEL coords [w, h]
+                                              ├─ 2. save frame to tmp folder ── produces an image file PATH
                                               │
-                                              ├─ 3. Deproject(all [w,h]) ─────► CAMERA NODE ── returns [x, y, z] in base frame
+                                              ├─ 3. agent.step(task, image_paths) ──► VLM AGENT ── returns plan in PIXEL coords [w, h]
                                               │
-                                              └─ 4. substitute [x,y,z] into the plan ──/plan_task response (plan_json)──► manager → executor
+                                              ├─ 4. Deproject(all [w,h]) ─────► CAMERA NODE ── returns [x, y, z] in base frame
+                                              │
+                                              └─ 5. substitute [x,y,z] into the plan ──/plan_task response (plan_json)──► manager → executor
 ```
+
+**Why `GetImage` is an async (awaited) call:** the planner is the *server* for
+`/plan_task`; inside that callback it acts as a *client* of `GetImage`. A synchronous
+service call from within a service callback deadlocks on a single-threaded executor.
+The planner therefore uses `call_async()` and waits on the future (via a
+`MultiThreadedExecutor` + `ReentrantCallbackGroup`, or by polling `future.done()`).
+The flow still blocks until the image is in hand before the agent is called — async is
+just the deadlock-free way to wait.
 
 The output `plan_json` is **identical in structure** to the LLM-mode plan, so the
 manager and executor need no changes — they always receive base-frame coordinates.
@@ -94,12 +104,18 @@ agent = VLMEmbodiedAgent(
 
 result = agent.step(observation={
     'user_request': str,         # the task description
-    'image': <image>,            # see "Image format" below
+    'image_paths': List[str],    # file paths on disk, see "Image format" below
 })
 
 # result.action            -> a single action with PIXEL coordinates
 # result.end_of_simulation -> bool
 ```
+
+**`image_paths` is a list, ordered oldest → newest.** For Phase 1 it always holds
+exactly one element (the single snapshot for the task). The list shape is deliberate:
+when the pipeline later feeds a *timeseries* of frames, the same contract carries
+multiple paths without any signature change. The agent should treat the **last**
+element as "now" and any earlier elements (when present) as history.
 
 ### Plan coordinate convention (agent output)
 
@@ -123,14 +139,37 @@ The planner is responsible for replacing every `[w, h]` with the deprojected
 > (e.g. deprojection fails) be reported back? Proposal: the planner marks the step as
 > failed and aborts the plan. Confirm this is acceptable.
 
-### Image format
+### Image format — files on disk, passed by path
 
-To be decided between planner + agent owners. Two options:
-- **ROS message** (`sensor_msgs/Image`) passed straight through — simplest, but the
-  agent depends on `cv_bridge` to decode.
-- **NumPy array** (`HxWx3`, RGB, uint8) — the planner decodes with `cv_bridge` once
-  and hands the agent a plain array. **Recommended** — keeps the agent ROS-agnostic
-  and easier to unit-test.
+The planner does **not** hand the agent an in-memory image. Instead it:
+
+1. Receives the `sensor_msgs/Image` from `GetImage`.
+2. Decodes it with `cv_bridge` and writes it to a **tmp folder** as a normal image
+   file (e.g. PNG).
+3. Passes the agent the **file path(s)** via `image_paths`.
+
+This keeps the agent fully ROS-agnostic — it only needs to open a file with any
+imaging library (OpenCV, PIL, …) — and makes unit tests trivial (point the agent at
+a saved fixture image).
+
+**Tmp-folder + naming convention (timeseries-ready):**
+
+```
+<tmp_root>/<task_id>/<index>_<timestamp>.png
+                     ^       ^
+                     |       capture time, ns (ROS stamp) — sortable, unique
+                     monotonic frame index within the task, zero-padded
+```
+
+- `tmp_root` defaults to something like `/tmp/roboreason_vlm/` (planner parameter).
+- One subfolder per task keeps frames grouped and makes cleanup a single `rmtree`.
+- The `<index>_<timestamp>` prefix sorts chronologically, so a future timeseries is
+  just "every file in the task folder, sorted" — the single-frame case is the same
+  code path with one file.
+- Phase 1 writes exactly one frame per task; the infrastructure already supports N.
+
+> The `.srv` contract is unchanged — `GetImage` still returns `sensor_msgs/Image`
+> over the wire. The path-passing is purely internal to the planner ↔ agent boundary.
 
 ---
 
