@@ -36,9 +36,9 @@ class UR5Skills:
 
     Parameter notes:
     - All positions are in the robot base frame (meters): [x, y, z]
-    - x: distance along the table away from the robot base (reachable range: 0.15 – 0.85 m)
-    - y: lateral distance (positive = left, negative = right; range: -0.35 – 0.35 m)
-    - z: height above the table surface (z = 0.0 is the table surface)
+    - x: lateral distance (positive = left, negative = right; range: -0.35 – 0.35 m)
+    - y: distance along the table away from the robot base (reachable range: -0.15 – -0.85 m)
+    - z: height above the table surface (z = 0.01 is the table surface)
     - Standard pick-and-place sequence: approach → pick → approach(target_zone) → release → move_home
     - Always call approach before pick and before release for safety clearance.
     """

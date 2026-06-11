@@ -116,7 +116,7 @@ class BaseFoundationClient(ABC):
         self.model_name = ModelRegistry.get_model_id(self.provider, self.raw_model_name)
         
         self.temperature = model_parameters.get("temperature", 0.7)
-        self.max_tokens = model_parameters.get("max_tokens", 1024)
+        self.max_tokens = model_parameters.get("max_tokens", 8192)
         self.top_p = model_parameters.get("top_p", 1.0)
         self.stream = model_parameters.get("stream", False)
         
