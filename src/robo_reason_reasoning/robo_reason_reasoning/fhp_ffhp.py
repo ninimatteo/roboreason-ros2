@@ -2,25 +2,24 @@
 import json
 from collections import namedtuple
 
-from robo_reason_reasoning.reasoning_method import LLMReasoningMethod
+from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-from robo_reason_prompts.fhp_ffhp_prompts import (
-    fhp_ffhp_system_message, task_planning_prompt
-)
-from robo_reason_prompts.predicates_prompts import predicates_prompt
-from robo_reason_reasoning.llm_client import LLMClient
+# pyrefly: ignore [missing-import]
+from robo_reason_prompts.fhp_ffhp_prompts import FHP_FFHP_Prompts
+# pyrefly: ignore [missing-import]
+from robo_reason_prompts.predicates_prompts import PredicatesPrompts
 
 
-class FHP(LLMReasoningMethod):
+class FHP(ReasoningMethod):
     """
     Finite Horizon Planning (FHP) and Feasible FHP (FFHP).
     Generates the full plan upfront; returns one action per call.
     """
 
-    def __init__(self, llm_parameters: dict = {}, reasoning_mode: str = 'fhp',
+    def __init__(self, client_parameters: dict = None, client_type: str = 'llm', reasoning_mode: str = 'fhp',
                  predicates: str = '', skills: str = '',
                  action_placeholder: str = '', **kwargs):
-
+        super().__init__(client_parameters=client_parameters, client_type=client_type, **kwargs)
         assert reasoning_mode in ('fhp', 'ffhp'), f"reasoning_mode must be 'fhp' or 'ffhp'."
         self.reasoning_mode = reasoning_mode
         self.method_name = reasoning_mode
@@ -28,7 +27,6 @@ class FHP(LLMReasoningMethod):
         self.action_placeholder = action_placeholder
         self.predicates = predicates
         self.verbose = kwargs.get('verbose', False)
-        self.llm = LLMClient(**llm_parameters)
         self.task_plan = []
         self.user_request = ''
         self._output = namedtuple('ReasoningOutput', ['action', 'end_of_simulation'])
@@ -36,34 +34,54 @@ class FHP(LLMReasoningMethod):
     def set_user_request(self, user_request: str):
         self.user_request = user_request
 
-    def get_llm_usage_metrics(self):
-        return self.llm.usage_metrics
-
-    def predict_predicates(self, environment_map: str) -> str:
-        msg = predicates_prompt.format(
-            predicates_library=self.predicates,
-            environment_description=json.dumps(environment_map),
+    def predict_predicates(self, environment_map: str, image=None) -> str:
+        predicates_prompt, _ = PredicatesPrompts.get_prompts(use_vlm=self.use_vlm)
+        fhp_ffhp_system_message, _ = FHP_FFHP_Prompts.get_prompts(use_vlm=self.use_vlm)
+        
+        format_args = {
+            'predicates_library': self.predicates,
+        }
+        if not self.use_vlm:
+            format_args['environment_description'] = json.dumps(environment_map)
+            
+        msg = predicates_prompt.format(**format_args)
+        return self._call_client(
+            user_message=msg, 
+            system_message=fhp_ffhp_system_message, 
+            force_json=True, 
+            image=image
         )
-        return self.llm(user_message=msg, system_message=fhp_ffhp_system_message, force_json=True)
 
-    def plan_task(self, env_config: str, predicates: str) -> list:
-        msg = task_planning_prompt.format(
-            skills=self.skills,
-            action_placeholder1=self.action_placeholder,
-            action_placeholder2=self.action_placeholder,
-            user_request=self.user_request,
-            current_env_config=env_config,
-            current_predicates=predicates,
+    def plan_task(self, env_config: str, predicates: str, image=None) -> list:
+        fhp_ffhp_system_message, task_planning_prompt = FHP_FFHP_Prompts.get_prompts(
+            use_vlm=self.use_vlm
         )
-        raw = self.llm(user_message=msg, system_message=fhp_ffhp_system_message, force_json=True)
+        
+        format_args = {
+            'skills': self.skills,
+            'action_placeholder1': self.action_placeholder,
+            'action_placeholder2': self.action_placeholder,
+            'user_request': self.user_request,
+            'current_predicates': predicates,
+        }
+        if not self.use_vlm:
+            format_args['current_env_config'] = env_config
+
+        msg = task_planning_prompt.format(**format_args)
+        raw = self._call_client(
+            user_message=msg, 
+            system_message=fhp_ffhp_system_message, 
+            force_json=True, 
+            image=image
+        )
         return json.loads(raw)['plan']
 
     def __call__(self, force_replan: bool = False, **kwargs):
         assert 'user_request' in kwargs
-        assert 'environment_map' in kwargs
 
-        env_map = kwargs['environment_map']
+        env_map = kwargs.get('environment_map', '')
         user_req = kwargs['user_request']
+        image = kwargs.get('image', None)
 
         needs_plan = (
             (user_req != self.user_request and len(self.task_plan) == 0)
@@ -72,8 +90,8 @@ class FHP(LLMReasoningMethod):
 
         if needs_plan:
             self.set_user_request(user_req)
-            preds = self.predict_predicates(env_map)
-            self.task_plan = self.plan_task(env_map, preds)
+            preds = self.predict_predicates(env_map, image=image)
+            self.task_plan = self.plan_task(env_map, preds, image=image)
             self._verbose_print('Generated plan', self.task_plan)
 
         if self.task_plan:

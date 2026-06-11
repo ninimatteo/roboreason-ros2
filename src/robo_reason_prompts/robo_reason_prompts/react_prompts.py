@@ -1,12 +1,15 @@
 """ReAct prompt templates — adapted for UR5 from RoboReason-Lab."""
 
-react_system_message = (
-    "You are a ReAct expert. You will be provided with a user request and an environment map. "
-    "Your task is to generate a sequence of actions that will lead to the completion of the "
-    "user request in the given environment."
-)
+class ReActPrompts:
+    @staticmethod
+    def get_prompts(use_vlm: bool = False):
+        react_system_message = (
+            "You are a ReAct expert. You will be provided with a user request and an environment map. "
+            "Your task is to generate a sequence of actions that will lead to the completion of the "
+            "user request in the given environment."
+        )
 
-react_prompt_message = """Your task is to generate a sequence of actions based on the user request and the current state of the environment.
+        react_prompt_message = """Your task is to generate a sequence of actions based on the user request and the current state of the environment.
 
 You have to make a decision on the next step to take based on the information below:
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
@@ -32,3 +35,7 @@ You are asked either to take a reasoning step or to take an action according to 
 Think step by step.
 This is the list of past actions you took: \n{actions_memory}
 """
+        if use_vlm:
+            react_prompt_message = react_prompt_message.replace("{current_env_config}", "Infer from image")
+            
+        return react_system_message, react_prompt_message

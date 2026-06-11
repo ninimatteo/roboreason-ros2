@@ -1,0 +1,153 @@
+{
+  "frame": "base_link",
+  "units": "meters",
+  "description": "UR5cb mounted on the short side of a rectangular table (1.2m x 0.8m). All positions in robot base frame. Table surface at z=0.0.",
+  "robot": {
+    "type": "UR5cb",
+    "base_position": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "holding": null,
+    "home_joints": [
+      -1.5708,
+      -1.5708,
+      -1.5708,
+      -1.5708,
+      1.5708,
+      0.0
+    ]
+  },
+  "workspace": {
+    "table": {
+      "type": "rectangular_table",
+      "length_x": 1.2,
+      "width_y": 0.8,
+      "height": 0.76,
+      "surface_z": 0.0,
+      "corner_near_robot": [
+        0.0,
+        -0.4,
+        0.0
+      ],
+      "corner_far": [
+        1.2,
+        0.4,
+        0.0
+      ]
+    },
+    "limits": {
+      "x": [
+        0.15,
+        0.85
+      ],
+      "y": [
+        -0.35,
+        0.35
+      ],
+      "z": [
+        -0.05,
+        0.55
+      ]
+    }
+  },
+  "objects": {
+    "red_cube": {
+      "type": "cube",
+      "color": "red",
+      "position": [
+        0.45,
+        -0.15,
+        0.025
+      ],
+      "size": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "state": "on_table",
+      "graspable": true
+    },
+    "blue_cube": {
+      "type": "cube",
+      "color": "blue",
+      "position": [
+        0.55,
+        0.12,
+        0.025
+      ],
+      "size": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "state": "on_table",
+      "graspable": true
+    },
+    "green_cube": {
+      "type": "cube",
+      "color": "green",
+      "position": [
+        0.38,
+        0.08,
+        0.025
+      ],
+      "size": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "state": "on_table",
+      "graspable": true
+    },
+    "yellow_cube": {
+      "type": "cube",
+      "color": "yellow",
+      "position": [
+        0.62,
+        -0.08,
+        0.025
+      ],
+      "size": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "state": "on_table",
+      "graspable": true
+    }
+  },
+  "targets": {
+    "zone_a": {
+      "type": "zone",
+      "color": "white",
+      "label": "A",
+      "position": [
+        0.72,
+        -0.22,
+        0.0
+      ],
+      "size": [
+        0.15,
+        0.15,
+        0.01
+      ]
+    },
+    "zone_b": {
+      "type": "zone",
+      "color": "white",
+      "label": "B",
+      "position": [
+        0.72,
+        0.22,
+        0.0
+      ],
+      "size": [
+        0.15,
+        0.15,
+        0.01
+      ]
+    }
+  }
+}

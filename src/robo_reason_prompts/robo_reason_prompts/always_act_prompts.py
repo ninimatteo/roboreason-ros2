@@ -1,8 +1,12 @@
 """Always-Act (StepAction) prompt templates — adapted for UR5 from RoboReason-Lab."""
 
-step_action_prompt = """
+class AlwaysActPrompts:
+    @staticmethod
+    def get_prompts(use_vlm: bool = False):
+        step_action_prompt = """
 Your task is to decide either the next action to take in the environment to move toward achieving the user's request, or if the goal has been reached.
 If the goal has been reached, return action "move_home" with "end_of_simulation" set to true.
+
 
 **Environment Description** This describes the current state of the environment: \n{environment_map}\n
 **Skills Library** This is the set of symbolic skills available for reasoning: \n{skills}\n
@@ -20,3 +24,7 @@ If the goal has been reached, return action "move_home" with "end_of_simulation"
 Think step by step. Respond strictly in the JSON format specified above. What is your next action?
 This is the history of actions taken so far: {actions_memory}
 """
+        if use_vlm:
+            step_action_prompt = step_action_prompt.replace("{environment_map}", "Infer from image")
+            
+        return step_action_prompt

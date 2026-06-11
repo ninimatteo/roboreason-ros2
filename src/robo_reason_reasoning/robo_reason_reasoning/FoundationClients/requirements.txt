@@ -1,0 +1,9 @@
+groq
+openai
+anthropic
+google-genai
+pandas
+python-dotenv
+Pillow
+requests
+opencv-python

@@ -2,23 +2,22 @@
 import json
 from collections import namedtuple
 
-from robo_reason_reasoning.reasoning_method import LLMReasoningMethod
+from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-from robo_reason_prompts.react_prompts import react_system_message, react_prompt_message
-from robo_reason_reasoning.llm_client import LLMClient
+# pyrefly: ignore [missing-import]
+from robo_reason_prompts.react_prompts import ReActPrompts
 
 
-class React(LLMReasoningMethod):
+class React(ReasoningMethod):
     """
     ReAct (Reasoning + Acting): alternates between reasoning thoughts and actions.
     Generates one action per call based on the current environment state.
     """
 
-    def __init__(self, llm_parameters: dict = {}, verbose: bool = False,
+    def __init__(self, client_parameters: dict = None, client_type: str = 'llm', verbose: bool = False,
                  skills: str = '', action_placeholder: str = '', **kwargs):
-        super().__init__()
+        super().__init__(client_parameters=client_parameters, client_type=client_type, **kwargs)
         self.method_name = 'react'
-        self.llm = LLMClient(**llm_parameters)
         self.skills = skills
         self.action_placeholder = action_placeholder
         self.verbose = verbose
@@ -30,23 +29,26 @@ class React(LLMReasoningMethod):
     def set_user_request(self, user_request: str):
         self.user_request = user_request
 
-    def get_llm_usage_metrics(self):
-        return self.llm.usage_metrics
+    def react_step(self, environment_map: str, user_request: str, image=None):
+        react_system_message, react_prompt_message = ReActPrompts.get_prompts(use_vlm=self.use_vlm)
 
-    def react_step(self, environment_map: str, user_request: str):
-        msg = react_prompt_message.format(
-            user_request=user_request,
-            current_env_config=environment_map,
-            skills=self.skills,
-            last_reasoning_step=self.reasoning_thought,
-            actions_memory=self.actions_memory,
-            action_placeholder=self.action_placeholder,
-        )
+        format_args = {
+            'user_request': user_request,
+            'skills': self.skills,
+            'last_reasoning_step': self.reasoning_thought,
+            'actions_memory': self.actions_memory,
+            'action_placeholder': self.action_placeholder,
+        }
+        if not self.use_vlm:
+            format_args['current_env_config'] = environment_map
 
-        raw = self.llm(
+        msg = react_prompt_message.format(**format_args)
+
+        raw = self._call_client(
             system_message=react_system_message,
             user_message=msg,
             force_json=True,
+            image=image
         )
 
         output = dict(json.loads(raw))
@@ -73,8 +75,8 @@ class React(LLMReasoningMethod):
 
     def __call__(self, **kwargs):
         assert 'user_request' in kwargs
-        assert 'environment_map' in kwargs
         return self.react_step(
-            environment_map=kwargs['environment_map'],
+            environment_map=kwargs.get('environment_map', ''),
             user_request=kwargs['user_request'],
+            image=kwargs.get('image', None)
         )
