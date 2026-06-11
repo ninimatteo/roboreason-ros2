@@ -1,0 +1,14 @@
+# Deproject.srv
+# Planner asks the camera node to convert image pixel coordinates (w, h)
+# into 3D positions (x, y, z) in the robot base frame.
+#
+# Batch request: pass all pixels at once to avoid multiple round-trips.
+# u and v MUST have the same length; point i corresponds to (u[i], v[i]).
+uint32[] u                  # pixel column = width  coordinate (w), one per point
+uint32[] v                  # pixel row    = height coordinate (h), one per point
+---
+# Response
+bool success
+geometry_msgs/Point[] points  # x, y, z in robot base frame, same order as the request
+string frame_id               # frame the points are expressed in (e.g. "base_link")
+string error_message
