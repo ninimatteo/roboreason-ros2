@@ -1,0 +1,451 @@
+from __future__ import annotations
+
+from typing import Optional
+
+import numpy as np
+import rclpy
+from geometry_msgs.msg import Point
+from rclpy.node import Node
+from sensor_msgs.msg import CameraInfo, Image
+from vlm_camera_interfaces.msg import PixelArray
+from vlm_camera_interfaces.srv import Deproject, GetImage
+
+from vlm_camera_service.charuco_utils import (
+    CharucoConfig,
+    camera_point_to_charuco,
+    detect_charuco_pose,
+)
+
+
+class CameraServicesNode(Node):
+    """Camera service bridge with real RGB/depth topics and pixel callers."""
+
+    def __init__(self) -> None:
+        super().__init__("camera_services_node")
+
+        self.declare_parameter("color_topic", "/camera/color/image_raw")
+        self.declare_parameter("depth_topic", "/camera/depth/image_raw")
+        self.declare_parameter("camera_info_topic", "/camera/color/camera_info")
+        self.declare_parameter("window_size", 7)
+        self.declare_parameter("min_depth_m", 0.15)
+        self.declare_parameter("max_depth_m", 3.0)
+        self.declare_parameter("get_image_service", "/camera/get_image")
+        self.declare_parameter("deproject_service", "/camera/deproject")
+        self.declare_parameter("pixel_debug_topic", "/camera/debug_pixels")
+        self.declare_parameter("charuco_enabled", True)
+        self.declare_parameter("charuco_dictionary", "DICT_6X6_250")
+        self.declare_parameter("charuco_squares_x", 5)
+        self.declare_parameter("charuco_squares_y", 7)
+        self.declare_parameter("charuco_square_length_m", 0.03)
+        self.declare_parameter("charuco_marker_length_m", 0.015)
+        self.declare_parameter("charuco_axis_length_m", 0.08)
+        self.declare_parameter("charuco_min_corners", 4)
+        self.declare_parameter("charuco_frame_id", "charuco_board")
+
+        color_topic = self.get_parameter("color_topic").value
+        depth_topic = self.get_parameter("depth_topic").value
+        camera_info_topic = self.get_parameter("camera_info_topic").value
+        self._window_size = int(self.get_parameter("window_size").value)
+        self._min_depth_m = float(self.get_parameter("min_depth_m").value)
+        self._max_depth_m = float(self.get_parameter("max_depth_m").value)
+        get_image_service = self.get_parameter("get_image_service").value
+        deproject_service = self.get_parameter("deproject_service").value
+        pixel_debug_topic = self.get_parameter("pixel_debug_topic").value
+        self._charuco_enabled = bool(self.get_parameter("charuco_enabled").value)
+        self._charuco_frame_id = self.get_parameter("charuco_frame_id").value
+        self._charuco_config = CharucoConfig(
+            dictionary_name=self.get_parameter("charuco_dictionary").value,
+            squares_x=int(self.get_parameter("charuco_squares_x").value),
+            squares_y=int(self.get_parameter("charuco_squares_y").value),
+            square_length_m=float(
+                self.get_parameter("charuco_square_length_m").value
+            ),
+            marker_length_m=float(
+                self.get_parameter("charuco_marker_length_m").value
+            ),
+            axis_length_m=float(self.get_parameter("charuco_axis_length_m").value),
+            min_corners=int(self.get_parameter("charuco_min_corners").value),
+        )
+
+        self._latest_color: Optional[Image] = None
+        self._latest_depth: Optional[Image] = None
+        self._latest_camera_info: Optional[CameraInfo] = None
+
+        self._color_sub = self.create_subscription(Image, color_topic, self._on_color, 10)
+        self._depth_sub = self.create_subscription(Image, depth_topic, self._on_depth, 10)
+        self._camera_info_sub = self.create_subscription(
+            CameraInfo,
+            camera_info_topic,
+            self._on_camera_info,
+            10,
+        )
+        self._pixel_debug_pub = self.create_publisher(PixelArray, pixel_debug_topic, 10)
+        self.create_service(GetImage, get_image_service, self._handle_get_image)
+        self.create_service(Deproject, deproject_service, self._handle_deproject)
+
+        self.get_logger().info("Camera service bridge started")
+        self.get_logger().info(f"color_topic={color_topic}")
+        self.get_logger().info(f"depth_topic={depth_topic}")
+        self.get_logger().info(f"camera_info_topic={camera_info_topic}")
+        self.get_logger().info(f"{get_image_service}: returns latest real RGB image")
+        self.get_logger().info(
+            f"{deproject_service}: returns real depth deprojection in camera frame"
+        )
+        self.get_logger().info(f"pixel_debug_topic={pixel_debug_topic}")
+        self.get_logger().info(
+            "charuco="
+            f"{self._charuco_enabled}, dictionary={self._charuco_config.dictionary_name}, "
+            f"squares={self._charuco_config.squares_x}x{self._charuco_config.squares_y}, "
+            f"square={self._charuco_config.square_length_m:.4f} m, "
+            f"marker={self._charuco_config.marker_length_m:.4f} m"
+        )
+        self.get_logger().info(
+            f"window_size={self._window_size}, "
+            f"valid depth range=[{self._min_depth_m:.3f}, {self._max_depth_m:.3f}] m"
+        )
+        self._status_timer = self.create_timer(2.0, self._log_input_status)
+
+    def _on_color(self, msg: Image) -> None:
+        if self._latest_color is None:
+            self.get_logger().info(
+                f"received first RGB image: {msg.width}x{msg.height}, "
+                f"encoding={msg.encoding}, frame={msg.header.frame_id}"
+            )
+        self._latest_color = msg
+
+    def _on_depth(self, msg: Image) -> None:
+        if self._latest_depth is None:
+            self.get_logger().info(
+                f"received first depth image: {msg.width}x{msg.height}, "
+                f"encoding={msg.encoding}, frame={msg.header.frame_id}"
+            )
+        self._latest_depth = msg
+
+    def _on_camera_info(self, msg: CameraInfo) -> None:
+        if self._latest_camera_info is None:
+            self.get_logger().info(
+                f"received first CameraInfo: {msg.width}x{msg.height}, "
+                f"frame={msg.header.frame_id}"
+            )
+        self._latest_camera_info = msg
+
+    def _log_input_status(self) -> None:
+        missing = []
+        if self._latest_color is None:
+            missing.append("RGB")
+        if self._latest_depth is None:
+            missing.append("depth")
+        if self._latest_camera_info is None:
+            missing.append("CameraInfo")
+        if missing:
+            self.get_logger().warn(
+                "waiting for camera inputs: " + ", ".join(missing)
+            )
+
+    def _handle_get_image(
+        self, _request: GetImage.Request, response: GetImage.Response
+    ) -> GetImage.Response:
+        if self._latest_color is None:
+            response.success = False
+            response.frame_id = ""
+            response.error_message = "RGB image not received yet"
+            return response
+
+        image = self._latest_color
+        response.success = True
+        response.image = image
+        response.frame_id = image.header.frame_id
+        response.error_message = ""
+        self.get_logger().info(
+            f"GetImage -> {image.width}x{image.height}, "
+            f"encoding={image.encoding}, frame={image.header.frame_id}"
+        )
+        return response
+
+    def _handle_deproject(
+        self, request: Deproject.Request, response: Deproject.Response
+    ) -> Deproject.Response:
+        response.frame_id = self._camera_frame_id()
+        response.charuco_pose_available = False
+        response.charuco_points = []
+        response.charuco_frame_id = self._charuco_frame_id
+
+        if len(request.u) != len(request.v):
+            response.success = False
+            response.points = []
+            response.error_message = "u and v arrays must have the same length"
+            return response
+
+        self._publish_debug_pixels(request.u, request.v)
+
+        if self._latest_depth is None:
+            response.success = False
+            response.points = []
+            response.error_message = "Depth image not received yet"
+            return response
+
+        if self._latest_camera_info is None:
+            response.success = False
+            response.points = []
+            response.error_message = "CameraInfo not received yet"
+            return response
+
+        try:
+            depth_image = image_msg_to_depth_array(self._latest_depth)
+            intrinsics = camera_info_to_intrinsics(self._latest_camera_info)
+            points = []
+            for u_raw, v_raw in zip(request.u, request.v):
+                u = int(u_raw)
+                v = int(v_raw)
+                depth_m = median_depth_at_pixel(
+                    depth_image=depth_image,
+                    u=u,
+                    v=v,
+                    window_size=self._window_size,
+                    encoding=self._latest_depth.encoding,
+                    min_depth_m=self._min_depth_m,
+                    max_depth_m=self._max_depth_m,
+                )
+                if depth_m is None:
+                    response.success = False
+                    response.points = []
+                    response.error_message = f"No valid depth at u={u}, v={v}"
+                    return response
+                points.append(
+                    deproject_pixel_to_3d(
+                        u=u,
+                        v=v,
+                        z=depth_m,
+                        fx=intrinsics.fx,
+                        fy=intrinsics.fy,
+                        cx=intrinsics.cx,
+                        cy=intrinsics.cy,
+                    )
+                )
+        except ValueError as exc:
+            response.success = False
+            response.points = []
+            response.error_message = str(exc)
+            return response
+
+        response.success = True
+        response.points = points
+        response.frame_id = self._camera_frame_id()
+        self._fill_charuco_points(points, response)
+        response.error_message = ""
+        self.get_logger().info(
+            f"Deproject -> {len(points)} points in {response.frame_id}, "
+            f"charuco_pose_available={response.charuco_pose_available}"
+        )
+        return response
+
+    def _fill_charuco_points(
+        self, camera_points: list[Point], response: Deproject.Response
+    ) -> None:
+        if not self._charuco_enabled:
+            return
+        if self._latest_color is None or self._latest_camera_info is None:
+            return
+
+        try:
+            bgr = image_msg_to_bgr(self._latest_color)
+            pose = detect_charuco_pose(
+                bgr_image=bgr,
+                camera_info=self._latest_camera_info,
+                config=self._charuco_config,
+            )
+        except Exception as exc:
+            self.get_logger().warn(f"ChArUco pose unavailable: {exc}")
+            return
+
+        if pose is None:
+            self.get_logger().warn("ChArUco pose unavailable: board not detected")
+            return
+
+        response.charuco_pose_available = True
+        response.charuco_points = [
+            camera_point_to_charuco(point, pose) for point in camera_points
+        ]
+        response.charuco_frame_id = self._charuco_frame_id
+
+    def _publish_debug_pixels(self, u_values, v_values) -> None:
+        msg = PixelArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self._camera_frame_id()
+        msg.u = [int(u) for u in u_values]
+        msg.v = [int(v) for v in v_values]
+        self._pixel_debug_pub.publish(msg)
+        self.get_logger().info(f"Published {len(msg.u)} debug pixels")
+
+    def _camera_frame_id(self) -> str:
+        if self._latest_depth is not None and self._latest_depth.header.frame_id:
+            return self._latest_depth.header.frame_id
+        if (
+            self._latest_camera_info is not None
+            and self._latest_camera_info.header.frame_id
+        ):
+            return self._latest_camera_info.header.frame_id
+        return ""
+
+
+class CameraIntrinsics:
+    def __init__(self, fx: float, fy: float, cx: float, cy: float) -> None:
+        self.fx = fx
+        self.fy = fy
+        self.cx = cx
+        self.cy = cy
+
+
+def camera_info_to_intrinsics(camera_info: CameraInfo) -> CameraIntrinsics:
+    k = camera_info.k
+    if len(k) != 9:
+        raise ValueError("camera_info.k must contain 9 values")
+    fx = float(k[0])
+    fy = float(k[4])
+    cx = float(k[2])
+    cy = float(k[5])
+    if fx <= 0.0 or fy <= 0.0:
+        raise ValueError("camera intrinsics fx and fy must be positive")
+    return CameraIntrinsics(fx=fx, fy=fy, cx=cx, cy=cy)
+
+
+def image_msg_to_depth_array(msg: Image) -> np.ndarray:
+    if msg.encoding == "16UC1":
+        dtype = np.dtype(np.uint16)
+    elif msg.encoding == "32FC1":
+        dtype = np.dtype(np.float32)
+    else:
+        raise ValueError(f"Unsupported depth encoding '{msg.encoding}'")
+
+    if msg.is_bigendian:
+        dtype = dtype.newbyteorder(">")
+
+    expected_min_size = int(msg.step) * int(msg.height)
+    if len(msg.data) < expected_min_size:
+        raise ValueError("Depth image data is shorter than height * step")
+
+    row_values = int(msg.step) // dtype.itemsize
+    raw = np.frombuffer(bytes(msg.data), dtype=dtype, count=row_values * msg.height)
+    raw = raw.reshape((msg.height, row_values))
+    return raw[:, : msg.width]
+
+
+def image_msg_to_bgr(msg: Image) -> np.ndarray:
+    if msg.encoding not in {"rgb8", "bgr8", "mono8"}:
+        raise ValueError(f"Unsupported RGB image encoding '{msg.encoding}'")
+
+    channels = 1 if msg.encoding == "mono8" else 3
+    dtype = np.dtype(np.uint8)
+    expected_min_size = int(msg.step) * int(msg.height)
+    if len(msg.data) < expected_min_size:
+        raise ValueError("Image data is shorter than height * step")
+
+    row_values = int(msg.step) // dtype.itemsize
+    raw = np.frombuffer(bytes(msg.data), dtype=dtype, count=row_values * msg.height)
+    raw = raw.reshape((msg.height, row_values))
+    pixels = raw[:, : msg.width * channels]
+
+    if channels == 1:
+        mono = pixels.reshape((msg.height, msg.width))
+        import cv2
+
+        return cv2.cvtColor(mono, cv2.COLOR_GRAY2BGR)
+
+    rgb_or_bgr = pixels.reshape((msg.height, msg.width, 3))
+    if msg.encoding == "rgb8":
+        import cv2
+
+        return cv2.cvtColor(rgb_or_bgr, cv2.COLOR_RGB2BGR)
+    return rgb_or_bgr.copy()
+
+
+def median_depth_at_pixel(
+    depth_image: np.ndarray,
+    u: int,
+    v: int,
+    window_size: int,
+    encoding: str,
+    min_depth_m: float,
+    max_depth_m: float,
+) -> Optional[float]:
+    valid_depths = extract_valid_depth_window(
+        depth_image=depth_image,
+        u=u,
+        v=v,
+        window_size=window_size,
+        encoding=encoding,
+        min_depth_m=min_depth_m,
+        max_depth_m=max_depth_m,
+    )
+    if valid_depths.size == 0:
+        return None
+    return float(np.median(valid_depths))
+
+
+def extract_valid_depth_window(
+    depth_image: np.ndarray,
+    u: int,
+    v: int,
+    window_size: int,
+    encoding: str,
+    min_depth_m: float,
+    max_depth_m: float,
+) -> np.ndarray:
+    if depth_image.ndim != 2:
+        raise ValueError("depth_image must be a 2D single-channel array")
+    if window_size <= 0 or window_size % 2 == 0:
+        raise ValueError("window_size must be a positive odd integer")
+    if encoding not in {"16UC1", "32FC1"}:
+        raise ValueError(f"Unsupported depth encoding '{encoding}'")
+    if max_depth_m <= min_depth_m:
+        raise ValueError("max_depth_m must be greater than min_depth_m")
+
+    height, width = depth_image.shape
+    if u < 0 or v < 0 or u >= width or v >= height:
+        return np.array([], dtype=np.float64)
+
+    radius = window_size // 2
+    x_min = max(0, u - radius)
+    x_max = min(width, u + radius + 1)
+    y_min = max(0, v - radius)
+    y_max = min(height, v + radius + 1)
+
+    window = depth_image[y_min:y_max, x_min:x_max]
+    if encoding == "16UC1":
+        depth_m = window.astype(np.float64) / 1000.0
+    else:
+        depth_m = window.astype(np.float64)
+
+    valid = np.isfinite(depth_m)
+    valid &= depth_m > 0.0
+    valid &= depth_m >= min_depth_m
+    valid &= depth_m <= max_depth_m
+    return depth_m[valid].astype(np.float64)
+
+
+def deproject_pixel_to_3d(
+    u: int, v: int, z: float, fx: float, fy: float, cx: float, cy: float
+) -> Point:
+    if z <= 0.0:
+        raise ValueError("z must be positive and expressed in meters")
+    if fx <= 0.0 or fy <= 0.0:
+        raise ValueError("fx and fy must be positive")
+    point = Point()
+    point.x = (float(u) - cx) * z / fx
+    point.y = (float(v) - cy) * z / fy
+    point.z = z
+    return point
+
+
+def main(args: Optional[list[str]] = None) -> None:
+    rclpy.init(args=args)
+    node = CameraServicesNode()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
