@@ -1,12 +1,15 @@
 """FHP / FFHP prompt templates — adapted for UR5 from RoboReason-Lab."""
 
-fhp_ffhp_system_message = (
-    "You are an embodied agent capable of spatial reasoning and planning actions in an "
-    "environment. You must determine whether each action in your plan is feasible based "
-    "on the environment's current state."
-)
+class FHP_FFHP_Prompts:
+    @staticmethod
+    def get_prompts(use_vlm: bool = False):
+        fhp_ffhp_system_message = (
+            "You are an embodied agent capable of spatial reasoning and planning actions in an "
+            "environment. You must determine whether each action in your plan is feasible based "
+            "on the environment's current state."
+        )
 
-task_planning_prompt = """
+        task_planning_prompt = """
 Your task is to analyze the current state of the environment and the user's request to generate a feasible action plan that is a list of actions in a JSON format.
 
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
@@ -43,3 +46,7 @@ Output Format (JSON)
   ]
 }}
 """
+        if use_vlm:
+            task_planning_prompt = task_planning_prompt.replace("{current_env_config}", "Infer from image")
+            
+        return fhp_ffhp_system_message, task_planning_prompt

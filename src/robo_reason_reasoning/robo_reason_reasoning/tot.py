@@ -2,31 +2,27 @@
 import json
 from collections import namedtuple
 
+# pyrefly: ignore [missing-import]
 from treelib import Tree
 
-from robo_reason_reasoning.reasoning_method import LLMReasoningMethod
+from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-from robo_reason_prompts.tot_prompts import (
-    plan_generation_prompt, action_generation_prompt,
-    thought_evaluation_prompt, thoughts_evaluation_in_batch_prompt,
-    thought_sorting_prompt,
-)
-from robo_reason_reasoning.llm_client import LLMClient
+# pyrefly: ignore [missing-import]
+from robo_reason_prompts.tot_prompts import ToTPrompts
 
 
-class TreeOfThought(LLMReasoningMethod):
+class TreeOfThought(ReasoningMethod):
     """
     ToT: explores a tree of plan candidates and selects the best one.
     Returns one action per call from the selected plan.
     """
 
-    def __init__(self, llm_parameters: dict = {}, verbose: bool = False,
+    def __init__(self, client_parameters: dict = None, client_type: str = 'llm', verbose: bool = False,
                  skills: str = '', action_placeholder: str = '',
                  eos_placeholder: str = '', k: int = 3, b: int = 2, t: int = 10,
                  use_iid_evaluation: bool = True, **kwargs):
-
+        super().__init__(client_parameters=client_parameters, client_type=client_type, **kwargs)
         self.method_name = 'tot'
-        self.llm = LLMClient(**llm_parameters)
         self.k = k
         self.b = b
         self.t = t
@@ -46,40 +42,49 @@ class TreeOfThought(LLMReasoningMethod):
     def set_user_request(self, user_request: str):
         self.user_request = user_request
 
-    def get_llm_usage_metrics(self):
-        return self.llm.usage_metrics
-
     # -------------------------------------------------------------------------
 
     def _generate_action_thought(self, environment_map: str, user_request: str,
-                                  previous_thought: str, num_actions: int) -> list:
-        msg = action_generation_prompt.format(
-            environment_map=environment_map,
-            skills=self.skills,
-            user_request=user_request,
-            previous_thought=previous_thought,
-            num_actions=num_actions,
-            action_placeholder1=self.action_placeholder,
-            eos_action_placeholder=self.eos_placeholder,
-        )
-        resp = self.llm(
+                                  previous_thought: str, num_actions: int, image=None) -> list:
+        _, action_generation_prompt, _, _, _ = ToTPrompts.get_prompts(use_vlm=self.use_vlm)
+
+        format_args = {
+            'skills': self.skills,
+            'user_request': user_request,
+            'previous_thought': previous_thought,
+            'num_actions': num_actions,
+            'action_placeholder1': self.action_placeholder,
+            'eos_action_placeholder': self.eos_placeholder,
+        }
+        if not self.use_vlm:
+            format_args['environment_map'] = environment_map
+
+        msg = action_generation_prompt.format(**format_args)
+        resp = self._call_client(
             user_message=msg,
             system_message="You are a planning agent.",
             temperature=1.5, top_p=0.4, force_json=True,
+            image=image
         )
         return json.loads(resp.strip()).get('sampled_actions', [])
 
-    def _evaluate_thought(self, thought, environment_map: str, user_request: str) -> int:
-        msg = thought_evaluation_prompt.format(
-            environment_map=environment_map,
-            skills=self.skills,
-            user_request=user_request,
-            thought=thought,
-        )
-        resp = self.llm(
+    def _evaluate_thought(self, thought, environment_map: str, user_request: str, image=None) -> int:
+        _, _, thought_evaluation_prompt, _, _ = ToTPrompts.get_prompts(use_vlm=self.use_vlm)
+
+        format_args = {
+            'skills': self.skills,
+            'user_request': user_request,
+            'thought': thought,
+        }
+        if not self.use_vlm:
+            format_args['environment_map'] = environment_map
+
+        msg = thought_evaluation_prompt.format(**format_args)
+        resp = self._call_client(
             user_message=msg,
             system_message="You are an expert evaluator for robotic planning.",
             temperature=0.0, force_json=True,
+            image=image
         )
         score = 0
         data = json.loads(resp)
@@ -88,17 +93,23 @@ class TreeOfThought(LLMReasoningMethod):
         return score
 
     def _evaluate_thoughts_batch(self, plans: dict, environment_map: str,
-                                  user_request: str) -> dict:
-        msg = thoughts_evaluation_in_batch_prompt.format(
-            environment_map=environment_map,
-            user_request=user_request,
-            skills=self.skills,
-            thoughts=json.dumps(list(plans.values()), indent=2),
-        )
-        resp = self.llm(
+                                  user_request: str, image=None) -> dict:
+        _, _, _, thoughts_evaluation_in_batch_prompt, _ = ToTPrompts.get_prompts(use_vlm=self.use_vlm)
+
+        format_args = {
+            'user_request': user_request,
+            'skills': self.skills,
+            'thoughts': json.dumps(list(plans.values()), indent=2),
+        }
+        if not self.use_vlm:
+            format_args['environment_map'] = environment_map
+
+        msg = thoughts_evaluation_in_batch_prompt.format(**format_args)
+        resp = self._call_client(
             user_message=msg,
             system_message="You are an expert judge for robotic planning.",
             temperature=0.0, force_json=True,
+            image=image
         )
         evals = json.loads(resp).get('scores', [])
         assert len(evals) == len(plans), f"Eval count mismatch: {len(evals)} vs {len(plans)}"
@@ -123,7 +134,7 @@ class TreeOfThought(LLMReasoningMethod):
         chain.reverse()
         return chain
 
-    def generate_tree_based_solution(self, environment_map: str, user_request: str):
+    def generate_tree_based_solution(self, environment_map: str, user_request: str, image=None):
         tree = Tree()
         tree.create_node("Tree of Thoughts", "0-0")
         db = {}
@@ -140,7 +151,11 @@ class TreeOfThought(LLMReasoningMethod):
                     best_ids = []
 
                 new_thoughts = self._generate_action_thought(
-                    environment_map, user_request, chain, self.k
+                    environment_map=environment_map,
+                    user_request=user_request,
+                    previous_thought=chain,
+                    num_actions=self.k,
+                    image=image
                 )
                 for i, thought in enumerate(new_thoughts):
                     tid = f'{iteration+1}-{self.k * idx + i + 1}'
@@ -155,14 +170,24 @@ class TreeOfThought(LLMReasoningMethod):
                 for tid in db:
                     if tid.startswith(f'{iteration+1}-'):
                         chain = self._retrieve_chain(tid, tree, db)
-                        score = self._evaluate_thought(chain, environment_map, user_request)
+                        score = self._evaluate_thought(
+                            thought=chain,
+                            environment_map=environment_map,
+                            user_request=user_request,
+                            image=image
+                        )
                         evaluated.append((tid, score))
             else:
                 plans = {
                     tid: self._retrieve_chain(tid, tree, db)
                     for tid in db if tid.startswith(f'{iteration+1}-')
                 }
-                scores = self._evaluate_thoughts_batch(plans, environment_map, user_request)
+                scores = self._evaluate_thoughts_batch(
+                    plans=plans,
+                    environment_map=environment_map,
+                    user_request=user_request,
+                    image=image
+                )
                 evaluated = list(scores.items())
 
             evaluated.sort(key=lambda x: x[1], reverse=True)
@@ -181,14 +206,18 @@ class TreeOfThought(LLMReasoningMethod):
 
     def __call__(self, force_replan: bool = False, verbose: bool = False, **kwargs):
         assert 'user_request' in kwargs
-        assert 'environment_map' in kwargs
 
-        env_map = kwargs['environment_map']
+        env_map = kwargs.get('environment_map', '')
         user_req = kwargs['user_request']
+        image = kwargs.get('image', None)
 
         if force_replan or (user_req != self.user_request and not self.task_plan):
             self.set_user_request(user_req)
-            self.task_plan, self.thoughts_tree = self.generate_tree_based_solution(env_map, user_req)
+            self.task_plan, self.thoughts_tree = self.generate_tree_based_solution(
+                environment_map=env_map,
+                user_request=user_req,
+                image=image
+            )
             self._verbose_print('ToT final plan', {'plan': self.task_plan})
 
         if self.task_plan:

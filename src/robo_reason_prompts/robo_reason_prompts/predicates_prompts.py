@@ -1,6 +1,9 @@
 """Predicates prompt templates — adapted for UR5 from RoboReason-Lab."""
 
-predicates_prompt = """You have to predict the predicates that define relationships among objects based on the environment description.
+class PredicatesPrompts:
+    @staticmethod
+    def get_prompts(use_vlm: bool = False):
+        predicates_prompt = """You have to predict the predicates that define relationships among objects based on the environment description.
 
 You will receive:
 - **Predicates library** You must use only the predicates from the provided predicates library:
@@ -42,7 +45,7 @@ You will receive:
 - You are not required to describe trivial predicates (ie. Contact(Chair, Floor) or Inside(Chair, Room/Scene)).
 """
 
-goal_predicates_prompt = """You must understand the overall goal and you have to predict the predicates that will describe the environment once the goal is achieved.
+        goal_predicates_prompt = """You must understand the overall goal and you have to predict the predicates that will describe the environment once the goal is achieved.
 
 You have to answer based on the following information:
 
@@ -86,3 +89,8 @@ You will predict:
 - You will receive a penalty if you predict predicates that are not relevant to the task's request or the way the environment will look like once the task will be completed.
 - You will receive a penalty if you predict negation of a given predicate (ie. not(blocking(a, b))).
 """
+        if use_vlm:
+            predicates_prompt = predicates_prompt.replace("{environment_description}", "Infer from image")
+            goal_predicates_prompt = goal_predicates_prompt.replace("{environment_description}", "Infer from image")
+            
+        return predicates_prompt, goal_predicates_prompt

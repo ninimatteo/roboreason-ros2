@@ -59,14 +59,14 @@
     }
   },
   "targets": {
-    "zone_a": {
+    "brown_box": {
       "type": "zone",
       "color": "white",
       "label": "A",
       "position": [0.55, -0.20, 0.05],
       "size": [0.15, 0.15, 0.01]
     },
-    "zone_b": {
+    "white_box": {
       "type": "zone",
       "color": "white",
       "label": "B",

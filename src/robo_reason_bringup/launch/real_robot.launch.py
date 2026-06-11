@@ -25,11 +25,13 @@ Single-terminal usage (all nodes including CLI):
   ros2 launch robo_reason_bringup real_robot.launch.py include_task_interface:=true
 
 Parameters:
+  mode                LLM (default) or VLM — planner mode
   robot_ip            UR5 robot IP (default: 192.168.2.60)
-  use_mock_llm        Set true for dry-run without API key (default: false)
+  use_mock_llm        Set true for dry-run without API key (default: false, LLM mode only)
   reasoning_method    fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
   model_name          groq/llama4-scout-17b | groq/llama3.3-70b | groq/llama3.1-8b (default: groq/llama4-scout-17b)
-  temperature         LLM temperature, 0.0 = deterministic (default: 0.1)
+  temperature         LLM/VLM temperature, 0.0 = deterministic (default: 0.1)
+  tmp_dir             Directory for VLM frame cache (default: /tmp/roboreason_vlm)
   include_task_interface  Launch the CLI node in this process (default: false)
 """
 
@@ -42,16 +44,20 @@ from launch.conditions import IfCondition
 
 def generate_launch_description():
     return LaunchDescription([
+        DeclareLaunchArgument('mode', default_value='LLM',
+                              description="Planner mode: 'LLM' (default) or 'VLM'"),
         DeclareLaunchArgument('robot_ip', default_value='192.168.2.60',
                               description='UR5 robot IP address'),
         DeclareLaunchArgument('use_mock_llm', default_value='false',
-                              description='Use mock planner (no API key needed)'),
+                              description='Use mock planner (no API key needed, LLM mode only)'),
         DeclareLaunchArgument('reasoning_method', default_value='fhp',
                               description='Reasoning method: fhp, ffhp, react, cot_sc, tot, always_act, self_refine'),
         DeclareLaunchArgument('model_name', default_value='groq/llama4-scout-17b',
-                              description='LLM model (use groq/llama* models only — others do not support JSON mode)'),
+                              description='LLM/VLM model name'),
         DeclareLaunchArgument('temperature', default_value='0.1',
-                              description='LLM temperature (0.0 = deterministic)'),
+                              description='Temperature (0.0 = deterministic)'),
+        DeclareLaunchArgument('tmp_dir', default_value='/tmp/roboreason_vlm',
+                              description='Directory for VLM frame cache (VLM mode only)'),
         DeclareLaunchArgument('include_task_interface', default_value='false',
                               description='Also launch the interactive CLI node in this process'),
 
@@ -61,10 +67,12 @@ def generate_launch_description():
             name='llm_planner_node',
             output='screen',
             parameters=[{
+                'mode': LaunchConfiguration('mode'),
                 'use_mock_llm': LaunchConfiguration('use_mock_llm'),
                 'reasoning_method': LaunchConfiguration('reasoning_method'),
                 'model_name': LaunchConfiguration('model_name'),
                 'temperature': LaunchConfiguration('temperature'),
+                'tmp_dir': LaunchConfiguration('tmp_dir'),
             }],
         ),
 

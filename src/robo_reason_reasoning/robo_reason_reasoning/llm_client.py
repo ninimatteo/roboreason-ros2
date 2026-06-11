@@ -114,3 +114,12 @@ class LLMClient:
 
         else:
             raise NotImplementedError(f"Provider {self.provider} not implemented.")
+
+
+if __name__ == "__main__":
+    
+    # Example usage
+    llm_client = LLMClient(model_name="groq/openai-oss-120b", temperature=0.7)
+    response = llm_client("What is the capital of France?")
+    print(response)
+    llm_client.log_usage_metrics()

@@ -1,6 +1,9 @@
 """Tree of Thoughts prompt templates — adapted for UR5 from RoboReason-Lab."""
 
-plan_generation_prompt = """
+class ToTPrompts:
+    @staticmethod
+    def get_prompts(use_vlm: bool = False):
+        plan_generation_prompt = """
 Your task is to plan a sequence of actions to achieve the user's request.
 Inputs:
 **Environment Description** The physical information about the environment: \n{environment_map}
@@ -24,7 +27,7 @@ Inputs:
 Generate a plan that is feasible and aligns with the user's request. Think step by step, starting from the current state of the environment and the user's request.
 """
 
-action_generation_prompt = """
+        action_generation_prompt = """
 Your task is to generate a set of possible actions for the next step to achieve the user's request. You might already have a plan so far.
 You must use the JSON output schema provided.
 Inputs:
@@ -54,7 +57,7 @@ What are the possible actions you can take for the next step? Consider 'move_hom
 ```
 """
 
-thought_evaluation_prompt = """
+        thought_evaluation_prompt = """
 Your task is to evaluate the solutions to a given user request in a physical environment.
 Evaluate the following plan based on its feasibility and alignment with the user's request.
 Evaluate feasibility taking into account the environment map ('environment_feasibility' in your response) and the skills library ('embodiment_feasibility' in your response).
@@ -78,7 +81,7 @@ Respond strictly in the JSON format specified above.
 Think step by step, starting from the current state of the environment and the user's request.
 """
 
-thoughts_evaluation_in_batch_prompt = """
+        thoughts_evaluation_in_batch_prompt = """
 Your task is to evaluate the solutions to a given user request in a physical environment.
 Evaluate the following plans based on their feasibility and alignment with the user's request.
 Evaluate feasibility taking into account the environment map ('environment_feasibility' in your response) and the skills library ('embodiment_feasibility' in your response).
@@ -116,7 +119,7 @@ Respond strictly in the JSON format specified above.
 Think step by step, starting from the current state of the environment and the user's request.
 """
 
-thought_sorting_prompt = """
+        thought_sorting_prompt = """
 Your task is to sort a list of plans based on the last appended action. You must rank them according to their feasibility and alignment with the user's request.
 Inputs:
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
@@ -141,3 +144,13 @@ Inputs:
 }}
 ```
 """
+
+        if use_vlm:
+            plan_generation_prompt = plan_generation_prompt.replace("{environment_map}", "Infer from image")
+            action_generation_prompt = action_generation_prompt.replace("{environment_map}", "Infer from image")
+            thought_evaluation_prompt = thought_evaluation_prompt.replace("{environment_map}", "Infer from image")
+            thoughts_evaluation_in_batch_prompt = thoughts_evaluation_in_batch_prompt.replace("{environment_map}", "Infer from image")
+            thought_sorting_prompt = thought_sorting_prompt.replace("{environment_map}", "Infer from image")
+            
+        return (plan_generation_prompt, action_generation_prompt, thought_evaluation_prompt, 
+                thoughts_evaluation_in_batch_prompt, thought_sorting_prompt)

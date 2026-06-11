@@ -1,0 +1,10 @@
+# GetImage.srv
+# Planner requests the current RGB frame from the camera node.
+#
+# Request: (empty — always returns the latest frame)
+---
+# Response
+bool success
+sensor_msgs/Image image     # RGB image, latest frame from the camera
+string frame_id             # optical frame the image was captured in
+string error_message
