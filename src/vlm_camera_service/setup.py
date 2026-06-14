@@ -23,8 +23,8 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "mock_camera_services_node = vlm_camera_service_mock.mock_camera_services_node:main",
-            "pixel_overlay_viewer_node = vlm_camera_service_mock.pixel_overlay_viewer_node:main",
+            "camera_services_node = vlm_camera_service.camera_services_node:main",
+            "pixel_overlay_viewer_node = vlm_camera_service.pixel_overlay_viewer_node:main",
         ],
     },
 )

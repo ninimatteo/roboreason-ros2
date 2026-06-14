@@ -69,26 +69,9 @@ class WorldState:
         skill = skill_name.lower()
 
         if skill == 'pick':
-            target_pos = args.get('target_position')
-            # Match on XY only: grasp Z is at the bottom of the object, not its centre
-            obj_id = self.find_object_near(target_pos, xy_only=True) if target_pos else None
-            if obj_id:
-                self.state['objects'][obj_id]['state'] = 'held'
-                self.state['objects'][obj_id]['position'] = None
-                self.state['robot']['holding'] = obj_id
+            self.state['robot']['holding'] = 'object'
 
         elif skill == 'release':
-            release_pos = args.get('release_position')
-            obj_id = self.robot_holding()
-            if obj_id and release_pos:
-                obj = self.state['objects'][obj_id]
-                height = obj.get('size', [0, 0, 0.05])[2]
-                self.state['objects'][obj_id]['state'] = 'on_table'
-                self.state['objects'][obj_id]['position'] = [
-                    release_pos[0],
-                    release_pos[1],
-                    release_pos[2] + height / 2,
-                ]
-                self.state['robot']['holding'] = None
+            self.state['robot']['holding'] = None
 
         # approach, move_home, wait do not change the logical world state

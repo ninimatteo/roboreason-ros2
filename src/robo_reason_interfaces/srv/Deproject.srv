@@ -9,6 +9,9 @@ uint32[] v                  # pixel row    = height coordinate (h), one per poin
 ---
 # Response
 bool success
-geometry_msgs/Point[] points  # x, y, z in robot base frame, same order as the request
-string frame_id               # frame the points are expressed in (e.g. "base_link")
+geometry_msgs/Point[] points  # x, y, z in output frame, same order as the request
+string frame_id               # frame the points are expressed in (e.g. "base_link" or camera frame)
 string error_message
+bool charuco_pose_available            # true if the ChArUco board was detected in this call
+geometry_msgs/Point[] charuco_points  # same points expressed in charuco_board frame
+string charuco_frame_id               # frame of charuco_points (e.g. "charuco_board")

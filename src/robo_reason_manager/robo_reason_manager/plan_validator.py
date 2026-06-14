@@ -6,11 +6,12 @@ from robo_reason_manager.world_state import WorldState
 class PlanValidator:
     """Validates a plan list against the current world state."""
 
-    def validate(self, plan: list, world_state: WorldState):
+    def validate(self, plan: list, world_state: WorldState, mode: str = 'LLM'):
         """
         Validate a plan by checking structure and simulating execution on a copy.
         Returns (True, '') on success or (False, error_message) on failure.
         """
+        self._vlm_mode = mode.upper() == 'VLM'
         if not isinstance(plan, list) or len(plan) == 0:
             return False, "Plan must be a non-empty list of steps."
 
@@ -55,7 +56,7 @@ class PlanValidator:
                 return False, f"{label}: approach target {pos} is outside workspace limits."
 
         elif skill == 'pick':
-            if sim_state.robot_holding() is not None:
+            if not self._vlm_mode and sim_state.robot_holding() is not None:
                 return False, (
                     f"{label}: pick called but robot is already holding "
                     f"'{sim_state.robot_holding()}'. Release first."
@@ -65,7 +66,7 @@ class PlanValidator:
                 return False, f"{label}: pick target {pos} is outside workspace limits."
 
         elif skill == 'release':
-            if sim_state.robot_holding() is None:
+            if not self._vlm_mode and sim_state.robot_holding() is None:
                 return False, f"{label}: release called but robot is not holding anything."
             pos = step.get('release_position')
             if not sim_state.validate_workspace_position(pos):

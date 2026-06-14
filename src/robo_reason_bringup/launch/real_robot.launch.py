@@ -56,7 +56,7 @@ def generate_launch_description():
                               description='LLM/VLM model name'),
         DeclareLaunchArgument('temperature', default_value='0.1',
                               description='Temperature (0.0 = deterministic)'),
-        DeclareLaunchArgument('tmp_dir', default_value='/tmp/roboreason_vlm',
+        DeclareLaunchArgument('tmp_dir', default_value='/root/ws/src/vlm_frames',
                               description='Directory for VLM frame cache (VLM mode only)'),
         DeclareLaunchArgument('include_task_interface', default_value='false',
                               description='Also launch the interactive CLI node in this process'),
@@ -81,6 +81,7 @@ def generate_launch_description():
             executable='plan_manager_node',
             name='plan_manager_node',
             output='screen',
+            parameters=[{'mode': LaunchConfiguration('mode')}],
         ),
 
         Node(

@@ -6,8 +6,9 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
-from vlm_camera_interfaces.msg import PixelArray
+from robo_reason_interfaces.msg import PixelArray
 
 from vlm_camera_service.charuco_utils import (
     CharucoConfig,
@@ -36,6 +37,7 @@ class PixelOverlayViewerNode(Node):
         self.declare_parameter("charuco_marker_length_m", 0.015)
         self.declare_parameter("charuco_axis_length_m", 0.08)
         self.declare_parameter("charuco_min_corners", 4)
+        self.declare_parameter("charuco_z_sign", -1.0)
 
         color_topic = self.get_parameter("color_topic").value
         camera_info_topic = self.get_parameter("camera_info_topic").value
@@ -56,6 +58,7 @@ class PixelOverlayViewerNode(Node):
             ),
             axis_length_m=float(self.get_parameter("charuco_axis_length_m").value),
             min_corners=int(self.get_parameter("charuco_min_corners").value),
+            z_sign=float(self.get_parameter("charuco_z_sign").value),
         )
 
         self._latest_pixels: list[tuple[int, int]] = []
@@ -65,9 +68,9 @@ class PixelOverlayViewerNode(Node):
         self._last_charuco_detected = False
         self._last_charuco_error = ""
 
-        self._color_sub = self.create_subscription(Image, color_topic, self._on_image, 10)
+        self._color_sub = self.create_subscription(Image, color_topic, self._on_image, qos_profile_sensor_data)
         self._camera_info_sub = self.create_subscription(
-            CameraInfo, camera_info_topic, self._on_camera_info, 10
+            CameraInfo, camera_info_topic, self._on_camera_info, qos_profile_sensor_data
         )
         self._pixel_sub = self.create_subscription(
             PixelArray, pixel_topic, self._on_pixels, 10
@@ -123,7 +126,19 @@ class PixelOverlayViewerNode(Node):
                 draw_charuco_overlay(
                     frame=frame,
                     pose=pose,
-                    axis_length_m=self._charuco_config.axis_length_m,
+                    config=self._charuco_config,
+                )
+                # Overlay the detected board pose (camera frame) on the image.
+                tv = pose.tvec.flatten()
+                cv2.putText(
+                    frame,
+                    f"board(cam): x={tv[0]:+.3f} y={tv[1]:+.3f} z={tv[2]:+.3f} m",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
                 )
                 if not self._last_charuco_detected:
                     self.get_logger().info("ChArUco board detected")

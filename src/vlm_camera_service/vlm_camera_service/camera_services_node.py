@@ -4,16 +4,22 @@ from typing import Optional
 
 import numpy as np
 import rclpy
+import tf2_ros
 from geometry_msgs.msg import Point
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
-from vlm_camera_interfaces.msg import PixelArray
-from vlm_camera_interfaces.srv import Deproject, GetImage
+from robo_reason_interfaces.msg import PixelArray
+from robo_reason_interfaces.srv import Deproject, GetImage
 
 from vlm_camera_service.charuco_utils import (
     CharucoConfig,
+    T_to_transform_stamped,
+    board_pose_to_matrix,
     camera_point_to_charuco,
+    compute_T_base_camera,
     detect_charuco_pose,
+    transform_point_to_base,
 )
 
 
@@ -40,7 +46,20 @@ class CameraServicesNode(Node):
         self.declare_parameter("charuco_marker_length_m", 0.015)
         self.declare_parameter("charuco_axis_length_m", 0.08)
         self.declare_parameter("charuco_min_corners", 4)
+        self.declare_parameter("charuco_z_sign", -1.0)
         self.declare_parameter("charuco_frame_id", "charuco_board")
+        # Known pose of the ArUco board in robot base_link frame (measured once).
+        # Position in metres, rotation as intrinsic RPY in radians.
+        # When these are set correctly the Deproject service returns base_link coords.
+        self.declare_parameter("board_in_base_x",     0.0)
+        self.declare_parameter("board_in_base_y",     0.0)
+        self.declare_parameter("board_in_base_z",     0.0)
+        self.declare_parameter("board_in_base_roll",  0.0)
+        self.declare_parameter("board_in_base_pitch", 0.0)
+        self.declare_parameter("board_in_base_yaw",   0.0)
+        # Extra Z offset added to base_link points before returning to the planner.
+        # Use a small positive value (e.g. 0.01) to lift points off the table surface.
+        self.declare_parameter("z_offset_m", 0.0)
 
         color_topic = self.get_parameter("color_topic").value
         depth_topic = self.get_parameter("depth_topic").value
@@ -65,19 +84,36 @@ class CameraServicesNode(Node):
             ),
             axis_length_m=float(self.get_parameter("charuco_axis_length_m").value),
             min_corners=int(self.get_parameter("charuco_min_corners").value),
+            z_sign=float(self.get_parameter("charuco_z_sign").value),
         )
+
+        self._z_offset_m = float(self.get_parameter("z_offset_m").value)
+
+        # Build the known board→base transform from parameters.
+        self._T_base_board = board_pose_to_matrix(
+            x=float(self.get_parameter("board_in_base_x").value),
+            y=float(self.get_parameter("board_in_base_y").value),
+            z=float(self.get_parameter("board_in_base_z").value),
+            roll=float(self.get_parameter("board_in_base_roll").value),
+            pitch=float(self.get_parameter("board_in_base_pitch").value),
+            yaw=float(self.get_parameter("board_in_base_yaw").value),
+        )
+        # Cached camera→base_link transform (updated every time ArUco is detected).
+        self._T_base_camera: Optional[np.ndarray] = None
+        # TF2 broadcaster — publishes camera optical frame → base_link.
+        self._tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
 
         self._latest_color: Optional[Image] = None
         self._latest_depth: Optional[Image] = None
         self._latest_camera_info: Optional[CameraInfo] = None
 
-        self._color_sub = self.create_subscription(Image, color_topic, self._on_color, 10)
-        self._depth_sub = self.create_subscription(Image, depth_topic, self._on_depth, 10)
+        self._color_sub = self.create_subscription(Image, color_topic, self._on_color, qos_profile_sensor_data)
+        self._depth_sub = self.create_subscription(Image, depth_topic, self._on_depth, qos_profile_sensor_data)
         self._camera_info_sub = self.create_subscription(
             CameraInfo,
             camera_info_topic,
             self._on_camera_info,
-            10,
+            qos_profile_sensor_data,
         )
         self._pixel_debug_pub = self.create_publisher(PixelArray, pixel_debug_topic, 10)
         self.create_service(GetImage, get_image_service, self._handle_get_image)
@@ -228,10 +264,26 @@ class CameraServicesNode(Node):
             response.error_message = str(exc)
             return response
 
-        response.success = True
-        response.points = points
-        response.frame_id = self._camera_frame_id()
+        # Try to update T_base_camera from ArUco before deciding the output frame.
         self._fill_charuco_points(points, response)
+
+        if self._T_base_camera is not None:
+            base_points = [transform_point_to_base(p, self._T_base_camera) for p in points]
+            if self._z_offset_m != 0.0:
+                for p in base_points:
+                    p.z += self._z_offset_m
+            response.success = True
+            response.points = base_points
+            response.frame_id = "base_link"
+        else:
+            self.get_logger().warn(
+                "No camera→base_link transform yet — returning camera-frame points. "
+                "Make sure the ArUco board is visible and board_in_base_* params are set."
+            )
+            response.success = True
+            response.points = points
+            response.frame_id = self._camera_frame_id()
+
         response.error_message = ""
         self.get_logger().info(
             f"Deproject -> {len(points)} points in {response.frame_id}, "
@@ -267,6 +319,38 @@ class CameraServicesNode(Node):
             camera_point_to_charuco(point, pose) for point in camera_points
         ]
         response.charuco_frame_id = self._charuco_frame_id
+
+        # Compute and cache camera→base_link from this detection.
+        T_base_cam = compute_T_base_camera(pose, self._T_base_board)
+        self._T_base_camera = T_base_cam
+
+        # Log the board origin in robot base_link frame and camera position.
+        tv = pose.tvec.flatten()
+        board_base = self._T_base_board[:3, 3]
+        cam_base = T_base_cam[:3, 3]
+        self.get_logger().info(
+            f"[ChArUco] tvec(cam_frame)=[{tv[0]:+.3f}, {tv[1]:+.3f}, {tv[2]:+.3f}] m  |  "
+            f"board_origin(base_link)=[{board_base[0]:+.3f}, {board_base[1]:+.3f}, {board_base[2]:+.3f}] m  |  "
+            f"camera(base_link)=[{cam_base[0]:+.3f}, {cam_base[1]:+.3f}, {cam_base[2]:+.3f}] m"
+        )
+
+        self._publish_camera_tf(T_base_cam)
+
+    def _publish_camera_tf(self, T_base_cam: np.ndarray) -> None:
+        """Broadcast the camera optical frame → base_link static TF."""
+        camera_frame = self._camera_frame_id() or "camera_optical_frame"
+        tf_msg = T_to_transform_stamped(
+            T_base_cam,
+            parent_frame="base_link",
+            child_frame=camera_frame,
+            stamp=self.get_clock().now().to_msg(),
+        )
+        self._tf_broadcaster.sendTransform(tf_msg)
+        t = T_base_cam[:3, 3]
+        self.get_logger().info(
+            f"[CalibUpdate] camera→base_link TF published "
+            f"(t=[{t[0]:.3f}, {t[1]:.3f}, {t[2]:.3f}] m)"
+        )
 
     def _publish_debug_pixels(self, u_values, v_values) -> None:
         msg = PixelArray()

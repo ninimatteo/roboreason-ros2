@@ -29,6 +29,9 @@ class PlanManagerNode(Node):
     def __init__(self):
         super().__init__('plan_manager_node')
 
+        self.declare_parameter('mode', 'LLM')
+        self._mode = self.get_parameter('mode').value.upper()
+
         self._cb_group = ReentrantCallbackGroup()
 
         self._service = self.create_service(
@@ -70,7 +73,7 @@ class PlanManagerNode(Node):
 
         # Validate
         validator = PlanValidator()
-        valid, val_err = validator.validate(plan, world_state.copy())
+        valid, val_err = validator.validate(plan, world_state.copy(), mode=self._mode)
         if not valid:
             self.get_logger().warn(f'[PlanManager] Plan validation failed: {val_err}')
             response.success = False
