@@ -22,9 +22,12 @@ class UR5Skills:
       - grasp_axis: final approach axis for closing: 'z' (top-down), 'x', 'y'
       - come_back: if true, return to the pre-grasp approach position after picking
 
-    - release: [release_position: list[float], come_back: bool]
+    - release: [release_position: list[float], object_height: float, come_back: bool]
       Move the end-effector to release_position and open the gripper to deposit the object.
-      - release_position: [x, y, z] in robot base frame (meters)
+      - release_position: [x, y, z] in robot base frame (meters) — the surface where the object will rest
+      - object_height: estimated height of the held object in meters (e.g. 0.05 for a small block, 0.10 for a cup).
+        The executor adds this offset to release_position z so the object's bottom lands on the surface
+        instead of the TCP being driven into the table. Set to 0.0 if unknown.
       - come_back: if true, return to previous position after releasing
 
     - move_home: []
@@ -57,9 +60,13 @@ class UR5Skills:
       - grasp_axis: final approach axis for closing: 'z' (top-down), 'x', 'y'
       - come_back: if true, return to the pre-grasp approach position after picking
 
-    - release: [release_position: list[float], come_back: bool]
+    - release: [release_position: list[float], object_height: float, come_back: bool]
       Move the end-effector to release_position and open the gripper to deposit the object.
-      - release_position: [h, w] in the image frame (top left corner)
+      - release_position: [h, w] in the image frame — the pixel on the surface where the object will rest
+      - object_height: estimated real-world height of the held object in meters
+        (e.g. 0.05 for a small block, 0.10 for a cup, 0.15 for a tall bottle).
+        The executor raises the TCP by this amount so the object bottom touches the surface
+        rather than the gripper being pushed into the table.
       - come_back: if true, return to previous position after releasing
 
     - move_home: []
@@ -81,6 +88,7 @@ class UR5Skills:
     "action_name": "<approach | pick | release | move_home | wait>",
     "target_position": [x, y, z],
     "release_position": [x, y, z],
+    "object_height": 0.0,
     "offset": 0.1,
     "approach_direction": "<z | x | y>",
     "grasp_axis": "<z | x | y>",
@@ -92,6 +100,7 @@ class UR5Skills:
     "action_name": "<approach | pick | release | move_home | wait>",
     "target_position": [h, w],
     "release_position": [h, w],
+    "object_height": 0.0,
     "offset": 0.1,
     "approach_direction": "<z | x | y>",
     "grasp_axis": "<z | x | y>",

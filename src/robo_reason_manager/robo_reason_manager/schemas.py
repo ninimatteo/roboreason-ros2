@@ -14,7 +14,7 @@ SKILL_REQUIRED_ARGS = {
 SKILL_OPTIONAL_ARGS = {
     "approach": ["offset", "approach_direction"],
     "pick": ["grasp_axis", "come_back"],
-    "release": ["come_back"],
+    "release": ["come_back", "open_force", "object_height"],
     "move_home": [],
     "wait": [],
 }
@@ -22,7 +22,7 @@ SKILL_OPTIONAL_ARGS = {
 SKILL_DEFAULTS = {
     "approach": {"offset": 0.1, "approach_direction": "z"},
     "pick": {"grasp_axis": "z", "come_back": False},
-    "release": {"come_back": False},
+    "release": {"come_back": False, "open_force": 20.0, "object_height": 0.0},
     "move_home": {},
     "wait": {},
 }

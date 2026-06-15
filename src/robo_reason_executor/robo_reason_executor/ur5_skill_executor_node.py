@@ -80,8 +80,8 @@ class UR5SkillExecutorNode(Node):
     External Control stays connected throughout — no interruption.
     """
 
-    # Home configuration (radians)
-    HOME_JOINTS = [-1.5708, -1.5708, -1.5708, -1.5708, 1.5708, 0.0]
+    # Home configuration (radians) — default, overridden by 'home_joints' ROS param.
+    _DEFAULT_HOME_JOINTS = [-1.5708, -1.5708, -1.5708, -1.5708, 1.5708, 0.0]
 
     # Gripper orientation for top-down (z) approach (qw, qx, qy, qz)
     _GRIP_QUAT_Z = [0.0, -0.707, 0.707, 0.0]
@@ -103,7 +103,11 @@ class UR5SkillExecutorNode(Node):
             raise RuntimeError('roboticstoolbox not available.')
 
         self.declare_parameter('robot_ip', '192.168.2.60')
+        self.declare_parameter('home_joints', self._DEFAULT_HOME_JOINTS)
         self._robot_ip = self.get_parameter('robot_ip').get_parameter_value().string_value
+        self.HOME_JOINTS = list(
+            self.get_parameter('home_joints').get_parameter_value().double_array_value
+        ) or list(self._DEFAULT_HOME_JOINTS)
 
         self._cb_group = ReentrantCallbackGroup()
 
@@ -162,6 +166,12 @@ class UR5SkillExecutorNode(Node):
         self._startup_timer.cancel()
         self.get_logger().info('[UR5Executor] Moving to home position on startup.')
         self._move_to_joints(self.HOME_JOINTS, duration_sec=4.0)
+        # Force a known open state regardless of the digital-output level left
+        # over from a previous session (pendant script may not retrigger on a
+        # LOW→LOW non-edge). Pulse HIGH→LOW to guarantee the gripper opens.
+        self.get_logger().info('[UR5Executor] Pulsing gripper HIGH→LOW to ensure open state.')
+        self._gripper_set_pin(1.0)
+        self._gripper_open()
 
     # -------------------------------------------------------------------------
     # Joint state callback
@@ -513,8 +523,19 @@ class UR5SkillExecutorNode(Node):
                 raise RuntimeError('gripper close failed')
 
         elif skill_name == 'release':
-            release_pos = args['release_position']
+            release_pos = list(args['release_position'])
             open_force = float(args.get('open_force', 20.0))
+            # object_height: how tall the held object is (metres).
+            # The camera sees the *surface* (z = table), so we lift the TCP by
+            # object_height so the object's bottom rests on the surface rather
+            # than the TCP being driven into the table.
+            object_height = float(args.get('object_height', 0.0))
+            if object_height > 0.0:
+                release_pos[2] += object_height
+                self.get_logger().info(
+                    f'[UR5Executor] release: applying object_height={object_height:.3f} m '
+                    f'→ release z = {release_pos[2]:.3f}'
+                )
 
             # 1. Linear move down to release position (mirrors pick)
             feedback.status = 'Linear move to release position'

@@ -1,6 +1,6 @@
 # Session Context — RoboReason ROS2 VLM Pipeline
 
-**Date:** 2026-06-11
+**Last updated:** 2026-06-15
 
 ---
 
@@ -9,8 +9,6 @@
 **RoboReason ROS2** is an LLM/VLM-based task planner for a UR5cb robot equipped with an OnRobot RG2 gripper. The system uses large language models and, optionally, vision-language models to interpret tasks, reason about the environment, and generate executable robot plans.
 
 ### ROS2 Package Structure
-
-The workspace contains 9 ROS2 packages:
 
 | Package | Role |
 |---|---|
@@ -23,24 +21,34 @@ The workspace contains 9 ROS2 packages:
 | `robo_reason_interfaces` | Custom ROS2 message and service definitions |
 | `robo_reason_real` | Real-robot hardware interface (UR driver integration) |
 | `robo_reason_bringup` | Launch files for bringing up the full stack |
+| `vlm_camera_service` | Camera bridge: ChArUco calibration, image/depth services |
 
 ### Service / Action Data Flow
 
 ```
 task_interface
     → /plan_task (service)
-        → /execute_plan (action)
-            → /execute_skill (service, per skill)
+        → /execute_plan (service)
+            → /execute_skill (action, per skill)
                 → joint trajectory commands (UR5cb)
                 → gripper SetIO commands (OnRobot RG2)
+```
+
+VLM mode inserts a camera step inside `/plan_task`:
+```
+llm_planner_node
+    → /camera/get_image  (GetImage service)
+    → EmbodiedAgent(vlm) → pixel [w, h] coordinates
+    → /camera/deproject  (Deproject service, batched)
+    → 3D [x, y, z] in base_link
 ```
 
 ### Docker Container
 
 - **Image tag:** `roboreason:ur`
 - **Launch alias:** `roboreason-ur`
-- The alias was updated during this session to include `--privileged -v /dev:/dev` to allow USB camera access from inside the container.
-- **Workspace mount:** `/home/matteonini/docker_ws/ros2_humble` on the host is mounted to `/root/ws` inside the container.
+- Alias includes `--privileged -v /dev:/dev` for USB camera access.
+- **Workspace mount:** `/home/matteonini/docker_ws/ros2_humble` on host → `/root/ws` inside container.
 
 ---
 
@@ -48,128 +56,54 @@ task_interface
 
 ### Mode Selection
 
-The planner node supports two operating modes, selected at launch time via the `mode` parameter:
-
 **`mode='LLM'` (default)**
 - Uses `EmbodiedAgent` with Groq LLM backend (or a mock).
 - Scene information comes from `scene_mock.json` (static description).
 - No camera hardware required.
 
 **`mode='VLM'`**
-- Camera node (Orbbec) publishes `/camera/color/image_raw` and `/camera/depth/image_raw`.
-- The planner calls `/camera/get_image` (async/polled) to capture an RGB frame, which is saved to disk at `/tmp/roboreason_vlm/<task_id>/<index>_<stamp>.png`.
-- The frame path is passed to `EmbodiedAgent(client_type='vlm')` which calls the VLM API and returns pixel coordinates `[w, h]` for objects of interest.
-- The planner calls `/camera/deproject` in batch mode, converting pixel coordinates to 3D `[x, y, z]` in the `base_link` frame.
-- The resulting 3D pose is forwarded through the standard manager/executor pipeline.
+- Camera node (Orbbec) publishes RGB and depth topics.
+- The planner calls `/camera/get_image` to capture an RGB frame, saved to `/root/ws/src/vlm_frames/<task_id>/<index>_<stamp>.png`.
+- The frame path is passed to `EmbodiedAgent(client_type='vlm')` which returns pixel coordinates `[w, h]` for objects of interest.
+- The planner calls `/camera/deproject` in batch mode, converting pixel coordinates to 3D `[x, y, z]` in `base_link`.
+- The resulting 3D plan is forwarded through the standard manager/executor pipeline.
 
-### Concurrency Requirement
+In VLM mode `scene_mock.json` is **ignored for planning** (replaced by the camera image), but is still sent to `plan_manager_node` for workspace limit validation.
 
-`MultiThreadedExecutor` and `ReentrantCallbackGroup` are **required** in VLM mode. Without them, service calls made from inside other service callbacks deadlock because ROS2 cannot process the response of the inner call while the outer callback is still executing.
+### Concurrency
+
+`MultiThreadedExecutor` + `ReentrantCallbackGroup` are required in VLM mode to avoid deadlock when service calls are made from inside other service callbacks.
+
+### VLM Image Storage
+
+Images are saved to `/root/ws/src/vlm_frames/` (host: `/home/matteonini/docker_ws/ros2_humble/src/vlm_frames/`). Each task gets its own UUID subfolder. Browse directly from the host file explorer.
 
 ---
 
-## EmbodiedAgent Refactor
+## ChArUco Calibration
 
-This refactor was done by colleagues on the branch `embodied-agent-generalized`.
+### Board Parameters (current)
 
-### Constructor Changes
-
-| Old parameter | New parameter |
+| Parameter | Value |
 |---|---|
-| `llm_parameters` | `client_parameters` |
-| (not present) | `client_type='llm'` or `client_type='vlm'` |
+| Dictionary | `DICT_6X6_250` |
+| Layout | 3×4 squares |
+| `square_length` | 0.062 m |
+| `marker_length` | 0.031 m |
+| `axis_length` | 0.08 m |
 
-### Observation Dictionary Changes
+### Board Pose in base_link (current defaults)
 
-| Mode | Old key | New key / value |
-|---|---|---|
-| LLM | `'environment_map'` | unchanged |
-| VLM | `'environment_map'` | `'image': str` (file path to saved frame) |
+| Parameter | Value |
+|---|---|
+| `board_in_base_x` | -0.224 m |
+| `board_in_base_y` | -0.348 m |
+| `board_in_base_z` | 0.0 m |
+| `board_in_base_roll` | 3.14159 rad (180° around X) |
+| `board_in_base_pitch` | 0.0 |
+| `board_in_base_yaw` | 1.5708 rad (90° around Z) |
 
-### Planner Update
-
-The planner node was updated to match the new constructor signature:
-
-```python
-EmbodiedAgent(client_parameters=..., client_type='llm')   # LLM mode
-EmbodiedAgent(client_parameters=..., client_type='vlm')   # VLM mode
-```
-
-And the observation passed to the agent in VLM mode:
-
-```python
-observation = {'image': image_paths[-1]}
-```
-
----
-
-## FoundationClients Import Bugs Fixed
-
-Both `llm_client.py` and `vlm_client.py` contained a broken `try/except` import fallback:
-
-```python
-# BROKEN — only works when running as a script, fails when installed by colcon
-try:
-    from .base_client import BaseClient
-except ImportError:
-    from src.base_client import BaseClient
-```
-
-The fallback `from src.base_client` resolves incorrectly when the package is installed as a Python package by colcon. The fix replaces both with the correct relative import:
-
-```python
-from .base_client import BaseClient
-```
-
-**Files fixed:**
-- `src/robo_reason_reasoning/robo_reason_reasoning/FoundationClients/src/llm_client.py`
-- `src/robo_reason_reasoning/robo_reason_reasoning/FoundationClients/src/vlm_client.py`
-
-Additionally, `base_client.py` uses `pandas` for usage metrics tracking, and `vlm_client.py` uses `Pillow` for image handling. Both were added to the Dockerfile as pip dependencies.
-
----
-
-## VLM Camera Service Package
-
-**Branch:** `VLM_Camera`
-**Package name:** `vlm_camera_service`
-
-### What the Package Does
-
-**`camera_services_node`**
-- Subscribes to `/camera/color/image_raw`, `/camera/depth/image_raw`, `/camera/color/camera_info`.
-- Exposes two ROS2 services:
-  - `/camera/get_image` — captures and returns an RGB frame (or saves it to disk).
-  - `/camera/deproject` — takes pixel coordinates and returns 3D world-frame coordinates.
-- Publishes `/camera/debug_pixels` for visualization.
-
-**`pixel_overlay_viewer_node`**
-- Displays a live OpenCV window showing the RGB feed.
-- Overlays detected ChArUco board axes and VLM pixel markers.
-
-**`charuco_utils.py`**
-- Full ChArUco board detection using `cv2.aruco`.
-- Pose estimation returning `rvec` and `tvec` (rotation vector and translation vector) of the board in the camera frame.
-
-### What Was Missing and What Was Added
-
-The Deproject service originally returned coordinates in the **camera frame**, not in `base_link`. A full transform chain was implemented.
-
-**Added to `charuco_utils.py`:**
-- `board_pose_to_matrix` — converts `(rvec, tvec)` to a 4×4 homogeneous transform matrix `T_cam_board`.
-- `compute_T_base_camera` — computes `T_base_cam = T_base_board @ inv(T_cam_board)`.
-- `transform_point_to_base` — applies the transform to a single 3D point.
-- `rotation_matrix_to_quaternion` — converts a 3×3 rotation matrix to quaternion `(x, y, z, w)`.
-- `T_to_transform_stamped` — wraps a 4×4 transform into a `geometry_msgs/TransformStamped`.
-- `rpy_to_rotation_matrix` — converts roll/pitch/yaw (intrinsic ZYX) to a 3×3 rotation matrix.
-
-**Added to `camera_services_node.py`:**
-- Parameters: `board_in_base_x`, `board_in_base_y`, `board_in_base_z`, `board_in_base_roll`, `board_in_base_pitch`, `board_in_base_yaw`.
-- These parameters describe the measured pose of the ChArUco board in the `base_link` frame.
-- `T_base_board` is built from these parameters at startup.
-- `T_base_camera` is cached each time the ChArUco board is detected.
-- A TF2 `StaticTransformBroadcaster` publishes the computed camera-to-base transform on `/tf_static`.
-- `_publish_camera_tf()` is called whenever a fresh board detection is available.
+Intrinsic XYZ convention: roll first, then pitch, then yaw.
 
 ### Transform Chain
 
@@ -177,289 +111,115 @@ The Deproject service originally returned coordinates in the **camera frame**, n
 T_base_cam = T_base_board @ inv(T_cam_board)
 ```
 
-where:
-- `T_cam_board` is obtained from ArUco pose estimation (live, per-frame).
-- `T_base_board` is fixed and comes from the manually measured `board_in_base_*` parameters.
+- `T_cam_board`: live from ArUco pose estimation each frame.
+- `T_base_board`: fixed, from `board_in_base_*` parameters.
 
-When the ChArUco board is **visible**: Deproject returns coordinates in `base_link`.
-When the ChArUco board is **not visible**: the node emits a warning and returns coordinates in the camera frame.
+When ChArUco is **visible**: Deproject returns coordinates in `base_link`.
+When ChArUco is **not visible**: warning emitted, coordinates returned in camera frame.
 
-### Bugs Fixed in the Camera Package
+### z_sign
 
-1. **`setup.py` entry points** pointed to `vlm_camera_service_mock` (wrong module name). Fixed to `vlm_camera_service`.
+`charuco_z_sign=1.0` (default) → right-handed triad, Z points toward camera.
+`charuco_z_sign=-1.0` → left-handed triad (avoid).
 
-2. **`setup.cfg` install path** was `vlm_camera_service_mock`. Fixed to `vlm_camera_service`.
+### z_offset_m
 
-3. **Imports in `camera_services_node.py` and `pixel_overlay_viewer_node.py`** imported interfaces from `vlm_camera_interfaces` (a package that does not exist). Fixed to import from `robo_reason_interfaces`.
-
-4. **`Deproject.srv` was missing fields** that the node was trying to set on the response object: `charuco_pose_available`, `charuco_points`, `charuco_frame_id`. Because these fields were absent from the `.srv` definition, the assignment was silently swallowed as a Python attribute error, the response was never properly populated, and the service call **hung indefinitely** on the client side. The fields were added to the `.srv` file (see next section).
+A configurable Z offset (default `0.01` m = 1 cm) is added to all deprojected `base_link` points before returning them to the planner. This lifts object coordinates slightly above the table surface to avoid "inside table" positions.
 
 ---
 
-## ROS2 Interfaces Changes
+## Key Bugs Fixed (this session)
 
-### `Deproject.srv`
+### 1. ChArUco detection improvements
+- Replaced `estimatePoseCharucoBoard` with `solvePnP` (SOLVEPNP_ITERATIVE) — more stable.
+- Switched to `cv2.aruco.ArucoDetector` new API with `CORNER_REFINE_NONE`.
+- Manual axis drawing with `projectPoints` to support explicit `z_sign`.
 
-Three fields were added to the **response** section:
+### 2. OpenCV 4.5.4 type compatibility
+`cv2.line`, `cv2.circle`, `cv2.putText` reject `numpy.int32` scalars.
+Fix: `np.round(...).astype(np.int32).tolist()` to get pure Python int coordinates.
 
-```
-bool charuco_pose_available
-geometry_msgs/Point[] charuco_points
-string charuco_frame_id
-```
+### 3. QoS mismatch
+Camera driver publishes with `BEST_EFFORT` (sensor data profile). All three camera subscriptions in `camera_services_node` and `pixel_overlay_viewer_node` were changed from default `RELIABLE` to `qos_profile_sensor_data`.
 
-- `charuco_pose_available`: whether the ChArUco board was detected in the current frame.
-- `charuco_points`: the deprojected points expressed in the ChArUco board frame (useful for debugging — if `z ≈ 0`, the ArUco detection is correct and any remaining error is in the `board_in_base_*` parameters).
-- `charuco_frame_id`: the TF frame name of the ChArUco board.
+### 4. VLM pick/release state tracking
+In VLM mode, object positions are from the camera (not hardcoded). `apply_skill_result('pick')` was only setting `robot.holding` when `find_object_near` found a match — which never happens in VLM mode. And the plan validator checked holding state before allowing release.
 
-### `PixelArray.msg`
+Fix: removed holding-state guardrails from `plan_validator` and `world_state` in VLM mode. Added `mode` parameter to `plan_manager_node`, threaded through to `PlanValidator.validate(mode=...)`. LLM mode retains full guardrails.
 
-Already present in `robo_reason_interfaces/msg/`. No changes needed.
+### 5. Workspace limits not matching real table
+Default `x: [0.15, 0.85]` excluded objects close to the robot (X ≈ 0). User must update `scene_mock.json` workspace limits to match the real table and camera coverage.
 
----
-
-## Orbbec Camera Setup
-
-**Camera model:** Orbbec Gemini 330 series (depth-registered RGB-D)
-
-### Launch Script
-
-```bash
-./scripts/run_orbbec_registered.sh
-```
-
-This script launches the `orbbec_camera` ROS2 package with `depth_registration:=true`, which aligns the depth image to the color camera frame.
-
-### Source and Build
-
-- `OrbbecSDK_ROS2` was cloned to `/home/matteonini/docker_ws/ros2_humble/src/OrbbecSDK_ROS2`.
-- Built from the workspace root `/root/ws` inside the container.
-- **Build order is important:** `orbbec_camera_msgs` must be built before `orbbec_camera`.
-- The Python virtual environment (venv) must be **deactivated** before building to avoid Cython scanning errors.
-
-### APT Dependencies Installed
-
-```
-ros-humble-camera-info-manager
-ros-humble-image-transport
-ros-humble-image-transport-plugins
-ros-humble-image-publisher
-ros-humble-diagnostic-updater
-ros-humble-tf2
-ros-humble-tf2-ros
-ros-humble-tf2-msgs
-ros-humble-tf2-sensor-msgs
-ros-humble-camera-calibration-parsers
-ros-humble-statistics-msgs
-ros-humble-backward-ros
-libgflags-dev
-nlohmann-json3-dev
-libgoogle-glog-dev
-libusb-1.0-0-dev
-libudev-dev
-libeigen3-dev
-libssl-dev
-libyaml-cpp-dev
-```
-
-### udev Rules
-
-Orbbec udev rules were installed on the **host** (not in the container) to allow non-root USB device access:
-
-```bash
-sudo bash .../orbbec_camera/scripts/install_udev_rules.sh
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
-
-### Docker Alias Update
-
-The `roboreason-ur` alias in `~/.bashrc` was updated to include:
-
-```
---privileged -v /dev:/dev
-```
-
-This passes all host device nodes into the container, which is required for USB camera access.
+### 6. Stale symlink build failures
+`rm -rf ~/ws/build/orbbec_camera_msgs/ament_cmake_python/orbbec_camera_msgs/orbbec_camera_msgs`
+`rm -rf ~/ws/build/robo_reason_interfaces/ament_cmake_python/robo_reason_interfaces/robo_reason_interfaces`
+Always `deactivate` the Python venv before `colcon build`.
 
 ---
 
-## Dockerfile Changes
+## File Changes Summary
 
-**File:** `Dockerfile.roboreason`
-**Target tag:** `roboreason:ur`
-
-### ROS APT packages added
-
-```
-ros-humble-cv-bridge
-python3-opencv
-ros-humble-camera-info-manager
-ros-humble-image-transport
-ros-humble-image-transport-plugins
-ros-humble-image-publisher
-ros-humble-diagnostic-updater
-ros-humble-tf2
-ros-humble-tf2-ros
-ros-humble-tf2-msgs
-ros-humble-tf2-sensor-msgs
-ros-humble-camera-calibration-parsers
-ros-humble-statistics-msgs
-ros-humble-backward-ros
-```
-
-### System APT packages added
-
-```
-libgflags-dev
-nlohmann-json3-dev
-libgoogle-glog-dev
-libusb-1.0-0-dev
-libudev-dev
-libeigen3-dev
-libssl-dev
-libyaml-cpp-dev
-```
-
-### pip packages added
-
-```
-pandas
-Pillow
-openai
-```
-
----
-
-## Camera Calibration Status (IN PROGRESS)
-
-### Approach
-
-- A ChArUco board is printed and **glued to the table at a fixed, known location** relative to the robot base.
-- The node detects the board in every camera frame and computes the camera pose from it.
-- The `board_in_base_*` parameters encode the manually measured pose of the board in `base_link`.
-
-### Board Parameters
-
-| Parameter | Value |
+| File | Change |
 |---|---|
-| Dictionary | `DICT_6X6_250` |
-| Layout | 3×4 squares |
-| `square_length` | 0.06 m |
-| `marker_length` | 0.03 m |
-
-These were updated from earlier placeholder defaults.
-
-### Verification
-
-- The `pixel_overlay_viewer_node` confirms that the ChArUco board axes are correctly overlaid on the RGB feed (detection is working).
-- The Deproject service now responds (previously hung indefinitely due to the missing `.srv` fields bug).
-
-### Current Problem (UNSOLVED)
-
-Deprojected 3D coordinates in `base_link` are wrong:
-
-| Axis | Expected | Observed | Status |
-|---|---|---|---|
-| X | ~correct | ~correct | OK |
-| Y | correct | off by ~20 cm | Wrong direction / sign |
-| Z | 0.0 (on table) | ~0.9 m | Severely wrong |
-
-**Hypothesis for Z error:** The value ~0.9 m is approximately the height of the camera above the table. This suggests that the rotation component of `T_base_camera` is not correctly mapping the camera Z axis (which points toward the scene, away from the camera) into the base Z axis (which points upward). The likely root cause is incorrect `board_in_base_roll` and/or `board_in_base_pitch` values.
-
-**Hypothesis for Y error:** The axis orientation of the board relative to the robot base may be misidentified, resulting in a sign flip or axis swap for Y.
-
-### Debugging Approach Suggested
-
-Inspect the `charuco_points` field in the Deproject service response:
-
-- If `charuco_points.z ≈ 0`: ArUco detection and board-frame deprojection are correct. The error is **purely in `board_in_base_*` parameters**.
-- If `charuco_points.z ≈ 0.9 m`: The ArUco detection itself is wrong (wrong depth or wrong pose).
-
-### Pending Questions
-
-- What is the camera mount angle? (straight down, angled, sideways?)
-- Is the ChArUco board lying flat on the table with the pattern facing up?
-- What exact measurement method was used for `board_in_base_x` and `board_in_base_y`? (ruler from which point on the robot base?)
+| `vlm_camera_service/charuco_utils.py` | solvePnP, ArucoDetector new API, CORNER_REFINE_NONE, manual axis drawing, z_sign, OpenCV 4.5.4 int fix, board outline |
+| `vlm_camera_service/camera_services_node.py` | QoS fix, charuco_z_sign param, z_offset_m param, board origin + camera position logging |
+| `vlm_camera_service/pixel_overlay_viewer_node.py` | QoS fix, charuco_z_sign param, tvec overlay on image |
+| `vlm_camera_service/launch/camera_services.launch.py` | charuco_z_sign, z_offset_m, updated board defaults |
+| `robo_reason_manager/plan_manager_node.py` | mode parameter, passed to PlanValidator |
+| `robo_reason_manager/plan_validator.py` | holding checks gated on `mode != VLM` |
+| `robo_reason_manager/world_state.py` | simplified pick/release to not require object matching |
+| `robo_reason_bringup/launch/real_robot.launch.py` | mode param wired to plan_manager_node, tmp_dir changed to /root/ws/src/vlm_frames |
+| `robo_reason_task_interface/config/scene_mock.json` | workspace limits to be updated by user |
 
 ---
 
-## Launch Commands Reference
+## Launch Reference
 
 ### Camera Driver (Orbbec)
-
 ```bash
 ./scripts/run_orbbec_registered.sh
 ```
 
-### Camera Service + Overlay Viewer
-
+### Camera Services + Overlay
 ```bash
 ros2 launch vlm_camera_service camera_services.launch.py \
   show_overlay:=true \
-  board_in_base_x:=0.0 \
-  board_in_base_y:=-0.20 \
-  board_in_base_z:=0.0 \
-  board_in_base_roll:=0.0 \
-  board_in_base_pitch:=0.0 \
-  board_in_base_yaw:=0.0
+  charuco_z_sign:=1.0 \
+  board_in_base_x:=-0.224 \
+  board_in_base_y:=-0.348 \
+  board_in_base_roll:=3.14159 \
+  board_in_base_yaw:=1.5708 \
+  z_offset_m:=0.01
 ```
 
-### Full LLM Stack
-
+### LLM Mode (Real Robot)
 ```bash
+export GROQ_API_KEY=gsk_...
 ros2 launch robo_reason_bringup real_robot.launch.py \
+  mode:=LLM \
   reasoning_method:=fhp \
   model_name:=groq/llama4-scout-17b \
-  temperature:=0.0
+  temperature:=0.1
 ```
 
-### Full VLM Stack (once calibration is complete)
-
+### VLM Mode (Real Robot)
 ```bash
+export GROQ_API_KEY=gsk_...
 ros2 launch robo_reason_bringup real_robot.launch.py \
   mode:=VLM \
-  model_name:=groq/llama4-scout-17b
+  model_name:=groq/llama4-scout-17b \
+  temperature:=0.1
+```
+
+### Task Interface CLI
+```bash
+ros2 run robo_reason_task_interface task_interface_node
 ```
 
 ---
 
-## Key Files Modified in This Session
+## Known Open Issues
 
-| File | Changes |
-|---|---|
-| `src/robo_reason_planner/robo_reason_planner/llm_planner_node.py` | VLM mode support, `MultiThreadedExecutor` + `ReentrantCallbackGroup`, camera service clients, image save/deproject pipeline |
-| `src/robo_reason_bringup/launch/real_robot.launch.py` | Added `mode` and `tmp_dir` launch parameters |
-| `src/vlm_camera_service/vlm_camera_service/camera_services_node.py` | `board_in_base_*` parameters, `T_base_camera` computation, TF2 static broadcast, `base_link` transform in Deproject, fixed `robo_reason_interfaces` imports |
-| `src/vlm_camera_service/vlm_camera_service/charuco_utils.py` | Added calibration math: `board_pose_to_matrix`, `compute_T_base_camera`, `transform_point_to_base`, `rotation_matrix_to_quaternion`, `T_to_transform_stamped`, `rpy_to_rotation_matrix` |
-| `src/vlm_camera_service/setup.py` | Fixed `entry_points` module names (`vlm_camera_service_mock` → `vlm_camera_service`) |
-| `src/vlm_camera_service/setup.cfg` | Fixed install path (`vlm_camera_service_mock` → `vlm_camera_service`) |
-| `src/robo_reason_interfaces/srv/Deproject.srv` | Added `charuco_pose_available`, `charuco_points`, `charuco_frame_id` to response |
-| `src/robo_reason_reasoning/robo_reason_reasoning/FoundationClients/src/llm_client.py` | Fixed relative import of `BaseClient` |
-| `src/robo_reason_reasoning/robo_reason_reasoning/FoundationClients/src/vlm_client.py` | Fixed relative import of `BaseClient` |
-| `Dockerfile.roboreason` | Added all camera, CV, and ML dependencies; added `pandas`, `Pillow`, `openai` pip packages |
-| `/home/matteonini/.bashrc` | Updated `roboreason-ur` alias with `--privileged -v /dev:/dev` |
-
----
-
-## Next Steps
-
-1. **Resolve Z coordinate error**
-   - Check `charuco_points.z` in the Deproject response to determine if the error is in ArUco detection or in `board_in_base_*` parameters.
-   - Verify camera mount angle (straight down vs. angled).
-   - Verify board orientation (flat on table, pattern facing up).
-   - Correct `board_in_base_roll`, `board_in_base_pitch`, and `board_in_base_yaw` accordingly.
-
-2. **Resolve Y coordinate error**
-   - Confirm axis orientation of the board relative to the robot base.
-   - Check sign/direction of `board_in_base_y`.
-
-3. **Test full VLM pipeline end-to-end**
-   - Once calibration is verified: camera → EmbodiedAgent (VLM) → deproject → planner → manager → executor.
-
-4. **VLMEmbodiedAgent implementation (colleagues)**
-   - Currently the `fhp_ffhp` reasoning methods raise `NotImplementedError` when `client_type='vlm'`.
-   - Colleagues need to implement the VLM reasoning path in `EmbodiedAgent`.
-
-5. **Robust JSON parsing in `fhp_ffhp.py`**
-   - Line 77: `json.loads(raw)['plan']` fails silently or raises an exception for empty or malformed LLM responses (particularly with non-llama models).
-   - Needs a try/except with graceful fallback.
+- VLM may appear to use a stale image if the model hallucinates object positions. Verify by checking the saved image in `/root/ws/src/vlm_frames/<latest>/` — if the image is correct but coordinates are wrong, it is a model reasoning issue.
+- Workspace limits in `scene_mock.json` must be manually tuned to match the real table. The validator uses these even in VLM mode.
+- `charuco_z_sign` default was -1.0 (left-handed); corrected to 1.0.

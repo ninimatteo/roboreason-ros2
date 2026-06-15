@@ -53,7 +53,7 @@ class LLMClient:
             model_name.split("/")[1] if "/" in model_name else model_name
         )
         self.temperature = model_parameters.get("temperature", 0.0)
-        self.max_tokens = model_parameters.get("max_tokens", 4096)
+        self.max_tokens = model_parameters.get("max_tokens", 8192)
         self.top_p = model_parameters.get("top_p", 1.0)
         self.stream = model_parameters.get("stream", False)
         self.stop = model_parameters.get("stop", None)

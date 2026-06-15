@@ -223,14 +223,18 @@ class LLMPlannerNode(Node):
         return [str(path)]
 
     def _deproject_plan(self, pixel_steps: list) -> list:
-        """Replace all pixel [w, h] fields with deprojected [x, y, z] coords.
+        """Replace all pixel [h, w] fields with deprojected [x, y, z] coords.
+
+        The VLM outputs pixel coordinates as [h, w] where:
+          h = row index (y-axis, top→bottom)  → camera v
+          w = column index (x-axis, left→right) → camera u
 
         Collects every pixel-coordinate field across all steps, issues a single
         batched Deproject call, then substitutes the results back in place.
         """
         PIXEL_FIELDS = ('target_position', 'release_position')
 
-        # pending: list of (step_index, field_name, [w, h])
+        # pending: list of (step_index, field_name, [h, w])
         pending = []
         for i, step in enumerate(pixel_steps):
             for field in PIXEL_FIELDS:
@@ -242,8 +246,9 @@ class LLMPlannerNode(Node):
             return pixel_steps
 
         req = Deproject.Request()
-        req.u = [int(p[2][0]) for p in pending]
-        req.v = [int(p[2][1]) for p in pending]
+        # p[2] = [h, w]: h is row (→ v), w is column (→ u)
+        req.u = [int(p[2][1]) for p in pending]  # w (column)
+        req.v = [int(p[2][0]) for p in pending]  # h (row)
 
         if not self._deproject_client.wait_for_service(timeout_sec=5.0):
             raise RuntimeError('/camera/deproject service not available (timeout 5 s)')

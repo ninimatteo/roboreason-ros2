@@ -34,11 +34,15 @@ roboreason-ros2/
 │   ├── robo_reason_interfaces/       # ROS2 service + action definitions (CMake)
 │   │   ├── srv/
 │   │   │   ├── PlanTask.srv
-│   │   │   └── ExecutePlan.srv
+│   │   │   ├── ExecutePlan.srv
+│   │   │   ├── GetImage.srv
+│   │   │   └── Deproject.srv
+│   │   ├── msg/
+│   │   │   └── PixelArray.msg
 │   │   └── action/
 │   │       └── ExecuteSkill.action
 │   │
-│   ├── robo_reason_prompts/          # All LLM prompt templates (no nodes)
+│   ├── robo_reason_prompts/          # All LLM/VLM prompt templates (no nodes)
 │   │   └── robo_reason_prompts/
 │   │       ├── fhp_ffhp_prompts.py
 │   │       ├── react_prompts.py
@@ -48,13 +52,12 @@ roboreason-ros2/
 │   │       ├── tot_prompts.py
 │   │       └── predicates_prompts.py
 │   │
-│   ├── robo_reason_reasoning/        # LLM client + 7 reasoning methods (no nodes)
+│   ├── robo_reason_reasoning/        # LLM/VLM clients + 7 reasoning methods (no nodes)
 │   │   └── robo_reason_reasoning/
 │   │       ├── embodied_agent.py     # Orchestrates reasoning method selection
-│   │       ├── llm_client.py         # GROQ API wrapper
+│   │       ├── FoundationClients/    # LLMClient, VLMClient, BaseClient
 │   │       ├── extraction_classes.py # UR5Action Pydantic model
-│   │       ├── skills.py             # UR5 skill descriptions for LLM
-│   │       ├── predicates.py
+│   │       ├── skills.py             # UR5 skill descriptions for LLM/VLM
 │   │       ├── fhp_ffhp.py
 │   │       ├── react.py
 │   │       ├── cot_sc.py
@@ -62,16 +65,16 @@ roboreason-ros2/
 │   │       ├── self_refine.py
 │   │       └── tot.py
 │   │
-│   ├── robo_reason_planner/          # LLM planner node
+│   ├── robo_reason_planner/          # LLM/VLM planner node
 │   │   └── robo_reason_planner/
-│   │       ├── llm_planner_node.py   # exposes /plan_task service
+│   │       ├── llm_planner_node.py   # exposes /plan_task; LLM or VLM mode
 │   │       └── command_grounding.py  # validates user command against scene
 │   │
 │   ├── robo_reason_manager/          # Plan manager node
 │   │   └── robo_reason_manager/
 │   │       ├── plan_manager_node.py  # exposes /execute_plan service
 │   │       ├── world_state.py        # software model of the scene
-│   │       ├── plan_validator.py     # pre-flight plan checker
+│   │       ├── plan_validator.py     # pre-flight plan checker (mode-aware)
 │   │       └── schemas.py            # skill definitions and JSON helpers
 │   │
 │   ├── robo_reason_executor/         # Skill executor nodes
@@ -81,14 +84,23 @@ roboreason-ros2/
 │   │
 │   ├── robo_reason_task_interface/   # Terminal CLI node
 │   │   ├── config/
-│   │   │   └── scene_mock.json       # default scene (table + 4 cubes + 2 zones)
+│   │   │   └── scene_mock.json       # scene description + workspace limits
 │   │   └── robo_reason_task_interface/
 │   │       └── task_interface_node.py
 │   │
-│   └── robo_reason_bringup/          # Launch files only (no Python code)
-│       └── launch/
-│           ├── dry_run.launch.py           # full system (CLI included)
-│           └── dry_run_services.launch.py  # services only (no CLI)
+│   ├── robo_reason_bringup/          # Launch files only (no Python code)
+│   │   └── launch/
+│   │       ├── dry_run.launch.py           # full system (CLI included)
+│   │       ├── dry_run_services.launch.py  # services only (no CLI)
+│   │       └── real_robot.launch.py        # real UR5, LLM or VLM mode
+│   │
+│   └── vlm_camera_service/           # Camera bridge for VLM mode
+│       ├── launch/
+│       │   └── camera_services.launch.py
+│       └── vlm_camera_service/
+│           ├── camera_services_node.py   # /camera/get_image + /camera/deproject
+│           ├── pixel_overlay_viewer_node.py  # live OpenCV debug window
+│           └── charuco_utils.py          # ChArUco detection + pose estimation
 ```
 
 ---
@@ -144,19 +156,33 @@ Feedback:
 Interactive terminal. Loads `scene_mock.json`, prompts you for a command, calls `/plan_task`, then `/execute_plan`, and prints the result. This is your entry point.
 
 ### `llm_planner_node` (`robo_reason_planner`)
-Exposes the `/plan_task` service. In mock mode it returns a hardcoded plan. In LLM mode it instantiates an `EmbodiedAgent` and runs the selected reasoning method until `move_home` or `end_of_simulation`.
+Exposes the `/plan_task` service. Supports two modes:
+- **LLM mode**: passes `scene_mock.json` to `EmbodiedAgent(client_type='llm')`.
+- **VLM mode**: captures a live RGB frame via `/camera/get_image`, passes it to `EmbodiedAgent(client_type='vlm')` which returns pixel coordinates, then batch-deprojection via `/camera/deproject` converts them to 3D `base_link` coordinates.
 
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `use_mock_llm` | bool | true | Skip LLM, use hardcoded plan |
-| `reasoning_method` | string | `"fhp"` | Which reasoning strategy to use |
-| `model_name` | string | `"groq/llama4-scout-17b"` | LLM model |
-| `temperature` | double | 0.0 | LLM temperature |
+| `mode` | string | `LLM` | `LLM` or `VLM` |
+| `use_mock_llm` | bool | false | Skip LLM, use hardcoded plan (LLM mode only) |
+| `reasoning_method` | string | `fhp` | Which reasoning strategy to use |
+| `model_name` | string | `groq/llama4-scout-17b` | LLM/VLM model |
+| `temperature` | double | 0.1 | LLM/VLM temperature |
+| `tmp_dir` | string | `/root/ws/src/vlm_frames` | VLM frame capture directory |
 
 ### `plan_manager_node` (`robo_reason_manager`)
 Exposes the `/execute_plan` service. Validates the plan against the scene, then executes each skill one at a time via the `/execute_skill` action server. Updates world state after each step and publishes logs.
+
+Mode-aware validation: in LLM mode, holding-state guardrails (pick/release ordering) are active. In VLM mode, only workspace limits are enforced (object positions are not known in advance).
+
+### `camera_services_node` (`vlm_camera_service`)
+Required for VLM mode. Subscribes to Orbbec camera topics, exposes:
+- `/camera/get_image` — returns the latest RGB frame.
+- `/camera/deproject` — converts pixel `[u, v]` to 3D `[x, y, z]` in `base_link` using depth + ChArUco pose.
+
+### `pixel_overlay_viewer_node` (`vlm_camera_service`)
+Optional debug window showing the live camera feed with ChArUco axes and deprojected pixel markers overlaid.
 
 ### `fake_skill_executor_node` (`robo_reason_executor`)
 Phase 0 dry-run. Accepts any skill, publishes fake progress (30% → 70% → 100%), waits 0.3s per step, always returns success. No robot required.
@@ -253,69 +279,68 @@ Get a free key at [console.groq.com](https://console.groq.com).
 ### Build
 
 ```bash
-cd /root/ws/src/roboreason-ros2
-colcon build
+# Must be outside any Python venv
+deactivate 2>/dev/null; cd /root/ws
+colcon build --symlink-install
 source install/setup.bash
 ```
 
-### Launch
+---
+
+## Quick Launch Reference
+
+### Dry-run (no robot, no camera)
 
 ```bash
-# Phase 0 — dry run with mock LLM (no API key needed)
+# All nodes + CLI in one terminal
 ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=true
 
-# Phase 0 — dry run with real LLM
-ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=false reasoning_method:=fhp
-
-# Services only (no CLI, use ros2 service call manually)
+# Two-terminal (services + CLI separately)
 ros2 launch robo_reason_bringup dry_run_services.launch.py use_mock_llm:=true
-
-# Run the CLI separately (two-terminal approach)
 ros2 run robo_reason_task_interface task_interface_node
 ```
 
----
+### Real Robot — LLM Mode
 
-## Phase 1 — Real robot
-
-Use `real_robot.launch.py` to bring up the full stack against the real UR5.
-
-**Prerequisites** (before launching):
-1. Load `ec_with_gripper.urp` on the pendant and press **Play**
-2. Launch the UR5 ROS2 driver in a separate terminal:
-   ```bash
-   ros2 launch ur_robot_driver ur_control.launch.py \
-     ur_type:=ur5 robot_ip:=192.168.2.60 reverse_ip:=192.168.2.80 \
-     use_fake_hardware:=false \
-     initial_joint_controller:=scaled_joint_trajectory_controller
-   ```
-3. Export your Groq API key: `export GROQ_API_KEY=gsk_...`
-
-**Terminal 1 — all background nodes:**
 ```bash
-ros2 launch robo_reason_bringup real_robot.launch.py
-```
+# T1: UR5 driver
+ros2 launch ur_robot_driver ur_control.launch.py \
+  ur_type:=ur5 robot_ip:=192.168.2.60 reverse_ip:=192.168.2.80 \
+  use_fake_hardware:=false \
+  initial_joint_controller:=scaled_joint_trajectory_controller
 
-**Terminal 2 — interactive CLI:**
-```bash
+# T2: RoboReason stack
+export GROQ_API_KEY=gsk_...
+ros2 launch robo_reason_bringup real_robot.launch.py mode:=LLM reasoning_method:=fhp
+
+# T3: CLI
 ros2 run robo_reason_task_interface task_interface_node
 ```
 
-**Optional overrides:**
+### Real Robot — VLM Mode
+
 ```bash
-ros2 launch robo_reason_bringup real_robot.launch.py \
-  reasoning_method:=cot_sc \
-  model_name:=groq/llama3.3-70b \
-  temperature:=0.0
+# T1: Orbbec camera
+./scripts/run_orbbec_registered.sh
+
+# T2: Camera services + ChArUco overlay
+ros2 launch vlm_camera_service camera_services.launch.py \
+  show_overlay:=true charuco_z_sign:=1.0 \
+  board_in_base_x:=-0.224 board_in_base_y:=-0.348 \
+  board_in_base_roll:=3.14159 board_in_base_yaw:=1.5708 \
+  z_offset_m:=0.01
+
+# T3: UR5 driver (same as LLM mode)
+
+# T4: RoboReason stack
+export GROQ_API_KEY=gsk_...
+ros2 launch robo_reason_bringup real_robot.launch.py mode:=VLM
+
+# T5: CLI
+ros2 run robo_reason_task_interface task_interface_node
 ```
 
-> **Model note:** only `groq/llama*` models work reliably (`llama4-scout-17b`, `llama3.3-70b`, `llama3.1-8b`). Other models in the registry do not produce a parseable plan.
-
----
-
-## Phase 0 → Phase 1 transition
-
-When you want to test on the real robot, use `real_robot.launch.py` instead of `dry_run.launch.py` — it starts `ur5_skill_executor_node` in place of `fake_skill_executor_node`. Everything else (planner, manager, interfaces) stays identical.
+For a detailed step-by-step guide including all parameters and troubleshooting, see [`docs/ROBOREASON_GUIDE.md`](docs/ROBOREASON_GUIDE.md).
 
 ---
 

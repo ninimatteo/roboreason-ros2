@@ -98,8 +98,10 @@ class CameraServicesNode(Node):
             pitch=float(self.get_parameter("board_in_base_pitch").value),
             yaw=float(self.get_parameter("board_in_base_yaw").value),
         )
-        # Cached camera→base_link transform (updated every time ArUco is detected).
+        # Cached camera→base_link transform.
+        # Set once on the first successful ChArUco detection, then locked forever.
         self._T_base_camera: Optional[np.ndarray] = None
+        self._charuco_calibrated: bool = False
         # TF2 broadcaster — publishes camera optical frame → base_link.
         self._tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
 
@@ -140,6 +142,9 @@ class CameraServicesNode(Node):
             f"valid depth range=[{self._min_depth_m:.3f}, {self._max_depth_m:.3f}] m"
         )
         self._status_timer = self.create_timer(2.0, self._log_input_status)
+        # One-shot calibration: try every 0.5 s until the board is detected once,
+        # then lock the transform and cancel this timer.
+        self._calib_timer = self.create_timer(0.5, self._try_calibrate)
 
     def _on_color(self, msg: Image) -> None:
         if self._latest_color is None:
@@ -291,10 +296,63 @@ class CameraServicesNode(Node):
         )
         return response
 
+    def _try_calibrate(self) -> None:
+        """Periodic callback: attempt one-shot ChArUco calibration.
+
+        Runs at 0.5 Hz until the board is detected successfully.  Once
+        calibrated, the timer cancels itself and _T_base_camera is locked.
+        """
+        if self._charuco_calibrated:
+            self._calib_timer.cancel()
+            return
+        if not self._charuco_enabled:
+            self._calib_timer.cancel()
+            return
+        if self._latest_color is None or self._latest_camera_info is None:
+            return  # camera not ready yet — keep trying
+
+        try:
+            bgr = image_msg_to_bgr(self._latest_color)
+            pose = detect_charuco_pose(
+                bgr_image=bgr,
+                camera_info=self._latest_camera_info,
+                config=self._charuco_config,
+            )
+        except Exception as exc:
+            self.get_logger().warn(f"[Calib] ChArUco detection failed: {exc}")
+            return
+
+        if pose is None:
+            self.get_logger().warn(
+                "[Calib] Board not visible — waiting for ChArUco board to appear..."
+            )
+            return
+
+        # Successful detection — compute and lock the transform.
+        T_base_cam = compute_T_base_camera(pose, self._T_base_board)
+        self._T_base_camera = T_base_cam
+        self._charuco_calibrated = True
+        self._calib_timer.cancel()
+
+        tv = pose.tvec.flatten()
+        board_base = self._T_base_board[:3, 3]
+        cam_base = T_base_cam[:3, 3]
+        self.get_logger().info(
+            f"[Calib] LOCKED — ChArUco calibration complete. "
+            f"tvec(cam_frame)=[{tv[0]:+.3f}, {tv[1]:+.3f}, {tv[2]:+.3f}] m  |  "
+            f"board_origin(base_link)=[{board_base[0]:+.3f}, {board_base[1]:+.3f}, {board_base[2]:+.3f}] m  |  "
+            f"camera(base_link)=[{cam_base[0]:+.3f}, {cam_base[1]:+.3f}, {cam_base[2]:+.3f}] m"
+        )
+        self._publish_camera_tf(T_base_cam)
+
     def _fill_charuco_points(
         self, camera_points: list[Point], response: Deproject.Response
     ) -> None:
+        """Populate charuco_points in the deproject response (best-effort, no pose update)."""
         if not self._charuco_enabled:
+            return
+        if not self._charuco_calibrated:
+            # Calibration not yet done — skip; charuco_points will remain empty.
             return
         if self._latest_color is None or self._latest_camera_info is None:
             return
@@ -311,7 +369,6 @@ class CameraServicesNode(Node):
             return
 
         if pose is None:
-            self.get_logger().warn("ChArUco pose unavailable: board not detected")
             return
 
         response.charuco_pose_available = True
@@ -319,22 +376,8 @@ class CameraServicesNode(Node):
             camera_point_to_charuco(point, pose) for point in camera_points
         ]
         response.charuco_frame_id = self._charuco_frame_id
-
-        # Compute and cache camera→base_link from this detection.
-        T_base_cam = compute_T_base_camera(pose, self._T_base_board)
-        self._T_base_camera = T_base_cam
-
-        # Log the board origin in robot base_link frame and camera position.
-        tv = pose.tvec.flatten()
-        board_base = self._T_base_board[:3, 3]
-        cam_base = T_base_cam[:3, 3]
-        self.get_logger().info(
-            f"[ChArUco] tvec(cam_frame)=[{tv[0]:+.3f}, {tv[1]:+.3f}, {tv[2]:+.3f}] m  |  "
-            f"board_origin(base_link)=[{board_base[0]:+.3f}, {board_base[1]:+.3f}, {board_base[2]:+.3f}] m  |  "
-            f"camera(base_link)=[{cam_base[0]:+.3f}, {cam_base[1]:+.3f}, {cam_base[2]:+.3f}] m"
-        )
-
-        self._publish_camera_tf(T_base_cam)
+        # NOTE: _T_base_camera is intentionally NOT updated here — it was locked
+        # at startup by _try_calibrate and will not change during operation.
 
     def _publish_camera_tf(self, T_base_cam: np.ndarray) -> None:
         """Broadcast the camera optical frame → base_link static TF."""

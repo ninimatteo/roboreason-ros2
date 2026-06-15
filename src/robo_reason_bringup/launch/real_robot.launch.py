@@ -33,6 +33,9 @@ Parameters:
   temperature         LLM/VLM temperature, 0.0 = deterministic (default: 0.1)
   tmp_dir             Directory for VLM frame cache (default: /tmp/roboreason_vlm)
   include_task_interface  Launch the CLI node in this process (default: false)
+
+  home_joints is NOT a launch argument — edit it directly in the Node parameters
+  block inside this file (look for 'home_joints' in the executor Node).
 """
 
 from launch import LaunchDescription
@@ -91,6 +94,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'robot_ip': LaunchConfiguration('robot_ip'),
+                # Edit these joint angles (radians) to set the robot home position.
+                # The EE should face the ChArUco board so the camera can calibrate at startup.
+                'home_joints': [-1.9, -1.5708, -1.5708, -1.5708, 1.5708, 0.0],
             }],
         ),
 
