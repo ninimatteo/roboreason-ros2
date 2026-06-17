@@ -4,8 +4,7 @@ from collections import namedtuple
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action  
-# pyrefly: ignore [missing-import]
-from robo_reason_prompts.self_refine_prompts import SelfRefinePrompts
+from robo_reason_reasoning.EmbodiedAgentsPrompts.self_refine_prompts import SelfRefinePrompts
 
 
 class SelfRefine(ReasoningMethod):
@@ -31,7 +30,8 @@ class SelfRefine(ReasoningMethod):
         self.user_request = user_request
 
     def generate_initial_solution(self, environment_map: str, user_request: str, image=None) -> str:
-        initial_solution_prompt, _, _ = SelfRefinePrompts.get_prompts(use_vlm=self.use_vlm)
+        get_sr = SelfRefinePrompts.get_vlm_prompts if self.use_vlm else SelfRefinePrompts.get_llm_prompts
+        initial_solution_prompt, _, _ = get_sr()
 
         format_args = {
             'skills': self.skills,
@@ -52,7 +52,8 @@ class SelfRefine(ReasoningMethod):
         ).strip()
 
     def generate_feedback(self, solution: str, environment_map: str, user_request: str, image=None) -> str:
-        _, feedback_prompt, _ = SelfRefinePrompts.get_prompts(use_vlm=self.use_vlm)
+        get_sr = SelfRefinePrompts.get_vlm_prompts if self.use_vlm else SelfRefinePrompts.get_llm_prompts
+        _, feedback_prompt, _ = get_sr()
 
         format_args = {
             'skills': self.skills,
@@ -74,7 +75,8 @@ class SelfRefine(ReasoningMethod):
     def refine_solution(self, environment_map: str, user_request: str,
                         initial_solution: str, current_solution: str,
                         all_feedback: list, current_feedback: str, image=None) -> str:
-        _, _, refinement_prompt = SelfRefinePrompts.get_prompts(use_vlm=self.use_vlm)
+        get_sr = SelfRefinePrompts.get_vlm_prompts if self.use_vlm else SelfRefinePrompts.get_llm_prompts
+        _, _, refinement_prompt = get_sr()
 
         format_args = {
             'skills': self.skills,

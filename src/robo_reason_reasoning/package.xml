@@ -6,7 +6,6 @@
   <maintainer email="matteo.nini@example.com">Matteo Nini</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_python</buildtool_depend>
-  <depend>robo_reason_prompts</depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

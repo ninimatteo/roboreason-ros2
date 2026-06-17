@@ -4,8 +4,7 @@ from collections import namedtuple
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-# pyrefly: ignore [missing-import]
-from robo_reason_prompts.react_prompts import ReActPrompts
+from robo_reason_reasoning.EmbodiedAgentsPrompts.react_prompts import ReActPrompts
 
 
 class React(ReasoningMethod):
@@ -30,7 +29,8 @@ class React(ReasoningMethod):
         self.user_request = user_request
 
     def react_step(self, environment_map: str, user_request: str, image=None):
-        react_system_message, react_prompt_message = ReActPrompts.get_prompts(use_vlm=self.use_vlm)
+        get_react = ReActPrompts.get_vlm_prompts if self.use_vlm else ReActPrompts.get_llm_prompts
+        react_system_message, react_prompt_message = get_react()
 
         format_args = {
             'user_request': user_request,

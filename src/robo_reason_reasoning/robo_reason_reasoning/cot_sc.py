@@ -4,8 +4,7 @@ from collections import Counter, namedtuple
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-# pyrefly: ignore [missing-import]
-from robo_reason_prompts.cot_sc_prompts import CotScPrompts
+from robo_reason_reasoning.EmbodiedAgentsPrompts.cot_sc_prompts import CotScPrompts
 
 
 class CoTSC(ReasoningMethod):
@@ -33,7 +32,8 @@ class CoTSC(ReasoningMethod):
         self.user_request = user_request
 
     def generate_plan(self, environment_map: str, user_request: str, image=None) -> list:
-        plan_prompt = CotScPrompts.get_prompts(use_vlm=self.use_vlm)
+        get_cot = CotScPrompts.get_vlm_prompts if self.use_vlm else CotScPrompts.get_llm_prompts
+        plan_prompt = get_cot()
         
         format_args = {
             'skills': self.skills,

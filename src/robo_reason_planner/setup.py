@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'llm_planner_node = robo_reason_planner.llm_planner_node:main',
+            'vlm_planner_node = robo_reason_planner.vlm_planner_node:main',
         ],
     },
 )

@@ -10,6 +10,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 from robo_reason_interfaces.msg import PixelArray
 
+from robo_reason_bringup.config import settings
 from vlm_camera_service.charuco_utils import (
     CharucoConfig,
     detect_charuco_pose,
@@ -23,21 +24,21 @@ class PixelOverlayViewerNode(Node):
     def __init__(self) -> None:
         super().__init__("pixel_overlay_viewer_node")
 
-        self.declare_parameter("color_topic", "/camera/color/image_raw")
-        self.declare_parameter("camera_info_topic", "/camera/color/camera_info")
-        self.declare_parameter("pixel_topic", "/camera/debug_pixels")
-        self.declare_parameter("window_name", "VLM pixels on RGB")
-        self.declare_parameter("marker_size", 14)
-        self.declare_parameter("line_thickness", 2)
-        self.declare_parameter("charuco_enabled", True)
-        self.declare_parameter("charuco_dictionary", "DICT_6X6_250")
-        self.declare_parameter("charuco_squares_x", 5)
-        self.declare_parameter("charuco_squares_y", 7)
-        self.declare_parameter("charuco_square_length_m", 0.03)
-        self.declare_parameter("charuco_marker_length_m", 0.015)
-        self.declare_parameter("charuco_axis_length_m", 0.08)
-        self.declare_parameter("charuco_min_corners", 4)
-        self.declare_parameter("charuco_z_sign", -1.0)
+        self.declare_parameter("color_topic", settings.COLOR_TOPIC)
+        self.declare_parameter("camera_info_topic", settings.CAMERA_INFO_TOPIC)
+        self.declare_parameter("pixel_topic", settings.PIXEL_DEBUG_TOPIC)
+        self.declare_parameter("window_name", settings.VIEWER_WINDOW_NAME)
+        self.declare_parameter("marker_size", settings.VIEWER_MARKER_SIZE)
+        self.declare_parameter("line_thickness", settings.VIEWER_LINE_THICKNESS)
+        self.declare_parameter("charuco_enabled", settings.CHARUCO_ENABLED)
+        self.declare_parameter("charuco_dictionary", settings.CHARUCO_DICTIONARY)
+        self.declare_parameter("charuco_squares_x", settings.CHARUCO_SQUARES_X)
+        self.declare_parameter("charuco_squares_y", settings.CHARUCO_SQUARES_Y)
+        self.declare_parameter("charuco_square_length_m", settings.CHARUCO_SQUARE_LENGTH_M)
+        self.declare_parameter("charuco_marker_length_m", settings.CHARUCO_MARKER_LENGTH_M)
+        self.declare_parameter("charuco_axis_length_m", settings.CHARUCO_AXIS_LENGTH_M)
+        self.declare_parameter("charuco_min_corners", settings.CHARUCO_MIN_CORNERS)
+        self.declare_parameter("charuco_z_sign", settings.CHARUCO_Z_SIGN)
 
         color_topic = self.get_parameter("color_topic").value
         camera_info_topic = self.get_parameter("camera_info_topic").value

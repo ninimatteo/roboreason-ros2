@@ -12,6 +12,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from robo_reason_interfaces.msg import PixelArray
 from robo_reason_interfaces.srv import Deproject, GetImage
 
+from robo_reason_bringup.config import settings
 from vlm_camera_service.charuco_utils import (
     CharucoConfig,
     T_to_transform_stamped,
@@ -29,37 +30,36 @@ class CameraServicesNode(Node):
     def __init__(self) -> None:
         super().__init__("camera_services_node")
 
-        self.declare_parameter("color_topic", "/camera/color/image_raw")
-        self.declare_parameter("depth_topic", "/camera/depth/image_raw")
-        self.declare_parameter("camera_info_topic", "/camera/color/camera_info")
-        self.declare_parameter("window_size", 7)
-        self.declare_parameter("min_depth_m", 0.15)
-        self.declare_parameter("max_depth_m", 3.0)
-        self.declare_parameter("get_image_service", "/camera/get_image")
-        self.declare_parameter("deproject_service", "/camera/deproject")
-        self.declare_parameter("pixel_debug_topic", "/camera/debug_pixels")
-        self.declare_parameter("charuco_enabled", True)
-        self.declare_parameter("charuco_dictionary", "DICT_6X6_250")
-        self.declare_parameter("charuco_squares_x", 5)
-        self.declare_parameter("charuco_squares_y", 7)
-        self.declare_parameter("charuco_square_length_m", 0.03)
-        self.declare_parameter("charuco_marker_length_m", 0.015)
-        self.declare_parameter("charuco_axis_length_m", 0.08)
-        self.declare_parameter("charuco_min_corners", 4)
-        self.declare_parameter("charuco_z_sign", -1.0)
-        self.declare_parameter("charuco_frame_id", "charuco_board")
-        # Known pose of the ArUco board in robot base_link frame (measured once).
+        self.declare_parameter("color_topic", settings.COLOR_TOPIC)
+        self.declare_parameter("depth_topic", settings.DEPTH_TOPIC)
+        self.declare_parameter("camera_info_topic", settings.CAMERA_INFO_TOPIC)
+        self.declare_parameter("window_size", settings.WINDOW_SIZE)
+        self.declare_parameter("min_depth_m", settings.MIN_DEPTH_M)
+        self.declare_parameter("max_depth_m", settings.MAX_DEPTH_M)
+        self.declare_parameter("get_image_service", settings.GET_IMAGE_SERVICE)
+        self.declare_parameter("deproject_service", settings.DEPROJECT_SERVICE)
+        self.declare_parameter("pixel_debug_topic", settings.PIXEL_DEBUG_TOPIC)
+        self.declare_parameter("charuco_enabled", settings.CHARUCO_ENABLED)
+        self.declare_parameter("charuco_dictionary", settings.CHARUCO_DICTIONARY)
+        self.declare_parameter("charuco_squares_x", settings.CHARUCO_SQUARES_X)
+        self.declare_parameter("charuco_squares_y", settings.CHARUCO_SQUARES_Y)
+        self.declare_parameter("charuco_square_length_m", settings.CHARUCO_SQUARE_LENGTH_M)
+        self.declare_parameter("charuco_marker_length_m", settings.CHARUCO_MARKER_LENGTH_M)
+        self.declare_parameter("charuco_axis_length_m", settings.CHARUCO_AXIS_LENGTH_M)
+        self.declare_parameter("charuco_min_corners", settings.CHARUCO_MIN_CORNERS)
+        self.declare_parameter("charuco_z_sign", settings.CHARUCO_Z_SIGN)
+        self.declare_parameter("charuco_frame_id", settings.CHARUCO_FRAME_ID)
+        # Known pose of the ChArUco board in robot base_link frame (measured once).
         # Position in metres, rotation as intrinsic RPY in radians.
         # When these are set correctly the Deproject service returns base_link coords.
-        self.declare_parameter("board_in_base_x",     0.0)
-        self.declare_parameter("board_in_base_y",     0.0)
-        self.declare_parameter("board_in_base_z",     0.0)
-        self.declare_parameter("board_in_base_roll",  0.0)
-        self.declare_parameter("board_in_base_pitch", 0.0)
-        self.declare_parameter("board_in_base_yaw",   0.0)
+        self.declare_parameter("board_in_base_x",     settings.BOARD_IN_BASE_X)
+        self.declare_parameter("board_in_base_y",     settings.BOARD_IN_BASE_Y)
+        self.declare_parameter("board_in_base_z",     settings.BOARD_IN_BASE_Z)
+        self.declare_parameter("board_in_base_roll",  settings.BOARD_IN_BASE_ROLL)
+        self.declare_parameter("board_in_base_pitch", settings.BOARD_IN_BASE_PITCH)
+        self.declare_parameter("board_in_base_yaw",   settings.BOARD_IN_BASE_YAW)
         # Extra Z offset added to base_link points before returning to the planner.
-        # Use a small positive value (e.g. 0.01) to lift points off the table surface.
-        self.declare_parameter("z_offset_m", 0.0)
+        self.declare_parameter("z_offset_m", settings.Z_OFFSET_M)
 
         color_topic = self.get_parameter("color_topic").value
         depth_topic = self.get_parameter("depth_topic").value

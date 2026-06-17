@@ -4,10 +4,8 @@ from collections import namedtuple
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-# pyrefly: ignore [missing-import]
-from robo_reason_prompts.fhp_ffhp_prompts import FHP_FFHP_Prompts
-# pyrefly: ignore [missing-import]
-from robo_reason_prompts.predicates_prompts import PredicatesPrompts
+from robo_reason_reasoning.EmbodiedAgentsPrompts.fhp_ffhp_prompts import FHP_FFHP_Prompts
+from robo_reason_reasoning.EmbodiedAgentsPrompts.predicates_prompts import PredicatesPrompts
 
 
 class FHP(ReasoningMethod):
@@ -35,8 +33,10 @@ class FHP(ReasoningMethod):
         self.user_request = user_request
 
     def predict_predicates(self, environment_map: str, image=None) -> str:
-        predicates_prompt, _ = PredicatesPrompts.get_prompts(use_vlm=self.use_vlm)
-        fhp_ffhp_system_message, _ = FHP_FFHP_Prompts.get_prompts(use_vlm=self.use_vlm)
+        get_pred = PredicatesPrompts.get_vlm_prompts if self.use_vlm else PredicatesPrompts.get_llm_prompts
+        predicates_prompt, _ = get_pred()
+        get_fhp = FHP_FFHP_Prompts.get_vlm_prompts if self.use_vlm else FHP_FFHP_Prompts.get_llm_prompts
+        fhp_ffhp_system_message, _ = get_fhp()
         
         format_args = {
             'predicates_library': self.predicates,
@@ -53,9 +53,8 @@ class FHP(ReasoningMethod):
         )
 
     def plan_task(self, env_config: str, predicates: str, image=None) -> list:
-        fhp_ffhp_system_message, task_planning_prompt = FHP_FFHP_Prompts.get_prompts(
-            use_vlm=self.use_vlm
-        )
+        get_fhp = FHP_FFHP_Prompts.get_vlm_prompts if self.use_vlm else FHP_FFHP_Prompts.get_llm_prompts
+        fhp_ffhp_system_message, task_planning_prompt = get_fhp()
         
         format_args = {
             'skills': self.skills,

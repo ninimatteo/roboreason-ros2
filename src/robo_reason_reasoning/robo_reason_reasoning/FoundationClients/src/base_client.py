@@ -2,7 +2,8 @@ import os
 from typing import List, Dict, Union, Optional, Any
 from abc import ABC, abstractmethod
 
-import pandas as pd
+from datetime import datetime
+
 from dotenv import load_dotenv  # type: ignore[reportMissingImports]
 
 # Import provider SDKs
@@ -124,7 +125,7 @@ class BaseFoundationClient(ABC):
         self.base_url = model_parameters.get("base_url", os.getenv(f"{self.provider.upper()}_BASE_URL"))
         
         self.client = self._initialize_client()
-        self.usage_metrics = None
+        self.usage_metrics: list = []
 
     def _initialize_client(self):
         if self.provider == "groq":
@@ -149,8 +150,8 @@ class BaseFoundationClient(ABC):
 
     def _update_metrics(self, input_tokens: int, output_tokens: int, search_provider: str = None):
         """Standardized metric collection."""
-        new_metric = {
-            "timestamp": pd.Timestamp.now(),
+        entry = {
+            "timestamp": datetime.now().isoformat(),
             "provider": self.provider,
             "model": self.model_name,
             "input_tokens": input_tokens,
@@ -158,23 +159,18 @@ class BaseFoundationClient(ABC):
             "total_tokens": input_tokens + output_tokens,
         }
         if search_provider:
-             new_metric["search_provider"] = search_provider
-             
-        if self.usage_metrics is None:
-            self.usage_metrics = pd.DataFrame([new_metric])
-        else:
-            self.usage_metrics = pd.concat([self.usage_metrics, pd.DataFrame([new_metric])], ignore_index=True)
+            entry["search_provider"] = search_provider
+        self.usage_metrics.append(entry)
 
     def get_total_usage(self) -> Dict[str, int]:
-        if self.usage_metrics is None:
-             return {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0}
         return {
-            "total_tokens": int(self.usage_metrics["total_tokens"].sum()),
-            "input_tokens": int(self.usage_metrics["input_tokens"].sum()),
-            "output_tokens": int(self.usage_metrics["output_tokens"].sum()),
+            "total_tokens": sum(e["total_tokens"] for e in self.usage_metrics),
+            "input_tokens": sum(e["input_tokens"] for e in self.usage_metrics),
+            "output_tokens": sum(e["output_tokens"] for e in self.usage_metrics),
         }
 
     def log_metrics(self):
-        if self.usage_metrics is not None:
-             print(f"\n[{self.__class__.__name__}] Usage Metrics:")
-             print(self.usage_metrics)
+        if self.usage_metrics:
+            print(f"\n[{self.__class__.__name__}] Usage Metrics:")
+            for entry in self.usage_metrics:
+                print(entry)

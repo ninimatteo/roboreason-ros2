@@ -4,8 +4,7 @@ from collections import namedtuple
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-# pyrefly: ignore [missing-import]
-from robo_reason_prompts.always_act_prompts import AlwaysActPrompts
+from robo_reason_reasoning.EmbodiedAgentsPrompts.always_act_prompts import AlwaysActPrompts
 
 
 class StepAction(ReasoningMethod):
@@ -29,7 +28,8 @@ class StepAction(ReasoningMethod):
         self.user_request = user_request
 
     def step_action(self, environment_map: str, user_request: str, image=None):
-        step_action_prompt = AlwaysActPrompts.get_prompts(use_vlm=self.use_vlm)
+        get_aa = AlwaysActPrompts.get_vlm_prompts if self.use_vlm else AlwaysActPrompts.get_llm_prompts
+        step_action_prompt = get_aa()
         
         format_args = {
             'user_request': user_request,

@@ -31,6 +31,7 @@ from rclpy.node import Node
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
+from robo_reason_bringup.config import settings
 from robo_reason_interfaces.action import ExecuteSkill
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
@@ -102,8 +103,8 @@ class UR5SkillExecutorNode(Node):
             )
             raise RuntimeError('roboticstoolbox not available.')
 
-        self.declare_parameter('robot_ip', '192.168.2.60')
-        self.declare_parameter('home_joints', self._DEFAULT_HOME_JOINTS)
+        self.declare_parameter('robot_ip', settings.ROBOT_IP)
+        self.declare_parameter('home_joints', settings.HOME_JOINTS)
         self._robot_ip = self.get_parameter('robot_ip').get_parameter_value().string_value
         self.HOME_JOINTS = list(
             self.get_parameter('home_joints').get_parameter_value().double_array_value

@@ -7,8 +7,7 @@ from treelib import Tree
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
-# pyrefly: ignore [missing-import]
-from robo_reason_prompts.tot_prompts import ToTPrompts
+from robo_reason_reasoning.EmbodiedAgentsPrompts.tot_prompts import ToTPrompts
 
 
 class TreeOfThought(ReasoningMethod):
@@ -46,7 +45,8 @@ class TreeOfThought(ReasoningMethod):
 
     def _generate_action_thought(self, environment_map: str, user_request: str,
                                   previous_thought: str, num_actions: int, image=None) -> list:
-        _, action_generation_prompt, _, _, _ = ToTPrompts.get_prompts(use_vlm=self.use_vlm)
+        get_tot = ToTPrompts.get_vlm_prompts if self.use_vlm else ToTPrompts.get_llm_prompts
+        _, action_generation_prompt, _, _, _ = get_tot()
 
         format_args = {
             'skills': self.skills,
@@ -69,7 +69,8 @@ class TreeOfThought(ReasoningMethod):
         return json.loads(resp.strip()).get('sampled_actions', [])
 
     def _evaluate_thought(self, thought, environment_map: str, user_request: str, image=None) -> int:
-        _, _, thought_evaluation_prompt, _, _ = ToTPrompts.get_prompts(use_vlm=self.use_vlm)
+        get_tot = ToTPrompts.get_vlm_prompts if self.use_vlm else ToTPrompts.get_llm_prompts
+        _, _, thought_evaluation_prompt, _, _ = get_tot()
 
         format_args = {
             'skills': self.skills,
@@ -94,7 +95,8 @@ class TreeOfThought(ReasoningMethod):
 
     def _evaluate_thoughts_batch(self, plans: dict, environment_map: str,
                                   user_request: str, image=None) -> dict:
-        _, _, _, thoughts_evaluation_in_batch_prompt, _ = ToTPrompts.get_prompts(use_vlm=self.use_vlm)
+        get_tot = ToTPrompts.get_vlm_prompts if self.use_vlm else ToTPrompts.get_llm_prompts
+        _, _, _, thoughts_evaluation_in_batch_prompt, _ = get_tot()
 
         format_args = {
             'user_request': user_request,

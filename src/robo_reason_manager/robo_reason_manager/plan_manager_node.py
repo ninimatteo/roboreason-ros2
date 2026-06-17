@@ -17,6 +17,7 @@ from std_msgs.msg import String
 import json
 import threading
 
+from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import ExecutePlan
 from robo_reason_interfaces.action import ExecuteSkill
 from robo_reason_manager.world_state import WorldState
@@ -29,7 +30,7 @@ class PlanManagerNode(Node):
     def __init__(self):
         super().__init__('plan_manager_node')
 
-        self.declare_parameter('mode', 'LLM')
+        self.declare_parameter('mode', 'LLM')   # not in settings — set per-launch
         self._mode = self.get_parameter('mode').value.upper()
 
         self._cb_group = ReentrantCallbackGroup()

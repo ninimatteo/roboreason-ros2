@@ -1,11 +1,11 @@
 """
 Launch file: real_robot.launch.py
 
-Starts the full RoboReason stack for the real UR5 robot:
-  - llm_planner_node   (real LLM via Groq)
-  - plan_manager_node
-  - ur5_skill_executor_node  (real robot, gripper via digital I/O)
-  - task_interface_node  (interactive CLI — run in a separate terminal for clean I/O)
+Starts the full RoboReason stack for the real UR5 robot.
+
+Mode selection:
+  mode=LLM (default) → llm_planner_node + ur5_skill_executor_node
+  mode=VLM           → vlm_planner_node + camera_services_node + ur5_skill_executor_node
 
 Prerequisites (before launching):
   1. Load ec_with_gripper.urp on the pendant and press Play
@@ -14,35 +14,35 @@ Prerequisites (before launching):
          ur_type:=ur5 robot_ip:=192.168.2.60 reverse_ip:=192.168.2.80 \\
          use_fake_hardware:=false \\
          initial_joint_controller:=scaled_joint_trajectory_controller
-  3. Export GROQ_API_KEY in the terminal before launching:
+  3. Export your API key before launching:
        export GROQ_API_KEY=gsk_...
+  (VLM mode only: also launch camera_services.launch.py in a separate terminal)
 
 Two-terminal usage (recommended for clean interactive I/O):
   Terminal 1: ros2 launch robo_reason_bringup real_robot.launch.py
   Terminal 2: ros2 run robo_reason_task_interface task_interface_node
 
-Single-terminal usage (all nodes including CLI):
+Single-terminal usage:
   ros2 launch robo_reason_bringup real_robot.launch.py include_task_interface:=true
 
 Parameters:
-  mode                LLM (default) or VLM — planner mode
-  robot_ip            UR5 robot IP (default: 192.168.2.60)
-  use_mock_llm        Set true for dry-run without API key (default: false, LLM mode only)
-  reasoning_method    fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
-  model_name          groq/llama4-scout-17b | groq/llama3.3-70b | groq/llama3.1-8b (default: groq/llama4-scout-17b)
-  temperature         LLM/VLM temperature, 0.0 = deterministic (default: 0.1)
-  tmp_dir             Directory for VLM frame cache (default: /tmp/roboreason_vlm)
+  mode                    LLM (default) or VLM
+  robot_ip                UR5 robot IP (default: 192.168.2.60)
+  use_mock_llm            Dry-run without API key, LLM mode only (default: false)
+  reasoning_method        fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
+  model_name              groq/llama4-scout-17b | etc. (default: groq/llama4-scout-17b)
+  temperature             LLM/VLM temperature (default: 0.1)
   include_task_interface  Launch the CLI node in this process (default: false)
 
-  home_joints is NOT a launch argument — edit it directly in the Node parameters
-  block inside this file (look for 'home_joints' in the executor Node).
+  home_joints is NOT a launch argument — edit it directly in the executor Node
+  parameters block inside this file.
 """
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, LaunchConfigurationEquals
 
 
 def generate_launch_description():
@@ -54,28 +54,40 @@ def generate_launch_description():
         DeclareLaunchArgument('use_mock_llm', default_value='false',
                               description='Use mock planner (no API key needed, LLM mode only)'),
         DeclareLaunchArgument('reasoning_method', default_value='fhp',
-                              description='Reasoning method: fhp, ffhp, react, cot_sc, tot, always_act, self_refine'),
+                              description='Reasoning method'),
         DeclareLaunchArgument('model_name', default_value='groq/llama4-scout-17b',
                               description='LLM/VLM model name'),
         DeclareLaunchArgument('temperature', default_value='0.1',
                               description='Temperature (0.0 = deterministic)'),
-        DeclareLaunchArgument('tmp_dir', default_value='/root/ws/src/vlm_frames',
-                              description='Directory for VLM frame cache (VLM mode only)'),
         DeclareLaunchArgument('include_task_interface', default_value='false',
                               description='Also launch the interactive CLI node in this process'),
 
+        # LLM planner — launched when mode=LLM
         Node(
             package='robo_reason_planner',
             executable='llm_planner_node',
             name='llm_planner_node',
             output='screen',
+            condition=LaunchConfigurationEquals('mode', 'LLM'),
             parameters=[{
-                'mode': LaunchConfiguration('mode'),
                 'use_mock_llm': LaunchConfiguration('use_mock_llm'),
                 'reasoning_method': LaunchConfiguration('reasoning_method'),
                 'model_name': LaunchConfiguration('model_name'),
                 'temperature': LaunchConfiguration('temperature'),
-                'tmp_dir': LaunchConfiguration('tmp_dir'),
+            }],
+        ),
+
+        # VLM planner — launched when mode=VLM
+        Node(
+            package='robo_reason_planner',
+            executable='vlm_planner_node',
+            name='vlm_planner_node',
+            output='screen',
+            condition=LaunchConfigurationEquals('mode', 'VLM'),
+            parameters=[{
+                'reasoning_method': LaunchConfiguration('reasoning_method'),
+                'model_name': LaunchConfiguration('model_name'),
+                'temperature': LaunchConfiguration('temperature'),
             }],
         ),
 
