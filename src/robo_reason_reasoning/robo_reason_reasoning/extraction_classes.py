@@ -3,37 +3,6 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 
-class GoalReach(BaseModel):
-    """Whether the goal has been reached."""
-    goal_reached: bool = Field(description='True if the goal has been reached.')
-    explanation: Optional[str] = Field(default=None)
-
-
-class Predicate(BaseModel):
-    """A spatial or state relationship between objects."""
-    predicate: str = Field(description='Predicate name (e.g. Above, Contact, Inside)')
-    main: str = Field(description='Main object')
-    relative: Optional[str] = Field(default=None, description='Relative object, if applicable')
-    explanation: str = Field(description='Short explanation of the relationship')
-    score: float = Field(description='Relevance score 0–1')
-
-
-class Predicates(BaseModel):
-    predicates: List[Predicate]
-
-
-class Effect(BaseModel):
-    """An effect predicate for goal-reaching planning."""
-    effect: str
-    main: str
-    relative: Optional[str] = None
-    score: float
-
-
-class Effects(BaseModel):
-    effects: List[Effect]
-
-
 class UR5Action(BaseModel):
     """
     A single UR5 skill primitive action with its parameters.
@@ -81,8 +50,3 @@ class UR5Action(BaseModel):
         default=None,
         description='Action importance score 0–1'
     )
-
-
-class UR5Actions(BaseModel):
-    """A list of UR5 actions (used for batch extraction)."""
-    actions: List[UR5Action]

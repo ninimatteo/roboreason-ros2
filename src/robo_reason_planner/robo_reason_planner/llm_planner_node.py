@@ -20,6 +20,7 @@ from rclpy.node import Node
 
 from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import PlanTask
+from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner.command_grounding import check_command_grounding
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
@@ -72,9 +73,10 @@ class LLMPlannerNode(Node):
             response.plan_json = json.dumps(plan_data)
 
         except Exception:
-            self.get_logger().error(f'[LLMPlannerNode] Planning error:\n{traceback.format_exc()}')
+            tb = traceback.format_exc()
+            self.get_logger().error(f'[LLMPlannerNode] Planning error:\n{tb}')
             response.success = False
-            response.error_message = traceback.format_exc()
+            response.error_message = tb
 
         return response
 
@@ -96,19 +98,7 @@ class LLMPlannerNode(Node):
         }
         self.get_logger().info(f'[LLMPlannerNode] Starting plan with\n{observation}')
 
-        plan_steps = []
-        for step_idx in range(25):
-            result = agent.step(observation=observation)
-            action = result.action
-            eos = result.end_of_simulation
-
-            if action.action_name.lower() not in ('idle', 'end_of_simulation'):
-                action_dict = action.model_dump(exclude_none=True)
-                action_dict['step'] = step_idx + 1
-                plan_steps.append(action_dict)
-
-            if eos:
-                break
+        plan_steps = run_plan_loop(agent, observation)
 
         self.get_logger().info(
             f'[LLMPlannerNode] Plan done — "{user_command}", '

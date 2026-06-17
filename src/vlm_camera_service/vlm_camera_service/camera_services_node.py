@@ -319,12 +319,12 @@ class CameraServicesNode(Node):
                 config=self._charuco_config,
             )
         except Exception as exc:
-            self.get_logger().warn(f"[Calib] ChArUco detection failed: {exc}")
+            self.get_logger().warn(f"[CameraServicesNode] ChArUco detection failed: {exc}")
             return
 
         if pose is None:
             self.get_logger().warn(
-                "[Calib] Board not visible — waiting for ChArUco board to appear..."
+                "[CameraServicesNode] Board not visible — waiting for ChArUco board to appear..."
             )
             return
 
@@ -338,7 +338,7 @@ class CameraServicesNode(Node):
         board_base = self._T_base_board[:3, 3]
         cam_base = T_base_cam[:3, 3]
         self.get_logger().info(
-            f"[Calib] LOCKED — ChArUco calibration complete. "
+            f"[CameraServicesNode] LOCKED — ChArUco calibration complete. "
             f"tvec(cam_frame)=[{tv[0]:+.3f}, {tv[1]:+.3f}, {tv[2]:+.3f}] m  |  "
             f"board_origin(base_link)=[{board_base[0]:+.3f}, {board_base[1]:+.3f}, {board_base[2]:+.3f}] m  |  "
             f"camera(base_link)=[{cam_base[0]:+.3f}, {cam_base[1]:+.3f}, {cam_base[2]:+.3f}] m"
@@ -391,7 +391,7 @@ class CameraServicesNode(Node):
         self._tf_broadcaster.sendTransform(tf_msg)
         t = T_base_cam[:3, 3]
         self.get_logger().info(
-            f"[CalibUpdate] camera→base_link TF published "
+            f"[CameraServicesNode] camera→base_link TF published "
             f"(t=[{t[0]:.3f}, {t[1]:.3f}, {t[2]:.3f}] m)"
         )
 

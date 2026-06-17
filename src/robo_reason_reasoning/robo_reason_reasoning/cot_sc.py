@@ -32,8 +32,7 @@ class CoTSC(ReasoningMethod):
         self.user_request = user_request
 
     def generate_plan(self, environment_map: str, user_request: str, image=None) -> list:
-        get_cot = CotScPrompts.get_vlm_prompts if self.use_vlm else CotScPrompts.get_llm_prompts
-        plan_prompt = get_cot()
+        plan_prompt = self._select_prompts(CotScPrompts)
         
         format_args = {
             'skills': self.skills,

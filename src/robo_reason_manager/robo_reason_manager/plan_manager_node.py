@@ -49,12 +49,12 @@ class PlanManagerNode(Node):
         self._world_state_pub = self.create_publisher(String, '/world_state', 10)
         self._log_pub = self.create_publisher(String, '/execution_log', 10)
 
-        self.get_logger().info('[PlanManager] Ready.')
+        self.get_logger().info('[PlanManagerNode] Ready.')
 
     # -------------------------------------------------------------------------
 
     def _execute_plan_callback(self, request, response):
-        self.get_logger().info('[PlanManager] Received execute_plan request.')
+        self.get_logger().info('[PlanManagerNode] Received execute_plan request.')
 
         # Parse inputs
         try:
@@ -76,12 +76,12 @@ class PlanManagerNode(Node):
         validator = PlanValidator()
         valid, val_err = validator.validate(plan, world_state.copy(), mode=self._mode)
         if not valid:
-            self.get_logger().warn(f'[PlanManager] Plan validation failed: {val_err}')
+            self.get_logger().warn(f'[PlanManagerNode] Plan validation failed: {val_err}')
             response.success = False
             response.error_message = f'Validation error: {val_err}'
             return response
 
-        self.get_logger().info(f'[PlanManager] Plan valid ({len(plan)} steps). Executing...')
+        self.get_logger().info(f'[PlanManagerNode] Plan valid ({len(plan)} steps). Executing...')
 
         # Wait for skill executor
         if not self._skill_client.wait_for_server(timeout_sec=10.0):
@@ -97,7 +97,7 @@ class PlanManagerNode(Node):
             step_idx = step.get('step', '?')
 
             log_prefix = f'[Step {step_idx}] {skill_name}'
-            self.get_logger().info(f'[PlanManager] {log_prefix} args={skill_args}')
+            self.get_logger().info(f'[PlanManagerNode] {log_prefix} args={skill_args}')
 
             # Build and send goal
             goal = ExecuteSkill.Goal()
@@ -108,7 +108,7 @@ class PlanManagerNode(Node):
 
             if result is None or not result.success:
                 err = result.error_message if result else 'Timeout or no result'
-                self.get_logger().error(f'[PlanManager] {log_prefix} FAILED: {err}')
+                self.get_logger().error(f'[PlanManagerNode] {log_prefix} FAILED: {err}')
                 response.success = False
                 response.error_message = f'{log_prefix} failed: {err}'
                 return response
@@ -130,7 +130,7 @@ class PlanManagerNode(Node):
         response.success = True
         response.final_state_json = world_state.to_json()
         response.report = '\n'.join(report_lines)
-        self.get_logger().info('[PlanManager] Plan executed successfully.')
+        self.get_logger().info('[PlanManagerNode] Plan executed successfully.')
         return response
 
     # -------------------------------------------------------------------------
@@ -159,7 +159,7 @@ class PlanManagerNode(Node):
         completed = done_event.wait(timeout=timeout_sec)
 
         if not completed:
-            self.get_logger().error('[PlanManager] Skill action timed out.')
+            self.get_logger().error('[PlanManagerNode] Skill action timed out.')
         return result_holder[0]
 
 

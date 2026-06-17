@@ -5,7 +5,7 @@ Loads scene_mock.json, prompts user for a command, calls /plan_task then /execut
 and prints the plan, execution report and final world state.
 
 Run separately from the services:
-  ros2 run robo_reason_real task_interface_node
+  ros2 run robo_reason_task_interface task_interface_node
 """
 
 import rclpy
@@ -39,10 +39,10 @@ class TaskInterfaceNode(Node):
         with open(scene_path, 'r') as f:
             self._scene_json = f.read()
 
-        self.get_logger().info('[TaskInterface] Scene loaded. Waiting for services...')
+        self.get_logger().info('[TaskInterfaceNode] Scene loaded. Waiting for services...')
         self._plan_client.wait_for_service()
         self._exec_client.wait_for_service()
-        self.get_logger().info('[TaskInterface] Services ready.')
+        self.get_logger().info('[TaskInterfaceNode] Services ready.')
 
     def _interactive_loop(self):
         while True:

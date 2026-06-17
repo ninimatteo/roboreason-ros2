@@ -28,8 +28,7 @@ class StepAction(ReasoningMethod):
         self.user_request = user_request
 
     def step_action(self, environment_map: str, user_request: str, image=None):
-        get_aa = AlwaysActPrompts.get_vlm_prompts if self.use_vlm else AlwaysActPrompts.get_llm_prompts
-        step_action_prompt = get_aa()
+        step_action_prompt = self._select_prompts(AlwaysActPrompts)
         
         format_args = {
             'user_request': user_request,

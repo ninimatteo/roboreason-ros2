@@ -14,18 +14,14 @@ ROS2 parameters:
   image_height_px (int,   default 480)           — image height used for linear v→y mapping
 """
 
-import glob as _glob
 import itertools
 from pathlib import Path
 
 import cv2
-import numpy as np
 import rclpy
-from builtin_interfaces.msg import Time
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Point
 from rclpy.node import Node
-from sensor_msgs.msg import Image
 from std_msgs.msg import Header
 
 from robo_reason_bringup.config import settings

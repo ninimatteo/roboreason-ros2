@@ -58,22 +58,24 @@ class Settings(BaseSettings):
     # ── ChArUco calibration board ─────────────────────────────────────────────
     CHARUCO_ENABLED: bool = True
     CHARUCO_DICTIONARY: str = 'DICT_6X6_250'
-    CHARUCO_SQUARES_X: int = 5
-    CHARUCO_SQUARES_Y: int = 7
-    CHARUCO_SQUARE_LENGTH_M: float = 0.03
-    CHARUCO_MARKER_LENGTH_M: float = 0.015
+    CHARUCO_SQUARES_X: int = 3
+    CHARUCO_SQUARES_Y: int = 4
+    CHARUCO_SQUARE_LENGTH_M: float = 0.062
+    CHARUCO_MARKER_LENGTH_M: float = 0.031
     CHARUCO_AXIS_LENGTH_M: float = 0.08
     CHARUCO_MIN_CORNERS: int = 4
     CHARUCO_Z_SIGN: float = 1.0   # +1.0 for right-handed triad (fixed from -1.0)
     CHARUCO_FRAME_ID: str = 'charuco_board'
 
     # ── Board pose in robot base frame (for deproject) ────────────────────────
-    BOARD_IN_BASE_X: float = 0.0
-    BOARD_IN_BASE_Y: float = 0.0
-    BOARD_IN_BASE_Z: float = 0.0
-    BOARD_IN_BASE_ROLL: float = 0.0
+    # Measured once per physical setup. Position in metres, rotation as
+    # intrinsic RPY in radians.
+    BOARD_IN_BASE_X: float = -0.224
+    BOARD_IN_BASE_Y: float = -0.348
+    BOARD_IN_BASE_Z: float = -0.030
+    BOARD_IN_BASE_ROLL: float = 3.14159
     BOARD_IN_BASE_PITCH: float = 0.0
-    BOARD_IN_BASE_YAW: float = 0.0
+    BOARD_IN_BASE_YAW: float = 1.5708
 
     # ── Mock camera service ───────────────────────────────────────────────────
     MOCK_IMAGES_DIR: str = '/root/ws/src/mock_frames'

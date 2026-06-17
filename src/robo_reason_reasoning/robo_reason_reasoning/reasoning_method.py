@@ -23,6 +23,11 @@ class ReasoningMethod(ABC):
         else:
             self.client = LLMClient(**client_parameters)
 
+    def _select_prompts(self, prompt_cls):
+        """Return the VLM or LLM prompt tuple for the active client type."""
+        getter = prompt_cls.get_vlm_prompts if self.use_vlm else prompt_cls.get_llm_prompts
+        return getter()
+
     def _call_client(self, user_message: str, system_message: str, force_json: bool = False, image=None, **kwargs):
         if self.use_vlm:
             text_prompt = f"**System Message**:\n{system_message}\n\n**User Message**: \n{user_message}"
@@ -58,33 +63,3 @@ class ReasoningMethod(ABC):
 
     def get_llm_usage_metrics(self):
         return getattr(self.client, 'usage_metrics', {})
-
-
-class LLMReasoningMethod(ReasoningMethod):
-    pass
-
-
-class ReasoningMethodTester:
-    """Helper for offline testing of reasoning methods."""
-
-    observations = {
-        "non_symbolic": {
-            "environment_map": (
-                '{"objects": {"red_cube": {"type": "cube", "color": "red", '
-                '"position": [0.45, -0.15, 0.025], "state": "on_table", "graspable": true}}, '
-                '"targets": {"zone_a": {"type": "zone", "position": [0.72, -0.22, 0.0]}}}'
-            ),
-            "user_request": "Move the red cube to zone_a.",
-        }
-    }
-
-    @staticmethod
-    def get_test_observation():
-        return ReasoningMethodTester.observations["non_symbolic"]
-
-    @staticmethod
-    def get_test_llm_parameters(**kwargs):
-        return {
-            'temperature': kwargs.get('temperature', 0.0),
-            'model_name': kwargs.get('model_name', 'groq/llama4-scout-17b'),
-        }

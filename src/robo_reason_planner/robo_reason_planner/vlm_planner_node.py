@@ -30,6 +30,7 @@ from rclpy.node import Node
 
 from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
+from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
 
@@ -96,9 +97,10 @@ class VLMPlannerNode(Node):
             response.plan_json = json.dumps(plan_data)
             self.get_logger().info('[VLMPlannerNode] Generated VLM plan.')
         except Exception:
-            self.get_logger().error(f'[VLMPlannerNode] Planning error:\n{traceback.format_exc()}')
+            tb = traceback.format_exc()
+            self.get_logger().error(f'[VLMPlannerNode] Planning error:\n{tb}')
             response.success = False
-            response.error_message = traceback.format_exc()
+            response.error_message = tb
 
         return response
 
@@ -126,22 +128,10 @@ class VLMPlannerNode(Node):
             client_type='vlm',
         )
 
-        pixel_steps = []
-        for step_idx in range(25):
-            result = agent.step(observation={
-                'user_request': user_command,
-                'image': image_paths[-1],
-            })
-            action = result.action
-            eos = result.end_of_simulation
-
-            if action.action_name.lower() not in ('idle', 'end_of_simulation'):
-                action_dict = action.model_dump(exclude_none=True)
-                action_dict['step'] = step_idx + 1
-                pixel_steps.append(action_dict)
-
-            if eos:
-                break
+        pixel_steps = run_plan_loop(agent, {
+            'user_request': user_command,
+            'image': image_paths[-1],
+        })
 
         # 4. Batch-deproject pixel coords → world [x, y, z].
         plan_steps = self._deproject_plan(pixel_steps)
@@ -163,14 +153,21 @@ class VLMPlannerNode(Node):
 
     # ── Camera service helpers ─────────────────────────────────────────────────
 
+    def _wait_for_future(self, future, what: str, timeout_sec: float = 10.0):
+        """Block until a client-call future resolves, raising on timeout."""
+        deadline = time.monotonic() + timeout_sec
+        while not future.done():
+            if time.monotonic() > deadline:
+                raise RuntimeError(f'{what} did not return within {timeout_sec:.0f} s')
+            time.sleep(0.05)
+        return future.result()
+
     def _call_get_image(self):
         """Call /camera/get_image asynchronously, polling until the future resolves."""
         if not self._get_image_client.wait_for_service(timeout_sec=5.0):
             raise RuntimeError('/camera/get_image service not available (timeout 5 s)')
         future = self._get_image_client.call_async(GetImage.Request())
-        while not future.done():
-            time.sleep(0.05)
-        return future.result()
+        return self._wait_for_future(future, '/camera/get_image')
 
     def _save_frame(self, ros_image, task_dir: Path, index: int) -> list:
         """Decode a sensor_msgs/Image and write it to disk. Returns [path_str]."""
@@ -212,9 +209,7 @@ class VLMPlannerNode(Node):
         if not self._deproject_client.wait_for_service(timeout_sec=5.0):
             raise RuntimeError('/camera/deproject service not available (timeout 5 s)')
         future = self._deproject_client.call_async(req)
-        while not future.done():
-            time.sleep(0.05)
-        dep = future.result()
+        dep = self._wait_for_future(future, '/camera/deproject')
 
         if not dep.success:
             raise RuntimeError(f'Deproject failed: {dep.error_message}')

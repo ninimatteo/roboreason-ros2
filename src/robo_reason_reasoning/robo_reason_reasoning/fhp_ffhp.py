@@ -33,10 +33,8 @@ class FHP(ReasoningMethod):
         self.user_request = user_request
 
     def predict_predicates(self, environment_map: str, image=None) -> str:
-        get_pred = PredicatesPrompts.get_vlm_prompts if self.use_vlm else PredicatesPrompts.get_llm_prompts
-        predicates_prompt, _ = get_pred()
-        get_fhp = FHP_FFHP_Prompts.get_vlm_prompts if self.use_vlm else FHP_FFHP_Prompts.get_llm_prompts
-        fhp_ffhp_system_message, _ = get_fhp()
+        predicates_prompt, _ = self._select_prompts(PredicatesPrompts)
+        fhp_ffhp_system_message, _ = self._select_prompts(FHP_FFHP_Prompts)
         
         format_args = {
             'predicates_library': self.predicates,
@@ -53,8 +51,7 @@ class FHP(ReasoningMethod):
         )
 
     def plan_task(self, env_config: str, predicates: str, image=None) -> list:
-        get_fhp = FHP_FFHP_Prompts.get_vlm_prompts if self.use_vlm else FHP_FFHP_Prompts.get_llm_prompts
-        fhp_ffhp_system_message, task_planning_prompt = get_fhp()
+        fhp_ffhp_system_message, task_planning_prompt = self._select_prompts(FHP_FFHP_Prompts)
         
         format_args = {
             'skills': self.skills,

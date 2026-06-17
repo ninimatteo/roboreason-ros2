@@ -37,7 +37,7 @@ Every object in the scene has a `size: [width, depth, height]` field (meters). U
     {action_placeholder}
     }}
   "reasoning": "<Null or your reasoning content if you decide to reason>",
-  "end of simulation": "<bool: True or False, if you decide the goal has been reached>"
+  "end_of_simulation": "<bool: True or False, if you decide the goal has been reached>"
 }}
 Think step by step.
 This is the list of past actions you took: \n{actions_memory}
@@ -73,7 +73,7 @@ deprojecting the center of an object's bounding box already gives a 3D point on 
     {action_placeholder}
     }}
   "reasoning": "<Null or your reasoning content if you decide to reason>",
-  "end of simulation": "<bool: True or False, if you decide the goal has been reached>"
+  "end_of_simulation": "<bool: True or False, if you decide the goal has been reached>"
 }}
 Think step by step.
 This is the list of past actions you took: \n{actions_memory}

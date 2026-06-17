@@ -98,7 +98,7 @@ class UR5SkillExecutorNode(Node):
 
         if not IK_AVAILABLE:
             self.get_logger().fatal(
-                f'[UR5Executor] roboticstoolbox not available: {_IK_IMPORT_ERROR}\n'
+                f'[UR5SkillExecutorNode] roboticstoolbox not available: {_IK_IMPORT_ERROR}\n'
                 'Run: /usr/bin/pip3 install roboticstoolbox-python spatialmath-python'
             )
             raise RuntimeError('roboticstoolbox not available.')
@@ -155,7 +155,7 @@ class UR5SkillExecutorNode(Node):
         )
 
         self.get_logger().info(
-            f'[UR5Executor] Ready — REAL ROBOT mode (robot_ip={self._robot_ip}).'
+            f'[UR5SkillExecutorNode] Ready — REAL ROBOT mode (robot_ip={self._robot_ip}).'
         )
 
         # Move to home once the trajectory server is available
@@ -165,12 +165,12 @@ class UR5SkillExecutorNode(Node):
         if not self._traj_client.server_is_ready():
             return  # keep waiting
         self._startup_timer.cancel()
-        self.get_logger().info('[UR5Executor] Moving to home position on startup.')
+        self.get_logger().info('[UR5SkillExecutorNode] Moving to home position on startup.')
         self._move_to_joints(self.HOME_JOINTS, duration_sec=4.0)
         # Force a known open state regardless of the digital-output level left
         # over from a previous session (pendant script may not retrigger on a
         # LOW→LOW non-edge). Pulse HIGH→LOW to guarantee the gripper opens.
-        self.get_logger().info('[UR5Executor] Pulsing gripper HIGH→LOW to ensure open state.')
+        self.get_logger().info('[UR5SkillExecutorNode] Pulsing gripper HIGH→LOW to ensure open state.')
         self._gripper_set_pin(1.0)
         self._gripper_open()
 
@@ -214,7 +214,7 @@ class UR5SkillExecutorNode(Node):
         sol = self._robot_model.ikine_LM(T, q0=q0)
         if sol.success:
             return list(sol.q)
-        self.get_logger().warn(f'[UR5Executor] IK failed for [{x:.3f}, {y:.3f}, {z:.3f}]')
+        self.get_logger().warn(f'[UR5SkillExecutorNode] IK failed for [{x:.3f}, {y:.3f}, {z:.3f}]')
         return None
 
     def _horizontal_approach(self, target: list, offset: float):
@@ -245,7 +245,7 @@ class UR5SkillExecutorNode(Node):
         dist_xy = math.sqrt(dx ** 2 + dy ** 2)
         if dist_xy < 1e-3:
             self.get_logger().warn(
-                '[UR5Executor] EE is directly above object — defaulting approach to +x.'
+                '[UR5SkillExecutorNode] EE is directly above object — defaulting approach to +x.'
             )
             dx, dy = 1.0, 0.0
         else:
@@ -266,7 +266,7 @@ class UR5SkillExecutorNode(Node):
         R = (SE3.Rz(theta) * SE3.Ry(math.pi / 2)).R
 
         self.get_logger().info(
-            f'[UR5Executor] Horizontal approach: angle={math.degrees(theta):.1f}° '
+            f'[UR5SkillExecutorNode] Horizontal approach: angle={math.degrees(theta):.1f}° '
             f'hover={[round(v, 3) for v in hover]}'
         )
         return hover, R
@@ -278,7 +278,7 @@ class UR5SkillExecutorNode(Node):
     def _move_to_joints(self, joints: list, duration_sec: float = 3.0) -> bool:
         """Send a joint trajectory goal and block until it completes."""
         if not self._traj_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error('[UR5Executor] Trajectory action server not available.')
+            self.get_logger().error('[UR5SkillExecutorNode] Trajectory action server not available.')
             return False
 
         point = JointTrajectoryPoint()
@@ -304,7 +304,7 @@ class UR5SkillExecutorNode(Node):
             lambda f: f.result().get_result_async().add_done_callback(_done_cb)
         )
         if not done.wait(timeout=duration_sec + 10.0):
-            self.get_logger().error('[UR5Executor] Trajectory goal timed out.')
+            self.get_logger().error('[UR5SkillExecutorNode] Trajectory goal timed out.')
             return False
 
         return result_holder[0] is not None
@@ -321,13 +321,13 @@ class UR5SkillExecutorNode(Node):
         as a single trajectory.
         """
         if not self._traj_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error('[UR5Executor] Trajectory action server not available.')
+            self.get_logger().error('[UR5SkillExecutorNode] Trajectory action server not available.')
             return False
 
         # Current EE position as start
         start_xyz = self._get_ee_position()
         if start_xyz is None:
-            self.get_logger().error('[UR5Executor] No joint states — cannot compute linear path.')
+            self.get_logger().error('[UR5SkillExecutorNode] No joint states — cannot compute linear path.')
             return False
 
         if R is None:
@@ -350,7 +350,7 @@ class UR5SkillExecutorNode(Node):
             sol = self._robot_model.ikine_LM(T, q0=q_seed)
             if not sol.success:
                 self.get_logger().warn(
-                    f'[UR5Executor] Linear IK failed at step {i}/{steps} '
+                    f'[UR5SkillExecutorNode] Linear IK failed at step {i}/{steps} '
                     f'[{x:.3f},{y:.3f},{z:.3f}] — skipping waypoint.'
                 )
                 continue
@@ -358,7 +358,7 @@ class UR5SkillExecutorNode(Node):
             q_solutions.append(q_seed)
 
         if not q_solutions:
-            self.get_logger().error('[UR5Executor] Linear path: no valid IK solutions found.')
+            self.get_logger().error('[UR5SkillExecutorNode] Linear path: no valid IK solutions found.')
             return False
 
         # --- Phase 2: assign timestamps and finite-difference velocities ---
@@ -393,7 +393,7 @@ class UR5SkillExecutorNode(Node):
             points.append(pt)
 
         if not points:
-            self.get_logger().error('[UR5Executor] Linear path: no valid points after timing.')
+            self.get_logger().error('[UR5SkillExecutorNode] Linear path: no valid points after timing.')
             return False
 
         goal = FollowJointTrajectory.Goal()
@@ -412,7 +412,7 @@ class UR5SkillExecutorNode(Node):
             lambda f: f.result().get_result_async().add_done_callback(_done_cb)
         )
         if not done.wait(timeout=duration_sec + 10.0):
-            self.get_logger().error('[UR5Executor] Linear trajectory timed out.')
+            self.get_logger().error('[UR5SkillExecutorNode] Linear trajectory timed out.')
             return False
 
         return result_holder[0] is not None
@@ -424,7 +424,7 @@ class UR5SkillExecutorNode(Node):
     def _gripper_set_pin(self, state: float) -> bool:
         """Set digital output 0 to trigger the pendant gripper_thread."""
         if not self._set_io_client.wait_for_service(timeout_sec=3.0):
-            self.get_logger().error('[UR5Executor] /io_and_status_controller/set_io not available.')
+            self.get_logger().error('[UR5SkillExecutorNode] /io_and_status_controller/set_io not available.')
             return False
         req = SetIO.Request()
         req.fun = _IO_FUN_DIGITAL_OUT
@@ -438,12 +438,12 @@ class UR5SkillExecutorNode(Node):
 
     def _gripper_close(self, force: float = 40.0) -> bool:
         """Close the gripper (pin HIGH). Force threshold is set in gripper_thread.script."""
-        self.get_logger().info(f'[UR5Executor] Gripper close (pin HIGH)')
+        self.get_logger().info(f'[UR5SkillExecutorNode] Gripper close (pin HIGH)')
         return self._gripper_set_pin(1.0)
 
     def _gripper_open(self, force: float = 20.0) -> bool:
         """Open the gripper fully (pin LOW)."""
-        self.get_logger().info('[UR5Executor] Gripper open (pin LOW)')
+        self.get_logger().info('[UR5SkillExecutorNode] Gripper open (pin LOW)')
         return self._gripper_set_pin(0.0)
 
 
@@ -455,7 +455,7 @@ class UR5SkillExecutorNode(Node):
         skill_name = goal_handle.request.skill_name.lower()
         skill_args = json.loads(goal_handle.request.skill_args_json)
 
-        self.get_logger().info(f'[UR5Executor] {skill_name.upper()} args={skill_args}')
+        self.get_logger().info(f'[UR5SkillExecutorNode] {skill_name.upper()} args={skill_args}')
 
         feedback = ExecuteSkill.Feedback()
         result = ExecuteSkill.Result()
@@ -470,7 +470,7 @@ class UR5SkillExecutorNode(Node):
             result.result_json = json.dumps({'skill': skill_name, 'status': 'ok'})
 
         except Exception as e:
-            self.get_logger().error(f'[UR5Executor] Skill {skill_name} failed: {e}')
+            self.get_logger().error(f'[UR5SkillExecutorNode] Skill {skill_name} failed: {e}')
             goal_handle.abort()
             result.success = False
             result.error_message = str(e)
@@ -534,7 +534,7 @@ class UR5SkillExecutorNode(Node):
             if object_height > 0.0:
                 release_pos[2] += object_height
                 self.get_logger().info(
-                    f'[UR5Executor] release: applying object_height={object_height:.3f} m '
+                    f'[UR5SkillExecutorNode] release: applying object_height={object_height:.3f} m '
                     f'→ release z = {release_pos[2]:.3f}'
                 )
 
@@ -556,7 +556,7 @@ class UR5SkillExecutorNode(Node):
             retract_target = self._last_approach_hover
             if retract_target is None:
                 self.get_logger().warn(
-                    '[UR5Executor] release: no hover position stored — '
+                    '[UR5SkillExecutorNode] release: no hover position stored — '
                     'call approach before release so the node knows where to retract.'
                 )
             else:

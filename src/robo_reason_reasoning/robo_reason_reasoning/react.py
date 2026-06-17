@@ -29,8 +29,7 @@ class React(ReasoningMethod):
         self.user_request = user_request
 
     def react_step(self, environment_map: str, user_request: str, image=None):
-        get_react = ReActPrompts.get_vlm_prompts if self.use_vlm else ReActPrompts.get_llm_prompts
-        react_system_message, react_prompt_message = get_react()
+        react_system_message, react_prompt_message = self._select_prompts(ReActPrompts)
 
         format_args = {
             'user_request': user_request,
@@ -57,10 +56,10 @@ class React(ReasoningMethod):
         if decision == 'reasoning':
             self.reasoning_thought = output.get('reasoning', '')
             action = UR5Action(action_name='wait', time=0.0)
-            eos = output.get('end of simulation', False)
+            eos = output.get('end_of_simulation', False)
         elif decision == 'action':
             action = UR5Action(**output.get('action', {'action_name': 'move_home'}))
-            eos = output.get('end of simulation', False)
+            eos = output.get('end_of_simulation', False)
         else:
             action = UR5Action(action_name='move_home')
             eos = True

@@ -72,7 +72,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("board_in_base_x",     default_value="-0.224"),
             DeclareLaunchArgument("board_in_base_y",     default_value="-0.348"),
             DeclareLaunchArgument("board_in_base_z",     default_value="-0.030"),
-            DeclareLaunchArgument("board_in_base_roll",  default_value="3.14159 "),
+            DeclareLaunchArgument("board_in_base_roll",  default_value="3.14159"),
             DeclareLaunchArgument("board_in_base_pitch", default_value="0.0"),
             DeclareLaunchArgument("board_in_base_yaw",   default_value="1.5708"),
             # Z offset (metres) added to base_link points before returning to the planner.

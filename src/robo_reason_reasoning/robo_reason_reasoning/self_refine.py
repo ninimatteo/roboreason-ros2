@@ -30,8 +30,7 @@ class SelfRefine(ReasoningMethod):
         self.user_request = user_request
 
     def generate_initial_solution(self, environment_map: str, user_request: str, image=None) -> str:
-        get_sr = SelfRefinePrompts.get_vlm_prompts if self.use_vlm else SelfRefinePrompts.get_llm_prompts
-        initial_solution_prompt, _, _ = get_sr()
+        initial_solution_prompt, _, _ = self._select_prompts(SelfRefinePrompts)
 
         format_args = {
             'skills': self.skills,
@@ -52,8 +51,7 @@ class SelfRefine(ReasoningMethod):
         ).strip()
 
     def generate_feedback(self, solution: str, environment_map: str, user_request: str, image=None) -> str:
-        get_sr = SelfRefinePrompts.get_vlm_prompts if self.use_vlm else SelfRefinePrompts.get_llm_prompts
-        _, feedback_prompt, _ = get_sr()
+        _, feedback_prompt, _ = self._select_prompts(SelfRefinePrompts)
 
         format_args = {
             'skills': self.skills,
@@ -75,8 +73,7 @@ class SelfRefine(ReasoningMethod):
     def refine_solution(self, environment_map: str, user_request: str,
                         initial_solution: str, current_solution: str,
                         all_feedback: list, current_feedback: str, image=None) -> str:
-        get_sr = SelfRefinePrompts.get_vlm_prompts if self.use_vlm else SelfRefinePrompts.get_llm_prompts
-        _, _, refinement_prompt = get_sr()
+        _, _, refinement_prompt = self._select_prompts(SelfRefinePrompts)
 
         format_args = {
             'skills': self.skills,

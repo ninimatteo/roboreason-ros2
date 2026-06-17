@@ -19,7 +19,7 @@ class TreeOfThought(ReasoningMethod):
     def __init__(self, client_parameters: dict = None, client_type: str = 'llm', verbose: bool = False,
                  skills: str = '', action_placeholder: str = '',
                  eos_placeholder: str = '', k: int = 3, b: int = 2, t: int = 10,
-                 use_iid_evaluation: bool = True, **kwargs):
+                 **kwargs):
         super().__init__(client_parameters=client_parameters, client_type=client_type, **kwargs)
         self.method_name = 'tot'
         self.k = k
@@ -29,7 +29,6 @@ class TreeOfThought(ReasoningMethod):
         self.action_placeholder = action_placeholder
         self.eos_placeholder = eos_placeholder
         self.verbose = verbose
-        self.use_iid_evaluation = use_iid_evaluation
         self.task_plan = []
         self.thoughts_tree = None
         self.user_request = ''
@@ -45,8 +44,7 @@ class TreeOfThought(ReasoningMethod):
 
     def _generate_action_thought(self, environment_map: str, user_request: str,
                                   previous_thought: str, num_actions: int, image=None) -> list:
-        get_tot = ToTPrompts.get_vlm_prompts if self.use_vlm else ToTPrompts.get_llm_prompts
-        _, action_generation_prompt, _, _, _ = get_tot()
+        _, action_generation_prompt, _, _, _ = self._select_prompts(ToTPrompts)
 
         format_args = {
             'skills': self.skills,
@@ -69,8 +67,7 @@ class TreeOfThought(ReasoningMethod):
         return json.loads(resp.strip()).get('sampled_actions', [])
 
     def _evaluate_thought(self, thought, environment_map: str, user_request: str, image=None) -> int:
-        get_tot = ToTPrompts.get_vlm_prompts if self.use_vlm else ToTPrompts.get_llm_prompts
-        _, _, thought_evaluation_prompt, _, _ = get_tot()
+        _, _, thought_evaluation_prompt, _, _ = self._select_prompts(ToTPrompts)
 
         format_args = {
             'skills': self.skills,
@@ -92,34 +89,6 @@ class TreeOfThought(ReasoningMethod):
         for key in ('user_request_consistency', 'environment_feasibility', 'embodiment_feasibility'):
             score += self._scores_map.get(data.get(key, '').strip().lower(), 0)
         return score
-
-    def _evaluate_thoughts_batch(self, plans: dict, environment_map: str,
-                                  user_request: str, image=None) -> dict:
-        get_tot = ToTPrompts.get_vlm_prompts if self.use_vlm else ToTPrompts.get_llm_prompts
-        _, _, _, thoughts_evaluation_in_batch_prompt, _ = get_tot()
-
-        format_args = {
-            'user_request': user_request,
-            'skills': self.skills,
-            'thoughts': json.dumps(list(plans.values()), indent=2),
-        }
-        if not self.use_vlm:
-            format_args['environment_map'] = environment_map
-
-        msg = thoughts_evaluation_in_batch_prompt.format(**format_args)
-        resp = self._call_client(
-            user_message=msg,
-            system_message="You are an expert judge for robotic planning.",
-            temperature=0.0, force_json=True,
-            image=image
-        )
-        evals = json.loads(resp).get('scores', [])
-        assert len(evals) == len(plans), f"Eval count mismatch: {len(evals)} vs {len(plans)}"
-        scores = {}
-        for idx, ev in enumerate(evals):
-            key = list(plans.keys())[idx]
-            scores[key] = sum(self._scores_map.get(v.strip().lower(), 0) for v in ev.values())
-        return scores
 
     def _retrieve_chain(self, thought_id: str, tree: Tree, db: dict) -> list:
         chain = [db[thought_id]]
@@ -167,30 +136,17 @@ class TreeOfThought(ReasoningMethod):
 
                 self.thoughts_tree = tree
 
-            if self.use_iid_evaluation:
-                evaluated = []
-                for tid in db:
-                    if tid.startswith(f'{iteration+1}-'):
-                        chain = self._retrieve_chain(tid, tree, db)
-                        score = self._evaluate_thought(
-                            thought=chain,
-                            environment_map=environment_map,
-                            user_request=user_request,
-                            image=image
-                        )
-                        evaluated.append((tid, score))
-            else:
-                plans = {
-                    tid: self._retrieve_chain(tid, tree, db)
-                    for tid in db if tid.startswith(f'{iteration+1}-')
-                }
-                scores = self._evaluate_thoughts_batch(
-                    plans=plans,
-                    environment_map=environment_map,
-                    user_request=user_request,
-                    image=image
-                )
-                evaluated = list(scores.items())
+            evaluated = []
+            for tid in db:
+                if tid.startswith(f'{iteration+1}-'):
+                    chain = self._retrieve_chain(tid, tree, db)
+                    score = self._evaluate_thought(
+                        thought=chain,
+                        environment_map=environment_map,
+                        user_request=user_request,
+                        image=image
+                    )
+                    evaluated.append((tid, score))
 
             evaluated.sort(key=lambda x: x[1], reverse=True)
             best_ids = [e[0] for e in evaluated[:self.b]]

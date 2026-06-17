@@ -208,9 +208,6 @@ class VLMClient(BaseFoundationClient):
             self._update_metrics(response.usage.prompt_tokens, response.usage.completion_tokens)
         return response.choices[0].message.content
 
-    def _call_nebius(self, text_prompt: Optional[str], image: Union[str, bytes, Image.Image, None], **kwargs) -> str:
-        return self._call_openai(text_prompt, image, **kwargs)
-
     def _call_anthropic(self, text_prompt: Optional[str], image: Union[str, bytes, Image.Image, None], **kwargs) -> str:
         raise NotImplementedError("VLMClient does not support Anthropic yet due to differences in image handling and API structure.")   
 
@@ -221,10 +218,9 @@ class VLMClient(BaseFoundationClient):
         """Sends a vision-language request to the model."""
         if self.provider == "groq":
             return self._call_groq(text_prompt, image, **kwargs)
-        elif self.provider == "openai":
+        # Nebius is OpenAI-compatible; only the base_url differs (set at init).
+        elif self.provider in ("openai", "nebius"):
             return self._call_openai(text_prompt, image, **kwargs)
-        elif self.provider == "nebius":
-            return self._call_nebius(text_prompt, image, **kwargs)
         elif self.provider == "anthropic":
             return self._call_anthropic(text_prompt, image, **kwargs)
         elif self.provider == "gemini":

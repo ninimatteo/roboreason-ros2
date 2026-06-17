@@ -76,7 +76,6 @@ class EmbodiedAgent:
             self.reasoning_method = TreeOfThought(
                 eos_placeholder=self.eos_placeholder,
                 predicates=self.predicates,
-                use_iid_evaluation=True,
                 b=2, k=3, t=20,
                 **common,
             )
@@ -95,8 +94,8 @@ class EmbodiedAgent:
             )
 
     def get_used_tokens(self) -> int:
-        if hasattr(self.reasoning_method.client, 'get_total_used_tokens'):
-            return self.reasoning_method.client.get_total_used_tokens()
+        if hasattr(self.reasoning_method.client, 'get_total_usage'):
+            return self.reasoning_method.client.get_total_usage().get('total_tokens', 0)
         return 0
 
     def get_detailed_token_usage(self):
@@ -132,7 +131,7 @@ class EmbodiedAgent:
         action, end_of_simulation = self.reasoning_method(
             **observation,
             verbose=self.verbose,
-            force_replanning=force_replanning,
+            force_replan=force_replanning,
         )
 
         assert isinstance(action, UR5Action), \

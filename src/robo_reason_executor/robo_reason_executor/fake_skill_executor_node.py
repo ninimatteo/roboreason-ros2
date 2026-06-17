@@ -32,7 +32,7 @@ class FakeSkillExecutorNode(Node):
             callback_group=self._cb_group,
         )
 
-        self.get_logger().info('[FakeExecutor] Ready — dry-run mode.')
+        self.get_logger().info('[FakeSkillExecutorNode] Ready — dry-run mode.')
 
     def _execute_skill_callback(self, goal_handle):
         skill_name = goal_handle.request.skill_name
