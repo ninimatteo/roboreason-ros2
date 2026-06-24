@@ -10,15 +10,46 @@
   <header>
     <h1>RoboReason</h1>
     <div class="status">
-      <span id="ros-led" class="led led-red"></span>
-      <span id="ros-text">connecting…</span>
+      <span id="robot-led" class="led led-red"></span>
+      <span id="robot-text">robot: unknown</span>
     </div>
   </header>
 
   <main>
     <section class="card">
-      <h2>ROS connection</h2>
-      <p>Bridge node: <code id="bridge-node">—</code></p>
+      <h2>Robot connection</h2>
+      <ul class="probes">
+        <li><span id="probe-traj" class="dot dot-red"></span> Trajectory controller</li>
+        <li><span id="probe-joints" class="dot dot-red"></span> Joint states</li>
+        <li><span id="probe-io" class="dot dot-red"></span> Gripper I/O service</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Configuration <span class="hint">(read-only — wiring comes in Phase 2)</span></h2>
+      <div class="grid">
+        <label>Mode
+          <select id="sel-mode" disabled></select>
+        </label>
+        <label>Reasoning method
+          <select id="sel-reasoning" disabled></select>
+        </label>
+        <label>Provider
+          <select id="sel-provider" disabled></select>
+        </label>
+        <label>Model
+          <select id="sel-model" disabled></select>
+        </label>
+        <label>Temperature
+          <input id="inp-temp" type="number" step="0.1" min="0" max="2" disabled />
+        </label>
+      </div>
+      <p id="options-error" class="error" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Backend</h2>
+      <p>ROS bridge: <code id="bridge-node">—</code></p>
       <p>Discovered nodes: <span id="node-count">—</span></p>
       <ul id="node-list"></ul>
     </section>

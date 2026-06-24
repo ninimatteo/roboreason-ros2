@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from robo_reason_gui.options import get_options
+
 
 def create_app(bridge):
     """Build the FastAPI app, wired to the given GuiBridgeNode instance."""
@@ -17,6 +19,10 @@ def create_app(bridge):
     @app.get('/api/health')
     def health():
         return bridge.health()
+
+    @app.get('/api/options')
+    def options():
+        return get_options()
 
     @app.get('/')
     def index():

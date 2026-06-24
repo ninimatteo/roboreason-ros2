@@ -9,6 +9,10 @@
   <depend>rclpy</depend>
   <depend>ament_index_python</depend>
   <depend>robo_reason_interfaces</depend>
+  <depend>robo_reason_reasoning</depend>
+  <depend>control_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>ur_msgs</depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
