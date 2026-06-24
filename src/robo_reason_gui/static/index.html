@@ -17,6 +17,15 @@
 
   <main>
     <section class="card">
+      <h2>Command</h2>
+      <div id="chat-history"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" placeholder="e.g. pick up the red cube and place it on zone A" autocomplete="off" />
+        <button id="chat-send" type="submit">Send</button>
+      </form>
+    </section>
+
+    <section class="card">
       <h2>Robot connection</h2>
       <ul class="probes">
         <li><span id="probe-traj" class="dot dot-red"></span> Trajectory controller</li>

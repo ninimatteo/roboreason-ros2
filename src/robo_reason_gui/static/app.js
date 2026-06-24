@@ -93,6 +93,94 @@ async function pollHealth() {
   }
 }
 
+// ---- chat ----
+const chatForm = document.getElementById('chat-form');
+const chatInput = document.getElementById('chat-input');
+const chatSend = document.getElementById('chat-send');
+const chatHistory = document.getElementById('chat-history');
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function renderSteps(plan) {
+  const list = el('ul', 'steps');
+  (plan.plan || []).forEach((step) => {
+    const li = el('li');
+    li.appendChild(el('span', 'idx', 'Step ' + (step.step ?? '?')));
+    const args = Object.fromEntries(
+      Object.entries(step).filter(([k]) => k !== 'step' && k !== 'action_name')
+    );
+    li.appendChild(document.createTextNode(
+      (step.action_name ?? '?') + '(' + JSON.stringify(args) + ')'
+    ));
+    list.appendChild(li);
+  });
+  return list;
+}
+
+function renderResult(block, data) {
+  block.innerHTML = '';
+  block.className = 'msg' + (data.error ? ' failed' : '');
+  block.appendChild(el('div', 'cmd', data.command));
+
+  if (data.plan) {
+    const summary = data.plan.task_summary || '';
+    if (summary) block.appendChild(el('div', 'label', 'plan: ' + summary));
+    block.appendChild(renderSteps(data.plan));
+    const pre = el('pre', null, JSON.stringify(data.plan, null, 2));
+    block.appendChild(pre);
+  }
+
+  if (data.error) {
+    block.appendChild(el('div', 'error', 'Error: ' + data.error));
+  } else if (data.executed) {
+    block.appendChild(el('div', 'label', 'execution report'));
+    block.appendChild(el('pre', null, data.report || '(no report)'));
+  }
+}
+
+async function sendCommand(command) {
+  const block = el('div', 'msg pending');
+  block.appendChild(el('div', 'cmd', command));
+  block.appendChild(el('div', 'label', 'planning…'));
+  chatHistory.appendChild(block);
+  block.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+  try {
+    const res = await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command }),
+    });
+    const data = await res.json();
+    renderResult(block, data);
+  } catch (err) {
+    block.className = 'msg failed';
+    block.appendChild(el('div', 'error', 'Request failed: ' + err));
+  }
+  block.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+
+chatForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const command = chatInput.value.trim();
+  if (!command) return;
+  chatInput.value = '';
+  chatSend.disabled = true;
+  chatInput.disabled = true;
+  try {
+    await sendCommand(command);
+  } finally {
+    chatSend.disabled = false;
+    chatInput.disabled = false;
+    chatInput.focus();
+  }
+});
+
 loadOptions();
 pollHealth();
 setInterval(pollHealth, 2000);

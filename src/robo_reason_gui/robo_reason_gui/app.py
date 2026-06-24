@@ -4,8 +4,13 @@ from ament_index_python.packages import get_package_share_directory
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from robo_reason_gui.options import get_options
+
+
+class CommandRequest(BaseModel):
+    command: str
 
 
 def create_app(bridge):
@@ -23,6 +28,12 @@ def create_app(bridge):
     @app.get('/api/options')
     def options():
         return get_options()
+
+    @app.post('/api/command')
+    def command(req: CommandRequest):
+        # Sync route -> FastAPI runs it in a threadpool, so the blocking
+        # plan/execute round-trip does not stall the event loop.
+        return bridge.run_command(req.command)
 
     @app.get('/')
     def index():
