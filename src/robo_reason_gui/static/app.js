@@ -14,7 +14,20 @@ const selReasoning = document.getElementById('sel-reasoning');
 const selProvider = document.getElementById('sel-provider');
 const selModel = document.getElementById('sel-model');
 const inpTemp = document.getElementById('inp-temp');
+const chkMockLlm = document.getElementById('chk-mock-llm');
 const optionsError = document.getElementById('options-error');
+
+const cfgApply = document.getElementById('cfg-apply');
+const cfgResult = document.getElementById('cfg-result');
+
+const chkMockRobot = document.getElementById('chk-mock-robot');
+const chkMockCamera = document.getElementById('chk-mock-camera');
+const stackState = document.getElementById('stack-state');
+const stackInfo = document.getElementById('stack-info');
+const stackLogs = document.getElementById('stack-logs');
+const stackStart = document.getElementById('stack-start');
+const stackRestart = document.getElementById('stack-restart');
+const stackStop = document.getElementById('stack-stop');
 
 let providerModels = {};
 
@@ -53,17 +66,132 @@ async function loadOptions() {
     if (providers.length) fillSelect(selModel, providerModels[providers[0]]);
 
     if (data.temperature_default != null) inpTemp.value = data.temperature_default;
+    syncCameraToggle();
   } catch (err) {
     optionsError.hidden = false;
     optionsError.textContent = 'Failed to fetch /api/options: ' + err;
   }
 }
 
-// Keep the model list consistent with the chosen provider (works even while
-// disabled, ready for Phase 2 when the selectors become interactive).
+// Keep the model list consistent with the chosen provider.
 selProvider.addEventListener('change', () => {
   fillSelect(selModel, providerModels[selProvider.value] || []);
 });
+
+// ---- live config (B2) ----
+function currentConfig() {
+  // The backend expects model_name as "provider/model" (see ModelRegistry);
+  // the dropdown keys are bare, so prefix them with the selected provider.
+  const model = selModel.value ? `${selProvider.value}/${selModel.value}` : '';
+  return {
+    mode: selMode.value || 'LLM',
+    reasoning_method: selReasoning.value,
+    model_name: model,
+    temperature: parseFloat(inpTemp.value),
+    use_mock_llm: chkMockLlm.checked,
+  };
+}
+
+cfgApply.addEventListener('click', async () => {
+  cfgApply.disabled = true;
+  cfgResult.className = 'muted';
+  cfgResult.textContent = 'applying…';
+  try {
+    const data = await postJSON('/api/config', currentConfig());
+    if (data.error) {
+      cfgResult.className = 'error';
+      cfgResult.textContent = data.error;
+    } else if (data.applied) {
+      cfgResult.className = 'ok';
+      cfgResult.textContent = `applied to ${data.target}`;
+    } else {
+      cfgResult.className = 'error';
+      const failed = Object.entries(data.results || {})
+        .filter(([, r]) => !r.successful)
+        .map(([k, r]) => `${k}: ${r.reason || 'rejected'}`)
+        .join('; ');
+      cfgResult.textContent = failed || 'some parameters were rejected';
+    }
+  } catch (err) {
+    cfgResult.className = 'error';
+    cfgResult.textContent = 'request failed: ' + err;
+  } finally {
+    cfgApply.disabled = false;
+  }
+});
+
+// ---- stack orchestration (B1) ----
+function stackPayload() {
+  return {
+    mock_robot: chkMockRobot.checked,
+    mock_camera: chkMockCamera.checked,
+    ...currentConfig(),
+  };
+}
+
+// The camera only exists in VLM mode — disable its toggle in LLM mode.
+function syncCameraToggle() {
+  const vlm = (selMode.value || 'LLM').toUpperCase() === 'VLM';
+  chkMockCamera.disabled = !vlm;
+  chkMockCamera.parentElement.style.opacity = vlm ? '1' : '0.5';
+}
+selMode.addEventListener('change', syncCameraToggle);
+
+function renderStack(status) {
+  const running = !!status.running;
+  stackState.textContent = running ? 'running' : 'stopped';
+  stackState.className = 'badge ' + (running ? 'badge-on' : 'badge-off');
+  stackStart.disabled = running;
+  stackStop.disabled = !running;
+
+  if (status.target) {
+    const t = status.target;
+    const parts = [
+      t.mode,
+      `robot:${t.mock_robot ? 'mock' : 'real'}`,
+      t.mode === 'VLM' ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
+      t.mock_llm ? 'llm:mock' : 'llm:real',
+    ].filter(Boolean);
+    stackInfo.textContent =
+      parts.join(' · ') +
+      (status.pid ? ` · pid ${status.pid}` : '') +
+      (status.returncode != null ? ` · exit ${status.returncode}` : '');
+  } else {
+    stackInfo.textContent = '';
+  }
+
+  const logs = status.logs || [];
+  stackLogs.textContent = logs.length
+    ? logs.map((l) => `${l.t}  ${l.line}`).join('\n')
+    : '(no output yet)';
+  stackLogs.scrollTop = stackLogs.scrollHeight;
+}
+
+async function pollStack() {
+  try {
+    renderStack(await (await fetch('/api/stack')).json());
+  } catch (_e) { /* backend unreachable — health poll already flags it */ }
+}
+
+async function stackAction(url, withPayload) {
+  [stackStart, stackRestart, stackStop].forEach((b) => (b.disabled = true));
+  try {
+    const data = await postJSON(url, withPayload ? stackPayload() : {});
+    if (data.error) {
+      stackInfo.textContent = data.error;
+    } else if (data.status) {
+      renderStack(data.status);
+    }
+  } catch (err) {
+    stackInfo.textContent = 'request failed: ' + err;
+  } finally {
+    pollStack();
+  }
+}
+
+stackStart.addEventListener('click', () => stackAction('/api/stack/start', true));
+stackRestart.addEventListener('click', () => stackAction('/api/stack/restart', true));
+stackStop.addEventListener('click', () => stackAction('/api/stack/stop', false));
 
 // ---- health (polled) ----
 async function pollHealth() {
@@ -274,4 +402,6 @@ chatForm.addEventListener('submit', async (e) => {
 
 loadOptions();
 pollHealth();
+pollStack();
 setInterval(pollHealth, 2000);
+setInterval(pollStack, 2000);

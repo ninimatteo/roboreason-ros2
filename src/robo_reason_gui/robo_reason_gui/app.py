@@ -1,5 +1,6 @@
 import asyncio
 import os
+from typing import Optional
 
 from ament_index_python.packages import get_package_share_directory
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -18,8 +19,26 @@ class ExecuteRequest(BaseModel):
     plan_json: str
 
 
-def create_app(bridge):
-    """Build the FastAPI app, wired to the given GuiBridgeNode instance."""
+class ConfigRequest(BaseModel):
+    mode: str = 'LLM'
+    reasoning_method: Optional[str] = None
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None
+    use_mock_llm: Optional[bool] = None
+
+
+class StackRequest(BaseModel):
+    mode: str = 'LLM'
+    mock_robot: bool = True
+    mock_camera: bool = True
+    reasoning_method: Optional[str] = None
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None
+    use_mock_llm: Optional[bool] = None
+
+
+def create_app(bridge, supervisor):
+    """Build the FastAPI app, wired to the bridge node and stack supervisor."""
     app = FastAPI(title='RoboReason GUI', version='0.1.0')
 
     static_dir = os.path.join(
@@ -49,6 +68,27 @@ def create_app(bridge):
     @app.post('/api/execute')
     def execute(req: ExecuteRequest):
         return bridge.execute_command(req.plan_json)
+
+    @app.post('/api/config')
+    def config(req: ConfigRequest):
+        # Live-retune the running planner (B2) — no relaunch.
+        return bridge.set_planner_config(req.model_dump())
+
+    @app.get('/api/stack')
+    def stack_status():
+        return supervisor.status()
+
+    @app.post('/api/stack/start')
+    def stack_start(req: StackRequest):
+        return supervisor.start(req.mode, req.mock_robot, req.mock_camera, req.model_dump())
+
+    @app.post('/api/stack/stop')
+    def stack_stop():
+        return supervisor.stop()
+
+    @app.post('/api/stack/restart')
+    def stack_restart(req: StackRequest):
+        return supervisor.restart(req.mode, req.mock_robot, req.mock_camera, req.model_dump())
 
     @app.websocket('/ws/execution')
     async def execution_log(ws: WebSocket):

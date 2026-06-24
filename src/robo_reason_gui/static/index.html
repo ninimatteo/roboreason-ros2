@@ -15,8 +15,8 @@
     </div>
   </header>
 
-  <main>
-    <section class="card">
+  <main class="layout">
+    <section class="card chat-card">
       <h2>Command</h2>
       <div id="chat-history"></div>
       <form id="chat-form" class="chat-form">
@@ -25,6 +25,7 @@
       </form>
     </section>
 
+    <div class="col-right">
     <section class="card">
       <h2>Robot connection</h2>
       <ul class="probes">
@@ -35,25 +36,53 @@
     </section>
 
     <section class="card">
-      <h2>Configuration <span class="hint">(read-only — wiring comes in Phase 2)</span></h2>
+      <h2>Configuration</h2>
       <div class="grid">
         <label>Mode
-          <select id="sel-mode" disabled></select>
+          <select id="sel-mode"></select>
         </label>
         <label>Reasoning method
-          <select id="sel-reasoning" disabled></select>
+          <select id="sel-reasoning"></select>
         </label>
         <label>Provider
-          <select id="sel-provider" disabled></select>
+          <select id="sel-provider"></select>
         </label>
         <label>Model
-          <select id="sel-model" disabled></select>
+          <select id="sel-model"></select>
         </label>
         <label>Temperature
-          <input id="inp-temp" type="number" step="0.1" min="0" max="2" disabled />
+          <input id="inp-temp" type="number" step="0.1" min="0" max="2" />
+        </label>
+        <label class="check">
+          <input id="chk-mock-llm" type="checkbox" /> Mock LLM (LLM mode)
         </label>
       </div>
+      <div class="actions">
+        <button id="cfg-apply" type="button">Apply to running planner</button>
+        <span id="cfg-result" class="muted"></span>
+      </div>
       <p id="options-error" class="error" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Stack
+        <span id="stack-state" class="badge badge-off">stopped</span>
+      </h2>
+      <div class="mock-toggles">
+        <label class="check">
+          <input id="chk-mock-robot" type="checkbox" checked /> Mock robot (no UR5)
+        </label>
+        <label class="check">
+          <input id="chk-mock-camera" type="checkbox" checked /> Mock camera (VLM only)
+        </label>
+      </div>
+      <div class="actions">
+        <button id="stack-start" type="button">Start</button>
+        <button id="stack-restart" type="button">Restart</button>
+        <button id="stack-stop" type="button" class="danger">Stop</button>
+        <span id="stack-info" class="muted"></span>
+      </div>
+      <pre id="stack-logs" class="logs">(stack not started)</pre>
     </section>
 
     <section class="card">
@@ -62,6 +91,7 @@
       <p>Discovered nodes: <span id="node-count">—</span></p>
       <ul id="node-list"></ul>
     </section>
+    </div>
   </main>
 
   <script src="/static/app.js"></script>

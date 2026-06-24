@@ -10,6 +10,8 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from control_msgs.action import FollowJointTrajectory
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from ur_msgs.srv import SetIO
@@ -18,6 +20,12 @@ from robo_reason_interfaces.srv import ExecutePlan, PlanTask
 
 # Topic the plan manager publishes per-step execution progress on.
 EXECUTION_LOG_TOPIC = '/execution_log'
+
+# Planner node names per mode — targets for live parameter updates.
+PLANNER_NODE_BY_MODE = {'LLM': 'llm_planner_node', 'VLM': 'vlm_planner_node'}
+
+# use_mock_llm only exists on the LLM planner.
+SET_PARAM_TIMEOUT_S = 5.0
 
 # Endpoints that indicate the UR5cb / gripper are reachable.
 TRAJ_ACTION = '/scaled_joint_trajectory_controller/follow_joint_trajectory'
@@ -77,6 +85,10 @@ class GuiBridgeNode(Node):
         )
         self._loop = None  # asyncio loop, set once the server is up
         self._log_subscribers = set()  # set[asyncio.Queue]
+
+        # --- live config (SetParameters on the planner) ---
+        # One SetParameters client per target node, created lazily and cached.
+        self._param_clients = {}
 
         self.get_logger().info('[GuiBridgeNode] started')
 
@@ -222,4 +234,77 @@ class GuiBridgeNode(Node):
             result['error'] = f'{type(exc).__name__}: {exc}'
         finally:
             self._command_lock.release()
+        return result
+
+    # ------------------------------------------------------------ live config
+    @staticmethod
+    def _to_param_value(value) -> ParameterValue:
+        """Wrap a python scalar in a rcl_interfaces ParameterValue."""
+        if isinstance(value, bool):
+            return ParameterValue(type=ParameterType.PARAMETER_BOOL, bool_value=value)
+        if isinstance(value, float):
+            return ParameterValue(type=ParameterType.PARAMETER_DOUBLE, double_value=value)
+        if isinstance(value, int):
+            return ParameterValue(type=ParameterType.PARAMETER_INTEGER, integer_value=value)
+        return ParameterValue(type=ParameterType.PARAMETER_STRING, string_value=str(value))
+
+    def _param_client(self, node_name: str):
+        client = self._param_clients.get(node_name)
+        if client is None:
+            client = self.create_client(SetParameters, f'/{node_name}/set_parameters')
+            self._param_clients[node_name] = client
+        return client
+
+    def set_planner_config(self, config: dict) -> dict:
+        """Push reasoning/model/temperature (+mock) onto the live planner node.
+
+        Targets the planner for config['mode'] and updates only the parameters
+        present in the request, so the running planner retunes on its next plan
+        without a relaunch (see B2). Returns per-parameter success.
+        """
+        mode = (config.get('mode') or 'LLM').upper()
+        target = PLANNER_NODE_BY_MODE.get(mode)
+        result = {'applied': False, 'target': target, 'mode': mode, 'results': {}, 'error': None}
+        if target is None:
+            result['error'] = f'unknown mode {mode!r}'
+            return result
+        if target not in self.get_node_names():
+            result['error'] = f'{target} is not running (start the stack first)'
+            return result
+
+        # Build the parameter list from the fields the GUI sent. use_mock_llm
+        # is LLM-only; skip it for the VLM planner which never declares it.
+        params = []
+        if config.get('reasoning_method') is not None:
+            params.append(('reasoning_method', str(config['reasoning_method'])))
+        if config.get('model_name') is not None:
+            params.append(('model_name', str(config['model_name'])))
+        if config.get('temperature') is not None:
+            params.append(('temperature', float(config['temperature'])))
+        if mode == 'LLM' and config.get('use_mock_llm') is not None:
+            params.append(('use_mock_llm', bool(config['use_mock_llm'])))
+
+        if not params:
+            result['error'] = 'no parameters to set'
+            return result
+
+        req = SetParameters.Request()
+        req.parameters = [
+            Parameter(name=name, value=self._to_param_value(value))
+            for name, value in params
+        ]
+        try:
+            resp = self._call(self._param_client(target), req, SET_PARAM_TIMEOUT_S)
+        except Exception as exc:
+            result['error'] = f'{type(exc).__name__}: {exc}'
+            return result
+
+        all_ok = True
+        for (name, _value), outcome in zip(params, resp.results):
+            result['results'][name] = {
+                'successful': outcome.successful,
+                'reason': outcome.reason,
+            }
+            all_ok = all_ok and outcome.successful
+        result['applied'] = all_ok
         return result

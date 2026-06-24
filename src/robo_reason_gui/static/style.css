@@ -40,6 +40,38 @@ header h1 { font-size: 20px; margin: 0; }
 
 main { padding: 24px; }
 
+/* Two-column layout: chat on the left, everything else on the right. */
+.layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+.layout > .chat-card {
+  flex: 1 1 42%;
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+}
+.layout > .col-right {
+  flex: 1 1 58%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.layout .card { max-width: none; }
+.chat-card #chat-history {
+  flex: 1;
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+}
+
+@media (max-width: 860px) {
+  .layout { flex-direction: column; }
+  .layout > .chat-card,
+  .layout > .col-right { flex: 1 1 auto; width: 100%; position: static; }
+}
+
 .card {
   background: var(--card);
   border: 1px solid #2a2e37;
@@ -49,6 +81,7 @@ main { padding: 24px; }
 }
 
 .card { margin-bottom: 16px; }
+.mock-toggles { display: flex; flex-wrap: wrap; gap: 16px; }
 
 .card h2 { margin-top: 0; font-size: 16px; }
 
@@ -93,8 +126,70 @@ code { color: var(--accent); }
 }
 .grid select:disabled,
 .grid input:disabled { opacity: 0.7; cursor: not-allowed; }
+.grid label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.grid label.check input { width: auto; }
 
 .error { color: #e5484d; font-size: 13px; }
+.ok { color: #30a46c; font-size: 13px; }
+.muted { color: var(--muted); font-size: 13px; }
+
+/* ---- actions / buttons ---- */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.actions button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.actions button.danger { background: #e5484d; }
+.actions button:disabled { opacity: 0.4; cursor: default; }
+
+label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* ---- stack ---- */
+.badge {
+  font-size: 12px;
+  font-weight: normal;
+  border-radius: 10px;
+  padding: 2px 10px;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+.badge-on { background: #16361f; color: #4cd07d; }
+.badge-off { background: #2a2e37; color: var(--muted); }
+
+.logs {
+  background: #0d0f13;
+  border-radius: 6px;
+  padding: 8px;
+  margin-top: 12px;
+  max-height: 240px;
+  overflow: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
 
 /* ---- chat ---- */
 .chat-form { display: flex; gap: 8px; margin-top: 12px; }

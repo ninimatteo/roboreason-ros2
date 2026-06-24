@@ -30,6 +30,9 @@ class LLMPlannerNode(Node):
     def __init__(self):
         super().__init__('llm_planner_node')
 
+        # Parameters are declared here but read per-request in the callback, so
+        # the GUI can retune the planner live (ros2 param set / SetParameters)
+        # without relaunching the node.
         self.declare_parameter('use_mock_llm', settings.USE_MOCK_LLM)
         self.declare_parameter('reasoning_method', settings.REASONING_METHOD)
         self.declare_parameter('model_name', settings.MODEL_NAME)
@@ -37,15 +40,15 @@ class LLMPlannerNode(Node):
 
         dotenv.load_dotenv()
 
-        self._use_mock = self.get_parameter('use_mock_llm').value
-        self._reasoning_method = self.get_parameter('reasoning_method').value
-        self._model_name = self.get_parameter('model_name').value
-        self._temperature = self.get_parameter('temperature').value
-
         self._service = self.create_service(PlanTask, '/plan_task', self._plan_task_callback)
 
-        label = 'MOCK' if self._use_mock else f'{self._reasoning_method}, {self._model_name}'
-        self.get_logger().info(f'[LLMPlannerNode] Ready — {label}')
+        use_mock = self.get_parameter('use_mock_llm').value
+        label = (
+            'MOCK' if use_mock
+            else f"{self.get_parameter('reasoning_method').value}, "
+                 f"{self.get_parameter('model_name').value}"
+        )
+        self.get_logger().info(f'[LLMPlannerNode] Ready — {label} (params read per request)')
 
     # ── /plan_task callback ────────────────────────────────────────────────────
 
@@ -62,7 +65,7 @@ class LLMPlannerNode(Node):
             return response
 
         try:
-            if self._use_mock:
+            if self.get_parameter('use_mock_llm').value:
                 plan_data = self._mock_plan(user_command, scene_json)
                 self.get_logger().info('[LLMPlannerNode] Generated mock plan.')
             else:
@@ -83,11 +86,15 @@ class LLMPlannerNode(Node):
     # ── LLM plan ───────────────────────────────────────────────────────────────
 
     def _llm_plan(self, user_command: str, scene_json: str) -> dict:
+        reasoning_method = self.get_parameter('reasoning_method').value
+        model_name = self.get_parameter('model_name').value
+        temperature = self.get_parameter('temperature').value
+
         agent = EmbodiedAgent(
-            reasoning_mode=self._reasoning_method,
+            reasoning_mode=reasoning_method,
             client_parameters={
-                'model_name': self._model_name,
-                'temperature': self._temperature,
+                'model_name': model_name,
+                'temperature': temperature,
             },
             client_type='llm',
         )
@@ -102,7 +109,7 @@ class LLMPlannerNode(Node):
 
         self.get_logger().info(
             f'[LLMPlannerNode] Plan done — "{user_command}", '
-            f'method: {self._reasoning_method}, model: {self._model_name}, '
+            f'method: {reasoning_method}, model: {model_name}, '
             f'steps: {len(plan_steps)}'
         )
         for s in plan_steps:
@@ -112,8 +119,8 @@ class LLMPlannerNode(Node):
 
         return {
             'task_summary': user_command,
-            'reasoning_method': self._reasoning_method,
-            'model': self._model_name,
+            'reasoning_method': reasoning_method,
+            'model': model_name,
             'plan': plan_steps,
         }
 

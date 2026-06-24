@@ -11,6 +11,8 @@
   <depend>robo_reason_interfaces</depend>
   <depend>robo_reason_reasoning</depend>
   <depend>robo_reason_task_interface</depend>
+  <depend>robo_reason_bringup</depend>
+  <depend>rcl_interfaces</depend>
   <depend>control_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>ur_msgs</depend>

@@ -46,6 +46,9 @@ class VLMPlannerNode(Node):
     def __init__(self):
         super().__init__('vlm_planner_node')
 
+        # reasoning_method / model_name / temperature are read per-request in
+        # _vlm_plan so the GUI can retune the planner live without relaunching.
+        # tmp_dir is a static path root, so it stays cached.
         self.declare_parameter('reasoning_method', settings.REASONING_METHOD)
         self.declare_parameter('model_name', settings.MODEL_NAME)
         self.declare_parameter('temperature', settings.TEMPERATURE)
@@ -53,9 +56,6 @@ class VLMPlannerNode(Node):
 
         dotenv.load_dotenv()
 
-        self._reasoning_method = self.get_parameter('reasoning_method').value
-        self._model_name = self.get_parameter('model_name').value
-        self._temperature = self.get_parameter('temperature').value
         self._tmp_root = Path(self.get_parameter('tmp_dir').value)
 
         try:
@@ -82,7 +82,8 @@ class VLMPlannerNode(Node):
         )
 
         self.get_logger().info(
-            f'[VLMPlannerNode] Ready — {self._reasoning_method}, {self._model_name}'
+            f"[VLMPlannerNode] Ready — {self.get_parameter('reasoning_method').value}, "
+            f"{self.get_parameter('model_name').value} (params read per request)"
         )
 
     # ── /plan_task callback ────────────────────────────────────────────────────
@@ -119,11 +120,15 @@ class VLMPlannerNode(Node):
         self.get_logger().info(f'[VLMPlannerNode] Saved frame → {image_paths[0]}')
 
         # 3. Run VLM agent — returns actions with pixel [h, w] coordinates.
+        reasoning_method = self.get_parameter('reasoning_method').value
+        model_name = self.get_parameter('model_name').value
+        temperature = self.get_parameter('temperature').value
+
         agent = EmbodiedAgent(
-            reasoning_mode=self._reasoning_method,
+            reasoning_mode=reasoning_method,
             client_parameters={
-                'model_name': self._model_name,
-                'temperature': self._temperature,
+                'model_name': model_name,
+                'temperature': temperature,
             },
             client_type='vlm',
         )
@@ -146,8 +151,8 @@ class VLMPlannerNode(Node):
 
         return {
             'task_summary': user_command,
-            'reasoning_method': self._reasoning_method,
-            'model': self._model_name,
+            'reasoning_method': reasoning_method,
+            'model': model_name,
             'plan': plan_steps,
         }
 

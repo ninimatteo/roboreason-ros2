@@ -6,6 +6,7 @@ import uvicorn
 
 from robo_reason_gui.app import create_app
 from robo_reason_gui.bridge_node import GuiBridgeNode
+from robo_reason_gui.stack_supervisor import StackSupervisor
 
 # Bind to 0.0.0.0 so the server is reachable from the host. With the
 # container's --network host mode, http://localhost:8080 on the host hits this.
@@ -22,7 +23,10 @@ def main(args=None):
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
 
-    app = create_app(bridge)
+    # The GUI owns the ROS2 stack as a child process (B1).
+    supervisor = StackSupervisor(logger=bridge.get_logger())
+
+    app = create_app(bridge, supervisor)
     bridge.get_logger().info(
         f'[GuiBridgeNode] serving GUI on http://{HOST}:{PORT}'
     )
@@ -32,6 +36,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # Tear the launched stack down before exiting so no orphan nodes linger.
+        supervisor.stop()
         executor.shutdown()
         bridge.destroy_node()
         if rclpy.ok():
