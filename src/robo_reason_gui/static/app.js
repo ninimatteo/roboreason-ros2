@@ -106,63 +106,154 @@ function el(tag, className, text) {
   return node;
 }
 
-function renderSteps(plan) {
-  const list = el('ul', 'steps');
-  (plan.plan || []).forEach((step) => {
-    const li = el('li');
-    li.appendChild(el('span', 'idx', 'Step ' + (step.step ?? '?')));
-    const args = Object.fromEntries(
-      Object.entries(step).filter(([k]) => k !== 'step' && k !== 'action_name')
-    );
-    li.appendChild(document.createTextNode(
-      (step.action_name ?? '?') + '(' + JSON.stringify(args) + ')'
-    ));
-    list.appendChild(li);
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   });
-  return list;
+  return res.json();
 }
 
-function renderResult(block, data) {
-  block.innerHTML = '';
-  block.className = 'msg' + (data.error ? ' failed' : '');
-  block.appendChild(el('div', 'cmd', data.command));
+function scrollIntoView(node) {
+  node.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
 
-  if (data.plan) {
-    const summary = data.plan.task_summary || '';
-    if (summary) block.appendChild(el('div', 'label', 'plan: ' + summary));
-    block.appendChild(renderSteps(data.plan));
-    const pre = el('pre', null, JSON.stringify(data.plan, null, 2));
-    block.appendChild(pre);
+// Render a single plan step as <li> with status dot, action name and arg chips.
+function renderStep(step) {
+  const li = el('li', 'plan-step pending');
+  li.appendChild(el('span', 'step-status'));
+
+  const body = el('div', 'step-body');
+  const head = el('div', 'step-head');
+  head.appendChild(el('span', 'step-idx', String(step.step ?? '?')));
+  head.appendChild(el('span', 'step-action', step.action_name ?? '?'));
+  body.appendChild(head);
+
+  const args = Object.entries(step).filter(
+    ([k]) => k !== 'step' && k !== 'action_name'
+  );
+  if (args.length) {
+    const chips = el('div', 'step-args');
+    args.forEach(([k, v]) => {
+      const chip = el('span', 'arg-chip');
+      chip.appendChild(el('span', 'arg-key', k));
+      chip.appendChild(el('span', 'arg-val', typeof v === 'object' ? JSON.stringify(v) : String(v)));
+      chips.appendChild(chip);
+    });
+    body.appendChild(chips);
   }
 
-  if (data.error) {
-    block.appendChild(el('div', 'error', 'Error: ' + data.error));
-  } else if (data.executed) {
-    block.appendChild(el('div', 'label', 'execution report'));
-    block.appendChild(el('pre', null, data.report || '(no report)'));
+  li.appendChild(body);
+  return li;
+}
+
+// Build the polished plan card; returns a map of step-index -> <li> so the
+// live execution log can flip each step's status as it completes.
+function renderPlan(block, plan) {
+  const stepEls = {};
+  if (plan.task_summary) {
+    block.appendChild(el('div', 'plan-summary', plan.task_summary));
   }
+  const list = el('ol', 'plan-steps');
+  (plan.plan || []).forEach((step) => {
+    const li = renderStep(step);
+    list.appendChild(li);
+    stepEls[String(step.step ?? '?')] = li;
+  });
+  block.appendChild(list);
+
+  const details = el('details', 'raw-plan');
+  details.appendChild(el('summary', null, 'raw JSON'));
+  details.appendChild(el('pre', null, JSON.stringify(plan, null, 2)));
+  block.appendChild(details);
+
+  return stepEls;
+}
+
+function setStepState(li, state) {
+  if (!li) return;
+  li.className = 'plan-step ' + state;
+}
+
+// A log line looks like "[Step 2] pick -> OK" — mark that step done.
+function applyLogLine(stepEls, line) {
+  const m = line.match(/\[Step\s+(\S+?)\]/);
+  if (m) setStepState(stepEls[m[1]], 'done');
 }
 
 async function sendCommand(command) {
   const block = el('div', 'msg pending');
   block.appendChild(el('div', 'cmd', command));
-  block.appendChild(el('div', 'label', 'planning…'));
+  const status = el('div', 'label', 'planning…');
+  block.appendChild(status);
   chatHistory.appendChild(block);
-  block.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  scrollIntoView(block);
 
+  // 1. Plan.
+  let planData;
   try {
-    const res = await fetch('/api/command', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command }),
-    });
-    const data = await res.json();
-    renderResult(block, data);
+    planData = await postJSON('/api/plan', { command });
   } catch (err) {
     block.className = 'msg failed';
     block.appendChild(el('div', 'error', 'Request failed: ' + err));
+    return;
   }
-  block.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  if (planData.error) {
+    block.className = 'msg failed';
+    status.remove();
+    block.appendChild(el('div', 'error', 'Planning failed: ' + planData.error));
+    scrollIntoView(block);
+    return;
+  }
+
+  // 2. Show the polished plan immediately, before execution starts.
+  const stepEls = renderPlan(block, planData.plan);
+  status.textContent = 'executing…';
+  scrollIntoView(block);
+
+  // 3. Stream /execution_log over a WebSocket while the robot runs.
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/execution`);
+  ws.onmessage = (ev) => {
+    try {
+      applyLogLine(stepEls, JSON.parse(ev.data).log);
+      scrollIntoView(block);
+    } catch (_e) { /* ignore malformed frame */ }
+  };
+  await new Promise((resolve) => {
+    ws.onopen = resolve;
+    ws.onerror = resolve; // proceed even if the log stream is unavailable
+  });
+
+  // 4. Execute.
+  let execData;
+  try {
+    execData = await postJSON('/api/execute', { plan_json: planData.plan_json });
+  } catch (err) {
+    block.className = 'msg failed';
+    status.remove();
+    block.appendChild(el('div', 'error', 'Request failed: ' + err));
+    ws.close();
+    return;
+  } finally {
+    ws.close();
+  }
+
+  status.remove();
+  if (execData.error) {
+    block.className = 'msg failed';
+    // Mark the first not-yet-done step as failed for a clear visual cue.
+    const pending = block.querySelector('.plan-step.pending');
+    setStepState(pending, 'failed');
+    block.appendChild(el('div', 'error', 'Execution failed: ' + execData.error));
+  } else {
+    block.className = 'msg';
+    Object.values(stepEls).forEach((li) => setStepState(li, 'done'));
+    block.appendChild(el('div', 'label', 'execution report'));
+    block.appendChild(el('pre', 'report', execData.report || '(no report)'));
+  }
+  scrollIntoView(block);
 }
 
 chatForm.addEventListener('submit', async (e) => {

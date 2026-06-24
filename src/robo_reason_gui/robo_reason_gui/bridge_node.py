@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import threading
@@ -10,9 +11,13 @@ from rclpy.qos import qos_profile_sensor_data
 
 from control_msgs.action import FollowJointTrajectory
 from sensor_msgs.msg import JointState
+from std_msgs.msg import String
 from ur_msgs.srv import SetIO
 
 from robo_reason_interfaces.srv import ExecutePlan, PlanTask
+
+# Topic the plan manager publishes per-step execution progress on.
+EXECUTION_LOG_TOPIC = '/execution_log'
 
 # Endpoints that indicate the UR5cb / gripper are reachable.
 TRAJ_ACTION = '/scaled_joint_trajectory_controller/follow_joint_trajectory'
@@ -32,6 +37,8 @@ class GuiBridgeNode(Node):
 
     - Phase 1: read-only robot-connectivity probes (cached on a timer).
     - Phase 2: run a command through /plan_task then /execute_plan.
+    - Phase 3: stream /execution_log lines to the GUI over a WebSocket so the
+      plan card updates step-by-step while the robot operates.
 
     Service calls originate from the FastAPI worker thread; the node is spun by
     a MultiThreadedExecutor on a separate thread, so call_async futures resolve
@@ -62,7 +69,36 @@ class GuiBridgeNode(Node):
         self._command_lock = threading.Lock()
         self._scene_json = self._load_scene()
 
+        # --- live execution log -> WebSocket fan-out ---
+        # The subscription callback runs on the executor thread; WebSocket queues
+        # live on the asyncio loop, so we hand lines over with call_soon_threadsafe.
+        self.create_subscription(
+            String, EXECUTION_LOG_TOPIC, self._on_execution_log, 10,
+        )
+        self._loop = None  # asyncio loop, set once the server is up
+        self._log_subscribers = set()  # set[asyncio.Queue]
+
         self.get_logger().info('[GuiBridgeNode] started')
+
+    # ------------------------------------------------------------ log fan-out
+    def set_event_loop(self, loop):
+        """Register the asyncio loop the FastAPI server runs on."""
+        self._loop = loop
+
+    def add_log_subscriber(self) -> 'asyncio.Queue':
+        """Register a queue that receives /execution_log lines (call from loop)."""
+        queue = asyncio.Queue()
+        self._log_subscribers.add(queue)
+        return queue
+
+    def remove_log_subscriber(self, queue) -> None:
+        self._log_subscribers.discard(queue)
+
+    def _on_execution_log(self, msg):
+        if self._loop is None:
+            return
+        for queue in list(self._log_subscribers):
+            self._loop.call_soon_threadsafe(queue.put_nowait, msg.data)
 
     # ------------------------------------------------------------------ scene
     def _load_scene(self):
@@ -121,15 +157,13 @@ class GuiBridgeNode(Node):
             raise RuntimeError(f'service {client.srv_name} timed out after {timeout}s')
         return future.result()
 
-    def run_command(self, user_command: str) -> dict:
-        """Plan a command, then execute it. Returns a structured result dict."""
+    def plan_command(self, user_command: str) -> dict:
+        """Plan a command via /plan_task. Returns the plan without executing it."""
         result = {
             'command': user_command,
             'planned': False,
-            'executed': False,
             'plan': None,
-            'report': None,
-            'final_state': None,
+            'plan_json': None,
             'error': None,
         }
 
@@ -137,10 +171,6 @@ class GuiBridgeNode(Node):
             result['error'] = 'scene_mock.json not found (is robo_reason_task_interface built?)'
             return result
 
-        # Only one command at a time — the robot can't run two plans at once.
-        if not self._command_lock.acquire(blocking=False):
-            result['error'] = 'a command is already running'
-            return result
         try:
             plan_req = PlanTask.Request()
             plan_req.user_command = user_command
@@ -150,10 +180,36 @@ class GuiBridgeNode(Node):
                 result['error'] = plan_resp.error_message or 'planning failed'
                 return result
             result['planned'] = True
+            result['plan_json'] = plan_resp.plan_json
             result['plan'] = json.loads(plan_resp.plan_json)
+        except Exception as exc:
+            result['error'] = f'{type(exc).__name__}: {exc}'
+        return result
 
+    def execute_command(self, plan_json: str) -> dict:
+        """Execute a previously-planned plan via /execute_plan.
+
+        While this runs the plan manager publishes /execution_log, which is
+        streamed to the GUI over the WebSocket for live per-step feedback.
+        """
+        result = {
+            'executed': False,
+            'report': None,
+            'final_state': None,
+            'error': None,
+        }
+
+        if self._scene_json is None:
+            result['error'] = 'scene_mock.json not found (is robo_reason_task_interface built?)'
+            return result
+
+        # Only one plan at a time — the robot can't run two plans at once.
+        if not self._command_lock.acquire(blocking=False):
+            result['error'] = 'a command is already running'
+            return result
+        try:
             exec_req = ExecutePlan.Request()
-            exec_req.plan_json = plan_resp.plan_json
+            exec_req.plan_json = plan_json
             exec_req.scene_json = self._scene_json
             exec_resp = self._call(self._exec_client, exec_req, EXECUTE_TIMEOUT_S)
             if not exec_resp.success:
@@ -162,9 +218,8 @@ class GuiBridgeNode(Node):
             result['executed'] = True
             result['report'] = exec_resp.report
             result['final_state'] = json.loads(exec_resp.final_state_json)
-            return result
         except Exception as exc:
             result['error'] = f'{type(exc).__name__}: {exc}'
-            return result
         finally:
             self._command_lock.release()
+        return result
