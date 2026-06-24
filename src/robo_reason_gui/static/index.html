@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RoboReason GUI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>RoboReason</h1>
+    <div class="status">
+      <span id="ros-led" class="led led-red"></span>
+      <span id="ros-text">connecting…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>ROS connection</h2>
+      <p>Bridge node: <code id="bridge-node">—</code></p>
+      <p>Discovered nodes: <span id="node-count">—</span></p>
+      <ul id="node-list"></ul>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

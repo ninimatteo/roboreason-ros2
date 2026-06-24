@@ -209,7 +209,7 @@ class VLMClient(BaseFoundationClient):
         return response.choices[0].message.content
 
     def _call_anthropic(self, text_prompt: Optional[str], image: Union[str, bytes, Image.Image, None], **kwargs) -> str:
-        raise NotImplementedError("VLMClient does not support Anthropic yet due to differences in image handling and API structure.")   
+        raise NotImplementedError("VLMClient does not support Anthropic yet due to differences in image handling and API structure.")
 
     def _call_gemini(self, text_prompt: Optional[str], image: Union[str, bytes, Image.Image, None], **kwargs) -> str:
         raise NotImplementedError("VLMClient does not support Gemini yet due to differences in image handling and API structure.")

@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robo_reason_gui</name>
+  <version>0.1.0</version>
+  <description>Web control-panel GUI for RoboReason: chat prompt, model/provider selectors, robot-connection LED, live plan view. FastAPI backend embedding an rclpy bridge node.</description>
+  <maintainer email="matteo.nini@example.com">Matteo Nini</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>ament_index_python</depend>
+  <depend>robo_reason_interfaces</depend>
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

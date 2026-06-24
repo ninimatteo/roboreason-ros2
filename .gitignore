@@ -15,8 +15,8 @@ msg/*Result.msg
 msg/_*.py
 build_isolated/
 devel_isolated/
-roboreason_ros2.tar/
-docs/docker-setup.md/
+roboreason_ros2.tar
+docs/docker-setup.md
 
 venv/
 
