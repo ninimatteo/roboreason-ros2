@@ -12,6 +12,7 @@
     <div class="status">
       <span id="robot-led" class="led led-red"></span>
       <span id="robot-text">robot: unknown</span>
+      <button id="header-reconnect" type="button" class="reconnect-btn">Reconnect</button>
     </div>
   </header>
 
@@ -62,6 +63,31 @@
         <span id="cfg-result" class="muted"></span>
       </div>
       <p id="options-error" class="error" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>UR driver
+        <span id="driver-state" class="badge badge-off">stopped</span>
+      </h2>
+      <div class="grid">
+        <label>Robot IP
+          <input id="inp-robot-ip" type="text" placeholder="192.168.2.60" autocomplete="off" />
+        </label>
+        <label>Reverse IP
+          <input id="inp-reverse-ip" type="text" placeholder="192.168.2.80" autocomplete="off" />
+        </label>
+      </div>
+      <div class="actions">
+        <button id="driver-start" type="button">Start</button>
+        <button id="driver-reconnect" type="button">Reconnect</button>
+        <button id="driver-stop" type="button" class="danger">Stop</button>
+        <span id="driver-info" class="muted"></span>
+      </div>
+      <details class="raw-plan" id="driver-history-wrap" hidden>
+        <summary>Attempt history</summary>
+        <ul id="driver-history" class="probes"></ul>
+      </details>
+      <pre id="driver-logs" class="logs">(driver not started)</pre>
     </section>
 
     <section class="card">

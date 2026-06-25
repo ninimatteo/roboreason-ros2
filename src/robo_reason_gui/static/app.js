@@ -20,6 +20,18 @@ const optionsError = document.getElementById('options-error');
 const cfgApply = document.getElementById('cfg-apply');
 const cfgResult = document.getElementById('cfg-result');
 
+const driverState = document.getElementById('driver-state');
+const driverInfo = document.getElementById('driver-info');
+const driverLogs = document.getElementById('driver-logs');
+const driverStart = document.getElementById('driver-start');
+const driverReconnect = document.getElementById('driver-reconnect');
+const driverStop = document.getElementById('driver-stop');
+const driverHistoryWrap = document.getElementById('driver-history-wrap');
+const driverHistory = document.getElementById('driver-history');
+const inpRobotIp = document.getElementById('inp-robot-ip');
+const inpReverseIp = document.getElementById('inp-reverse-ip');
+const headerReconnect = document.getElementById('header-reconnect');
+
 const chkMockRobot = document.getElementById('chk-mock-robot');
 const chkMockCamera = document.getElementById('chk-mock-camera');
 const stackState = document.getElementById('stack-state');
@@ -192,6 +204,91 @@ async function stackAction(url, withPayload) {
 stackStart.addEventListener('click', () => stackAction('/api/stack/start', true));
 stackRestart.addEventListener('click', () => stackAction('/api/stack/restart', true));
 stackStop.addEventListener('click', () => stackAction('/api/stack/stop', false));
+
+// ---- UR driver supervisor (B5 / Phase 5) ----
+// The stock UR driver fails intermittently on startup, so the supervisor
+// retries until the robot is reachable. The UI reflects its state machine
+// (stopped/connecting/connected/failed), per-attempt history and log tail.
+const DRIVER_BADGE = {
+  connected: 'badge-on',
+  connecting: 'badge-amber',
+  failed: 'badge-off',
+  stopped: 'badge-off',
+};
+
+function driverPayload() {
+  // Send only non-empty IPs; the backend falls back to its defaults.
+  const payload = {};
+  if (inpRobotIp.value.trim()) payload.robot_ip = inpRobotIp.value.trim();
+  if (inpReverseIp.value.trim()) payload.reverse_ip = inpReverseIp.value.trim();
+  return payload;
+}
+
+function renderDriver(status) {
+  const state = status.state || 'stopped';
+  driverState.textContent = state;
+  driverState.className = 'badge ' + (DRIVER_BADGE[state] || 'badge-off');
+
+  const busy = state === 'connecting';
+  driverStart.disabled = busy || state === 'connected';
+  driverStop.disabled = state === 'stopped';
+
+  // Reflect resolved IPs (defaults included) without clobbering an active edit.
+  const p = status.params || {};
+  if (p.robot_ip && document.activeElement !== inpRobotIp) inpRobotIp.value = p.robot_ip;
+  if (p.reverse_ip && document.activeElement !== inpReverseIp) inpReverseIp.value = p.reverse_ip;
+
+  const bits = [];
+  if (state === 'connecting' && status.attempt) {
+    bits.push(`attempt ${status.attempt}/${status.max_attempts}`);
+  }
+  if (status.robot_ready) bits.push('robot ready');
+  if (status.pid) bits.push(`pid ${status.pid}`);
+  driverInfo.textContent = bits.join(' · ');
+
+  const history = status.history || [];
+  driverHistoryWrap.hidden = history.length === 0;
+  driverHistory.innerHTML = '';
+  history.forEach((h) => {
+    const li = el('li', null,
+      `#${h.attempt} ${h.started} · ${h.outcome} · ${h.duration_s}s` +
+      (h.error ? ` — ${h.error}` : ''));
+    driverHistory.appendChild(li);
+  });
+
+  const logs = status.logs || [];
+  driverLogs.textContent = logs.length
+    ? logs.map((l) => `${l.t}  ${l.line}`).join('\n')
+    : '(driver not started)';
+  driverLogs.scrollTop = driverLogs.scrollHeight;
+}
+
+async function pollDriver() {
+  try {
+    renderDriver(await (await fetch('/api/driver')).json());
+  } catch (_e) { /* backend unreachable — health poll already flags it */ }
+}
+
+async function driverAction(url, withPayload) {
+  [driverStart, driverReconnect, driverStop, headerReconnect].forEach((b) => (b.disabled = true));
+  try {
+    const data = await postJSON(url, withPayload ? driverPayload() : {});
+    if (data.error) {
+      driverInfo.textContent = data.error;
+    } else if (data.status) {
+      renderDriver(data.status);
+    }
+  } catch (err) {
+    driverInfo.textContent = 'request failed: ' + err;
+  } finally {
+    pollDriver();
+  }
+}
+
+driverStart.addEventListener('click', () => driverAction('/api/driver/start', true));
+driverReconnect.addEventListener('click', () => driverAction('/api/driver/reconnect', true));
+driverStop.addEventListener('click', () => driverAction('/api/driver/stop', false));
+headerReconnect.addEventListener('click', () => driverAction('/api/driver/reconnect', true));
 
 // ---- health (polled) ----
 async function pollHealth() {
@@ -403,5 +500,7 @@ chatForm.addEventListener('submit', async (e) => {
 loadOptions();
 pollHealth();
 pollStack();
+pollDriver();
 setInterval(pollHealth, 2000);
 setInterval(pollStack, 2000);
+setInterval(pollDriver, 2000);

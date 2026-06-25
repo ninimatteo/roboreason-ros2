@@ -146,6 +146,16 @@ class GuiBridgeNode(Node):
             level = 'red'
         return {'level': level, 'probes': probes}
 
+    def robot_ready(self) -> bool:
+        """True once the UR driver has brought up motion + joint feedback.
+
+        Used by the UR driver supervisor as its readiness gate: the trajectory
+        action server and a fresh /joint_states stream mean the controllers are
+        up. Gripper I/O is intentionally excluded — it can lag and isn't needed
+        to call the driver "connected".
+        """
+        return self._probes['trajectory_server'] and self._probes['joint_states']
+
     def health(self) -> dict:
         """Snapshot of ROS + robot connectivity for the GUI's /api/health."""
         names = self.get_node_names()

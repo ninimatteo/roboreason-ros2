@@ -177,6 +177,18 @@ label.check {
 }
 .badge-on { background: #16361f; color: #4cd07d; }
 .badge-off { background: #2a2e37; color: var(--muted); }
+.badge-amber { background: #3a2e15; color: #f5a623; }
+
+.reconnect-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.reconnect-btn:disabled { opacity: 0.4; cursor: default; }
 
 .logs {
   background: #0d0f13;

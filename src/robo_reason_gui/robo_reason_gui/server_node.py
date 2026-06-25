@@ -7,6 +7,7 @@ import uvicorn
 from robo_reason_gui.app import create_app
 from robo_reason_gui.bridge_node import GuiBridgeNode
 from robo_reason_gui.stack_supervisor import StackSupervisor
+from robo_reason_gui.ur_driver_supervisor import UrDriverSupervisor
 
 # Bind to 0.0.0.0 so the server is reachable from the host. With the
 # container's --network host mode, http://localhost:8080 on the host hits this.
@@ -26,7 +27,13 @@ def main(args=None):
     # The GUI owns the ROS2 stack as a child process (B1).
     supervisor = StackSupervisor(logger=bridge.get_logger())
 
-    app = create_app(bridge, supervisor)
+    # The GUI also owns the flaky UR driver, retrying startup until the robot
+    # is reachable through the bridge's connectivity probes (B5 / Phase 5).
+    driver = UrDriverSupervisor(
+        ready_check=bridge.robot_ready, logger=bridge.get_logger()
+    )
+
+    app = create_app(bridge, supervisor, driver)
     bridge.get_logger().info(
         f'[GuiBridgeNode] serving GUI on http://{HOST}:{PORT}'
     )
@@ -36,7 +43,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        # Tear the launched stack down before exiting so no orphan nodes linger.
+        # Tear the launched stack + UR driver down so no orphan nodes linger.
+        driver.stop()
         supervisor.stop()
         executor.shutdown()
         bridge.destroy_node()
