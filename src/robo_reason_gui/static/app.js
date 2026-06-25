@@ -43,6 +43,21 @@ const stackStop = document.getElementById('stack-stop');
 
 let providerModels = {};
 
+// ---- toasts ----
+// Lightweight transient notifications so action outcomes (config applied, stack
+// errors, driver state) are visible without hunting for inline text.
+const toasts = document.getElementById('toasts');
+
+function toast(message, kind = 'info', timeout = 4000) {
+  const node = el('div', 'toast toast-' + kind, message);
+  toasts.appendChild(node);
+  requestAnimationFrame(() => node.classList.add('show'));
+  setTimeout(() => {
+    node.classList.remove('show');
+    setTimeout(() => node.remove(), 200);
+  }, timeout);
+}
+
 // ---- helpers ----
 function fillSelect(sel, values) {
   sel.innerHTML = '';
@@ -113,9 +128,11 @@ cfgApply.addEventListener('click', async () => {
     if (data.error) {
       cfgResult.className = 'error';
       cfgResult.textContent = data.error;
+      toast('Config: ' + data.error, 'error');
     } else if (data.applied) {
       cfgResult.className = 'ok';
       cfgResult.textContent = `applied to ${data.target}`;
+      toast(`Config applied to ${data.target}`, 'success');
     } else {
       cfgResult.className = 'error';
       const failed = Object.entries(data.results || {})
@@ -123,10 +140,12 @@ cfgApply.addEventListener('click', async () => {
         .map(([k, r]) => `${k}: ${r.reason || 'rejected'}`)
         .join('; ');
       cfgResult.textContent = failed || 'some parameters were rejected';
+      toast('Config: ' + (failed || 'some parameters were rejected'), 'error');
     }
   } catch (err) {
     cfgResult.className = 'error';
     cfgResult.textContent = 'request failed: ' + err;
+    toast('Config request failed: ' + err, 'error');
   } finally {
     cfgApply.disabled = false;
   }
@@ -191,11 +210,14 @@ async function stackAction(url, withPayload) {
     const data = await postJSON(url, withPayload ? stackPayload() : {});
     if (data.error) {
       stackInfo.textContent = data.error;
+      toast('Stack: ' + data.error, 'error');
     } else if (data.status) {
       renderStack(data.status);
+      toast(data.status.running ? 'Stack running' : 'Stack stopped', 'success');
     }
   } catch (err) {
     stackInfo.textContent = 'request failed: ' + err;
+    toast('Stack request failed: ' + err, 'error');
   } finally {
     pollStack();
   }
@@ -224,8 +246,18 @@ function driverPayload() {
   return payload;
 }
 
+let lastDriverState = null;
+
 function renderDriver(status) {
   const state = status.state || 'stopped';
+  // Toast only on meaningful transitions so the operator notices connect/fail
+  // without watching the card. Skip the very first render (page load).
+  if (lastDriverState !== null && state !== lastDriverState) {
+    if (state === 'connected') toast('UR driver connected', 'success');
+    else if (state === 'failed') toast('UR driver failed to connect', 'error');
+  }
+  lastDriverState = state;
+
   driverState.textContent = state;
   driverState.className = 'badge ' + (DRIVER_BADGE[state] || 'badge-off');
 
@@ -275,11 +307,13 @@ async function driverAction(url, withPayload) {
     const data = await postJSON(url, withPayload ? driverPayload() : {});
     if (data.error) {
       driverInfo.textContent = data.error;
+      toast('UR driver: ' + data.error, 'error');
     } else if (data.status) {
       renderDriver(data.status);
     }
   } catch (err) {
     driverInfo.textContent = 'request failed: ' + err;
+    toast('UR driver request failed: ' + err, 'error');
   } finally {
     pollDriver();
   }
@@ -323,6 +357,11 @@ const chatForm = document.getElementById('chat-form');
 const chatInput = document.getElementById('chat-input');
 const chatSend = document.getElementById('chat-send');
 const chatHistory = document.getElementById('chat-history');
+const chatClear = document.getElementById('chat-clear');
+
+chatClear.addEventListener('click', () => {
+  chatHistory.innerHTML = '';
+});
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -428,6 +467,7 @@ async function sendCommand(command) {
     block.className = 'msg failed';
     status.remove();
     block.appendChild(el('div', 'error', 'Planning failed: ' + planData.error));
+    toast('Planning failed: ' + planData.error, 'error');
     scrollIntoView(block);
     return;
   }
@@ -472,6 +512,7 @@ async function sendCommand(command) {
     const pending = block.querySelector('.plan-step.pending');
     setStepState(pending, 'failed');
     block.appendChild(el('div', 'error', 'Execution failed: ' + execData.error));
+    toast('Execution failed: ' + execData.error, 'error');
   } else {
     block.className = 'msg';
     Object.values(stepEls).forEach((li) => setStepState(li, 'done'));

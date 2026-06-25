@@ -18,7 +18,9 @@
 
   <main class="layout">
     <section class="card chat-card">
-      <h2>Command</h2>
+      <h2>Command
+        <button id="chat-clear" type="button" class="reconnect-btn">Clear</button>
+      </h2>
       <div id="chat-history"></div>
       <form id="chat-form" class="chat-form">
         <input id="chat-input" type="text" placeholder="e.g. pick up the red cube and place it on zone A" autocomplete="off" />
@@ -119,6 +121,8 @@
     </section>
     </div>
   </main>
+
+  <div id="toasts" class="toasts"></div>
 
   <script src="/static/app.js"></script>
 </body>
