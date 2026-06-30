@@ -17,6 +17,7 @@ ROS2 parameters:
 import itertools
 from pathlib import Path
 
+import os
 import cv2
 import rclpy
 from cv_bridge import CvBridge
@@ -48,12 +49,14 @@ class MockCameraServiceNode(Node):
         self.declare_parameter('image_height_px', 480)
 
         images_dir = Path(self.get_parameter('images_dir').value)
+        images_dir = os.path.join(os.getcwd(), images_dir)
         self._mock_depth_m = float(self.get_parameter('mock_depth_m').value)
         self._workspace_w_m = float(self.get_parameter('workspace_w_m').value)
         self._workspace_h_m = float(self.get_parameter('workspace_h_m').value)
         self._img_w = int(self.get_parameter('image_width_px').value)
         self._img_h = int(self.get_parameter('image_height_px').value)
 
+        assert images_dir.exists(), f'[MockCameraServiceNode] images_dir does not exist: {images_dir}'
         # Build sorted list of PNG paths and cycle through them
         png_paths = sorted(images_dir.glob('*.png'))
         if not png_paths:

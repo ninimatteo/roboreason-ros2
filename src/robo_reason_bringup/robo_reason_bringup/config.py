@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     TEMPERATURE: float = 0.1
 
     # ── VLM planner ───────────────────────────────────────────────────────────
-    TMP_DIR: str = '/root/ws/src/vlm_frames'
+    TMP_DIR: str = 'src/vlm_frames'
 
     # ── Executor ──────────────────────────────────────────────────────────────
     ROBOT_IP: str = '192.168.2.60'
