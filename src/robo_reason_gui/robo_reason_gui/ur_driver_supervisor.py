@@ -22,6 +22,19 @@ import threading
 import time
 from collections import deque
 
+# Child processes spawned by ur_control.launch.py that don't die when the
+# launch process group is signalled (each node runs in its own session).
+# These are swept by name in _reap_stale() to guarantee a clean state before
+# each launch attempt and after stop().
+_DRIVER_PROCESS_PATTERNS = (
+    'ur_control.launch.py',
+    'ur_ros2_control_node',
+    'controller_stopper_node',
+    'robot_state_helper',
+    'urscript_interface',
+    'trajectory_until_node',
+)
+
 # Defaults for the lab UR5cb; overridable per start()/reconnect() request.
 DEFAULT_ROBOT_IP = '192.168.2.60'
 DEFAULT_REVERSE_IP = '192.168.2.80'
@@ -32,6 +45,13 @@ SUCCESS_MARKERS = (
     'Robot ready to receive control commands',
     'Activated cyclic mode',
 )
+
+# The pendant only accepts motion once this appears: the controllers can be up
+# (probes green) while the teach pendant is still not connected on the reverse
+# interface. Tracking it lets the GUI keep the LED amber until the robot can
+# actually move (request #3).
+REVERSE_INTERFACE_MARKER = 'Robot connected to reverse interface'
+REVERSE_DROPPED_MARKER = 'Connection to reverse interface dropped'
 ERROR_MARKERS = (
     'Failed to connect',
     'connection refused',
@@ -77,6 +97,7 @@ class UrDriverSupervisor:
         self._stop_event = threading.Event()
         self._state = 'stopped'
         self._attempt = 0
+        self._reverse_connected = False  # pendant seen on the reverse interface
         self._params = {'robot_ip': DEFAULT_ROBOT_IP, 'reverse_ip': DEFAULT_REVERSE_IP}
 
     # ------------------------------------------------------------------ logging
@@ -90,14 +111,69 @@ class UrDriverSupervisor:
             self._state = state
             self._log(f'state -> {state}')
 
+    # ------------------------------------------------------------ orphan reaping
+    def _reap_stale(self) -> list:
+        """SIGKILL leftover driver processes from a previous (crashed) session.
+
+        ur_control.launch.py spawns each ROS node in its own session, so
+        killpg() on the launch process's group does not reach the children.
+        This sweep catches all survivors by executable name, excluding our own
+        process so we never kill the GUI server itself.
+        """
+        own = {os.getpid(), os.getppid()}
+        reaped = []
+        for pattern in _DRIVER_PROCESS_PATTERNS:
+            for pid in self._pgrep(pattern):
+                if pid in own:
+                    continue
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    continue
+                except PermissionError:
+                    self._log(f'cannot kill pid={pid} ({pattern}): permission denied')
+                    continue
+                reaped.append((pid, pattern))
+                self._log(f'reaped stale driver process pid={pid} ({pattern})')
+        return reaped
+
+    @staticmethod
+    def _pgrep(pattern: str) -> list:
+        try:
+            out = subprocess.run(
+                ['pgrep', '-f', pattern],
+                capture_output=True, text=True, timeout=5.0,
+            )
+        except Exception:
+            return []
+        pids = []
+        for token in out.stdout.split():
+            try:
+                pids.append(int(token))
+            except ValueError:
+                pass
+        return pids
+
     # ------------------------------------------------------------------ control
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
+
+    def robot_connected(self) -> bool:
+        """True once the teach pendant is connected on the reverse interface.
+
+        Gates the header LED to green (request #3): the controllers can be up
+        without the pendant, in which case the robot still cannot move.
+        """
+        return self.is_running() and self._reverse_connected
 
     def start(self, params: dict = None) -> dict:
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
                 return {'ok': False, 'error': 'driver supervisor already running (stop or reconnect)'}
+            # Sweep any surviving nodes from previous crashed launches before
+            # starting — without this, orphaned ur_ros2_control_node processes
+            # hold the RTDE connection and block the new attempt.
+            self._reap_stale()
             self._params = self._resolve_params(params)
             self._stop_event.clear()
             self._attempt = 0
@@ -118,7 +194,11 @@ class UrDriverSupervisor:
         with self._lock:
             self._worker = None
             self._proc = None
+            self._reverse_connected = False
             self._set_state('stopped')
+        # Sweep by name after signalling — catches nodes that ran in their own
+        # session and didn't receive the killpg signal.
+        self._reap_stale()
         return {'ok': True, 'status': self.status()}
 
     def reconnect(self, params: dict = None) -> dict:
@@ -199,6 +279,7 @@ class UrDriverSupervisor:
             return None
         with self._lock:
             self._proc = proc
+            self._reverse_connected = False  # fresh process: pendant not yet up
         threading.Thread(target=self._pump_output, args=(proc,), daemon=True).start()
         return proc
 
@@ -211,6 +292,10 @@ class UrDriverSupervisor:
                 tag = 'OK '
             elif any(m in line for m in ERROR_MARKERS):
                 tag = 'ERR '
+            if REVERSE_INTERFACE_MARKER in line:
+                self._reverse_connected = True
+            elif REVERSE_DROPPED_MARKER in line:
+                self._reverse_connected = False
             self._logs.append({'t': time.strftime('%H:%M:%S'), 'line': f'{tag}{line}'})
 
     def _await_ready(self, proc) -> str:
@@ -305,6 +390,7 @@ class UrDriverSupervisor:
             'max_attempts': self.MAX_ATTEMPTS,
             'pid': self._proc.pid if running else None,
             'robot_ready': self._safe_ready(),
+            'robot_connected': self.robot_connected(),
             'params': dict(self._params),
             'history': list(self._history),
             'logs': list(self._logs),

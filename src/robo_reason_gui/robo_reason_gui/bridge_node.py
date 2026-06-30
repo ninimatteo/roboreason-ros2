@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import os
 import threading
@@ -16,10 +17,16 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from ur_msgs.srv import SetIO
 
-from robo_reason_interfaces.srv import ExecutePlan, PlanTask
+from robo_reason_interfaces.srv import ExecutePlan, GetImage, PlanTask
 
 # Topic the plan manager publishes per-step execution progress on.
 EXECUTION_LOG_TOPIC = '/execution_log'
+
+# The /execute_skill action server publishes this status topic exactly once per
+# server, so its publisher count == number of skill-executor servers. >1 means a
+# duplicate executor is on the graph (e.g. an orphan from a previous stack),
+# which makes every skill run twice and corrupts shared robot state.
+EXECUTE_SKILL_STATUS_TOPIC = '/execute_skill/_action/status'
 
 # Planner node names per mode — targets for live parameter updates.
 PLANNER_NODE_BY_MODE = {'LLM': 'llm_planner_node', 'VLM': 'vlm_planner_node'}
@@ -31,6 +38,10 @@ SET_PARAM_TIMEOUT_S = 5.0
 TRAJ_ACTION = '/scaled_joint_trajectory_controller/follow_joint_trajectory'
 GRIPPER_IO_SERVICE = '/io_and_status_controller/set_io'
 JOINT_STATES_TOPIC = '/joint_states'
+
+# Unified camera frame grab — exposed by both the mock and real camera nodes.
+CAMERA_GET_IMAGE_SERVICE = '/camera/get_image'
+CAMERA_TIMEOUT_S = 4.0
 
 # A /joint_states message older than this (seconds) is considered stale.
 JOINT_STATES_TIMEOUT_S = 2.0
@@ -70,6 +81,17 @@ class GuiBridgeNode(Node):
             'gripper_io': False,
         }
         self.create_timer(1.0, self._refresh_probes)
+
+        # --- pendant / reverse-interface connection (wired in by server_node) ---
+        # The connectivity probes only tell us the controllers are up; they go
+        # green before the teach pendant accepts control on the reverse
+        # interface. These callables (the UR driver supervisor) let the LED stay
+        # amber until the pendant is actually connected on a GUI-owned driver.
+        self._pendant_connected = None
+        self._driver_active = None
+
+        # --- camera frame grab (request the latest RGB frame on demand) ---
+        self._camera_client = self.create_client(GetImage, CAMERA_GET_IMAGE_SERVICE)
 
         # --- planning / execution ---
         self._plan_client = self.create_client(PlanTask, '/plan_task')
@@ -135,16 +157,88 @@ class GuiBridgeNode(Node):
             (time.monotonic() - self._last_joint_states) < JOINT_STATES_TIMEOUT_S
         )
 
+    def set_connection_sources(self, pendant_connected, driver_active):
+        """Wire in the UR driver supervisor's pendant/connection callables.
+
+        ``pendant_connected()`` is True once the driver has seen the
+        reverse-interface marker; ``driver_active()`` is True while the GUI is
+        supervising a real driver. Both are used only to gate the LED so it
+        reflects the pendant, not just the controllers coming up (request #3).
+        """
+        self._pendant_connected = pendant_connected
+        self._driver_active = driver_active
+
+    def _pendant_state(self) -> dict:
+        """Whether a real driver is supervised and its pendant is connected."""
+        supervised = bool(self._driver_active and self._driver_active())
+        connected = bool(self._pendant_connected and self._pendant_connected())
+        return {'supervised': supervised, 'connected': connected}
+
     def _robot_status(self) -> dict:
         probes = dict(self._probes)
+        pendant = self._pendant_state()
         healthy = sum(1 for ok in probes.values() if ok)
         if healthy == len(probes):
-            level = 'green'
+            # Controllers are all up. On a GUI-owned real driver, stay amber
+            # until the teach pendant connects on the reverse interface —
+            # otherwise the robot won't actually move despite a green LED.
+            if pendant['supervised'] and not pendant['connected']:
+                level = 'amber'
+            else:
+                level = 'green'
         elif healthy > 0:
             level = 'amber'
         else:
             level = 'red'
-        return {'level': level, 'probes': probes}
+        return {'level': level, 'probes': probes, 'pendant': pendant}
+
+    # ------------------------------------------------------------------ camera
+    def camera_available(self) -> bool:
+        """True when a camera node is exposing /camera/get_image."""
+        return self._camera_client.service_is_ready()
+
+    def grab_camera_jpeg(self):
+        """Grab the latest frame via /camera/get_image; return JPEG bytes or None."""
+        if not self._camera_client.service_is_ready():
+            return None
+        try:
+            resp = self._call(self._camera_client, GetImage.Request(), CAMERA_TIMEOUT_S)
+        except Exception as exc:
+            self.get_logger().warn(f'[GuiBridgeNode] camera grab failed: {exc}')
+            return None
+        if resp is None or not resp.success:
+            return None
+        return self._image_to_jpeg(resp.image)
+
+    @staticmethod
+    def _image_to_jpeg(img):
+        """Encode a sensor_msgs/Image to JPEG with Pillow (no numpy/cv2 here)."""
+        from PIL import Image as PILImage
+
+        enc = (img.encoding or '').lower()
+        size = (img.width, img.height)
+        data = bytes(img.data)
+        try:
+            if enc in ('rgb8', 'bgr8'):
+                pil = PILImage.frombytes('RGB', size, data)
+                if enc == 'bgr8':
+                    b, g, r = pil.split()
+                    pil = PILImage.merge('RGB', (r, g, b))
+            elif enc in ('rgba8', 'bgra8'):
+                pil = PILImage.frombytes('RGBA', size, data)
+                if enc == 'bgra8':
+                    b, g, r, a = pil.split()
+                    pil = PILImage.merge('RGBA', (r, g, b, a))
+                pil = pil.convert('RGB')
+            elif enc in ('mono8', '8uc1'):
+                pil = PILImage.frombytes('L', size, data)
+            else:
+                return None
+        except (ValueError, OSError):
+            return None
+        buf = io.BytesIO()
+        pil.save(buf, format='JPEG', quality=80)
+        return buf.getvalue()
 
     def robot_ready(self) -> bool:
         """True once the UR driver has brought up motion + joint feedback.
@@ -155,6 +249,34 @@ class GuiBridgeNode(Node):
         to call the driver "connected".
         """
         return self._probes['trajectory_server'] and self._probes['joint_states']
+
+    # --------------------------------------------------------------- preflight
+    def execute_skill_server_count(self) -> int:
+        """Number of /execute_skill action servers currently on the graph."""
+        return self.count_publishers(EXECUTE_SKILL_STATUS_TOPIC)
+
+    def preflight(self) -> dict:
+        """Check the executor graph before running a plan.
+
+        Fails fast on the duplicate-executor condition that silently doubles
+        every skill (see EXECUTE_SKILL_STATUS_TOPIC). A count of 0 just means
+        the stack isn't started yet; that's surfaced but not treated as the
+        duplicate fault.
+        """
+        servers = self.execute_skill_server_count()
+        if servers > 1:
+            message = (
+                f'{servers} /execute_skill action servers detected — a duplicate '
+                'skill executor is running. Stop the stack (it now reaps orphans) '
+                'and start it again before executing.'
+            )
+            return {'ok': False, 'duplicate': True, 'servers': servers, 'message': message}
+        if servers == 0:
+            return {
+                'ok': False, 'duplicate': False, 'servers': 0,
+                'message': 'no /execute_skill action server — start the stack first',
+            }
+        return {'ok': True, 'duplicate': False, 'servers': 1, 'message': 'ok'}
 
     def health(self) -> dict:
         """Snapshot of ROS + robot connectivity for the GUI's /api/health."""
@@ -223,6 +345,13 @@ class GuiBridgeNode(Node):
 
         if self._scene_json is None:
             result['error'] = 'scene_mock.json not found (is robo_reason_task_interface built?)'
+            return result
+
+        # Refuse to execute when a duplicate executor is present — otherwise the
+        # plan runs twice and two nodes fight over the real robot (corrupt IK).
+        pre = self.preflight()
+        if pre['duplicate']:
+            result['error'] = pre['message']
             return result
 
         # Only one plan at a time — the robot can't run two plans at once.

@@ -28,8 +28,8 @@ class Settings(BaseSettings):
 
     # ── Planner (LLM + VLM) ──────────────────────────────────────────────────
     USE_MOCK_LLM: bool = True
-    REASONING_METHOD: str = 'fhp'
-    MODEL_NAME: str = 'groq/llama4-scout-17b'
+    REASONING_METHOD: str = 'cot_sc'
+    MODEL_NAME: str = 'nebius/nvidia-nemotron-120b'
     TEMPERATURE: float = 0.1
 
     # ── VLM planner ───────────────────────────────────────────────────────────

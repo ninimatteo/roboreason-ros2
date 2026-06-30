@@ -10,16 +10,35 @@
   <header>
     <h1>RoboReason</h1>
     <div class="status">
-      <span id="robot-led" class="led led-red"></span>
-      <span id="robot-text">robot: unknown</span>
+      <button id="led-toggle" type="button" class="led-toggle" aria-expanded="false"
+              title="Robot connection details">
+        <span id="robot-led" class="led led-red"></span>
+        <span>Robot Connection</span>
+      </button>
       <button id="header-reconnect" type="button" class="reconnect-btn">Reconnect</button>
+
+      <!-- Robot-connection detail, revealed by clicking the LED (request #2). -->
+      <div id="robot-popover" class="popover" hidden>
+        <h3>Robot connection</h3>
+        <ul class="probes">
+          <li><span id="probe-traj" class="dot dot-red"></span> Trajectory controller</li>
+          <li><span id="probe-joints" class="dot dot-red"></span> Joint states</li>
+          <li><span id="probe-io" class="dot dot-red"></span> Gripper I/O service</li>
+          <li><span id="probe-pendant" class="dot dot-red"></span> Teach pendant (reverse interface)</li>
+        </ul>
+        <p id="popover-driver" class="muted">driver: stopped</p>
+      </div>
     </div>
   </header>
 
   <main class="layout">
+    <!-- Left column: conversation (user requests + execution reports only). -->
     <section class="card chat-card">
       <h2>Command
-        <button id="chat-clear" type="button" class="reconnect-btn">Clear</button>
+        <span class="head-actions">
+          <button id="chat-copy" type="button" class="icon-btn" title="Copy chat">Copy</button>
+          <button id="chat-clear" type="button" class="reconnect-btn">Clear</button>
+        </span>
       </h2>
       <div id="chat-history"></div>
       <form id="chat-form" class="chat-form">
@@ -28,16 +47,30 @@
       </form>
     </section>
 
-    <div class="col-right">
-    <section class="card">
-      <h2>Robot connection</h2>
-      <ul class="probes">
-        <li><span id="probe-traj" class="dot dot-red"></span> Trajectory controller</li>
-        <li><span id="probe-joints" class="dot dot-red"></span> Joint states</li>
-        <li><span id="probe-io" class="dot dot-red"></span> Gripper I/O service</li>
-      </ul>
-    </section>
+    <!-- Center column: live camera feed + the animated plan. -->
+    <div class="col-center">
+      <section class="card camera-card">
+        <h2>Camera
+          <span id="camera-state" class="badge badge-off">no feed</span>
+        </h2>
+        <div class="camera-view">
+          <img id="camera-img" alt="camera feed" style="display:none" />
+          <div id="camera-placeholder" class="camera-placeholder">waiting for camera…</div>
+        </div>
+      </section>
 
+      <section class="card plan-card">
+        <h2>Plan
+          <span id="plan-state" class="badge badge-off">idle</span>
+        </h2>
+        <div id="plan-content" class="plan-content">
+          <p class="muted">No plan yet — send a command to generate one.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- Right column: stack / driver / configuration / backend controls. -->
+    <div class="col-right">
     <section class="card">
       <h2>Configuration</h2>
       <div class="grid">
@@ -68,8 +101,29 @@
     </section>
 
     <section class="card">
+      <h2>Camera
+        <span class="head-actions">
+          <button id="cam-svc-copy" type="button" class="icon-btn" title="Copy camera logs">Copy</button>
+          <span id="cam-svc-state" class="badge badge-off">stopped</span>
+        </span>
+      </h2>
+      <div class="actions">
+        <button id="cam-svc-start" type="button">Start</button>
+        <button id="cam-svc-stop" type="button" class="danger">Stop</button>
+        <span id="cam-svc-info" class="muted"></span>
+      </div>
+      <details class="log-details">
+        <summary>Logs</summary>
+        <pre id="cam-svc-logs" class="logs">(camera not started)</pre>
+      </details>
+    </section>
+
+    <section class="card">
       <h2>UR driver
-        <span id="driver-state" class="badge badge-off">stopped</span>
+        <span class="head-actions">
+          <button id="driver-copy" type="button" class="icon-btn" title="Copy driver logs">Copy</button>
+          <span id="driver-state" class="badge badge-off">stopped</span>
+        </span>
       </h2>
       <div class="grid">
         <label>Robot IP
@@ -89,12 +143,18 @@
         <summary>Attempt history</summary>
         <ul id="driver-history" class="probes"></ul>
       </details>
-      <pre id="driver-logs" class="logs">(driver not started)</pre>
+      <details class="log-details">
+        <summary>Logs</summary>
+        <pre id="driver-logs" class="logs">(driver not started)</pre>
+      </details>
     </section>
 
     <section class="card">
       <h2>Stack
-        <span id="stack-state" class="badge badge-off">stopped</span>
+        <span class="head-actions">
+          <button id="stack-copy" type="button" class="icon-btn" title="Copy stack logs">Copy</button>
+          <span id="stack-state" class="badge badge-off">stopped</span>
+        </span>
       </h2>
       <div class="mock-toggles">
         <label class="check">
@@ -110,7 +170,10 @@
         <button id="stack-stop" type="button" class="danger">Stop</button>
         <span id="stack-info" class="muted"></span>
       </div>
-      <pre id="stack-logs" class="logs">(stack not started)</pre>
+      <details class="log-details">
+        <summary>Logs</summary>
+        <pre id="stack-logs" class="logs">(stack not started)</pre>
+      </details>
     </section>
 
     <section class="card">

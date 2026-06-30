@@ -1,9 +1,19 @@
 // ---- elements ----
 const robotLed = document.getElementById('robot-led');
-const robotText = document.getElementById('robot-text');
+const ledToggle = document.getElementById('led-toggle');
+const robotPopover = document.getElementById('robot-popover');
+const popoverDriver = document.getElementById('popover-driver');
 const probeTraj = document.getElementById('probe-traj');
 const probeJoints = document.getElementById('probe-joints');
 const probeIo = document.getElementById('probe-io');
+const probePendant = document.getElementById('probe-pendant');
+
+const cameraImg = document.getElementById('camera-img');
+const cameraPlaceholder = document.getElementById('camera-placeholder');
+const cameraState = document.getElementById('camera-state');
+
+const planContent = document.getElementById('plan-content');
+const planState = document.getElementById('plan-state');
 
 const bridgeNode = document.getElementById('bridge-node');
 const nodeCount = document.getElementById('node-count');
@@ -19,6 +29,12 @@ const optionsError = document.getElementById('options-error');
 
 const cfgApply = document.getElementById('cfg-apply');
 const cfgResult = document.getElementById('cfg-result');
+
+const camSvcState = document.getElementById('cam-svc-state');
+const camSvcInfo = document.getElementById('cam-svc-info');
+const camSvcLogs = document.getElementById('cam-svc-logs');
+const camSvcStart = document.getElementById('cam-svc-start');
+const camSvcStop = document.getElementById('cam-svc-stop');
 
 const driverState = document.getElementById('driver-state');
 const driverInfo = document.getElementById('driver-info');
@@ -41,7 +57,15 @@ const stackStart = document.getElementById('stack-start');
 const stackRestart = document.getElementById('stack-restart');
 const stackStop = document.getElementById('stack-stop');
 
-let providerModels = {};
+// Provider→model maps, split by mode. Populated once in loadOptions().
+let llmProviderModels = {};
+let vlmProviderModels = {};
+
+function currentProviderModels() {
+  return (selMode.value || 'LLM').toUpperCase() === 'VLM'
+    ? vlmProviderModels
+    : llmProviderModels;
+}
 
 // ---- toasts ----
 // Lightweight transient notifications so action outcomes (config applied, stack
@@ -73,6 +97,88 @@ function setDot(el, ok) {
   el.className = 'dot ' + (ok ? 'dot-green' : 'dot-red');
 }
 
+// ---- LED popover (robot-connection detail) ----
+ledToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const show = robotPopover.hidden;
+  robotPopover.hidden = !show;
+  ledToggle.setAttribute('aria-expanded', String(show));
+});
+// Close when clicking anywhere outside the popover.
+document.addEventListener('click', (e) => {
+  if (robotPopover.hidden) return;
+  if (!robotPopover.contains(e.target) && e.target !== ledToggle) {
+    robotPopover.hidden = true;
+    ledToggle.setAttribute('aria-expanded', 'false');
+  }
+});
+
+// ---- copy buttons (chat + log terminals) ----
+async function copyText(text, label) {
+  if (!text || !text.trim()) {
+    toast('Nothing to copy', 'info');
+    return;
+  }
+  // Try the modern async clipboard API first (requires HTTPS or localhost).
+  // Fall back to the legacy execCommand approach which works on plain HTTP
+  // (e.g. accessing the GUI by IP address from the host machine).
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(`${label} copied`, 'success', 2000);
+      return;
+    } catch (_e) { /* fall through */ }
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast(`${label} copied`, 'success', 2000);
+  } catch (_e) {
+    toast('Copy failed', 'error');
+  }
+}
+
+document.getElementById('chat-copy').addEventListener('click', () =>
+  copyText(chatHistory.innerText, 'Chat'));
+document.getElementById('stack-copy').addEventListener('click', () =>
+  copyText(stackLogs.textContent, 'Stack logs'));
+document.getElementById('driver-copy').addEventListener('click', () =>
+  copyText(driverLogs.textContent, 'Driver logs'));
+document.getElementById('cam-svc-copy').addEventListener('click', () =>
+  copyText(camSvcLogs.textContent, 'Camera logs'));
+
+// ---- camera feed (polled JPEG frames) ----
+// Poll /api/camera/frame; on a 503 the camera isn't up yet, so show the
+// placeholder. Object URLs are revoked as we swap frames to avoid leaking blobs.
+let cameraObjectUrl = null;
+
+async function pollCamera() {
+  try {
+    const res = await fetch('/api/camera/frame', { cache: 'no-store' });
+    if (!res.ok) throw new Error('no frame');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    cameraImg.src = url;
+    cameraImg.style.display = 'block';
+    cameraPlaceholder.style.display = 'none';
+    cameraState.textContent = 'live';
+    cameraState.className = 'badge badge-on';
+    if (cameraObjectUrl) URL.revokeObjectURL(cameraObjectUrl);
+    cameraObjectUrl = url;
+  } catch (_e) {
+    cameraImg.style.display = 'none';
+    cameraPlaceholder.style.display = 'block';
+    cameraState.textContent = 'no feed';
+    cameraState.className = 'badge badge-off';
+  }
+}
+
 // ---- options (fetched once) ----
 async function loadOptions() {
   try {
@@ -87,13 +193,11 @@ async function loadOptions() {
     fillSelect(selMode, data.modes || []);
     fillSelect(selReasoning, data.reasoning_methods || []);
 
-    providerModels = data.providers || {};
-    const providers = Object.keys(providerModels);
-    fillSelect(selProvider, providers);
-    if (providers.length) fillSelect(selModel, providerModels[providers[0]]);
+    llmProviderModels = data.providers || {};
+    vlmProviderModels = data.vlm_providers || {};
 
     if (data.temperature_default != null) inpTemp.value = data.temperature_default;
-    syncCameraToggle();
+    syncModelsByMode();  // populates providers + models for the initial mode
   } catch (err) {
     optionsError.hidden = false;
     optionsError.textContent = 'Failed to fetch /api/options: ' + err;
@@ -102,7 +206,7 @@ async function loadOptions() {
 
 // Keep the model list consistent with the chosen provider.
 selProvider.addEventListener('change', () => {
-  fillSelect(selModel, providerModels[selProvider.value] || []);
+  fillSelect(selModel, currentProviderModels()[selProvider.value] || []);
 });
 
 // ---- live config (B2) ----
@@ -160,13 +264,26 @@ function stackPayload() {
   };
 }
 
-// The camera only exists in VLM mode — disable its toggle in LLM mode.
+// The camera toggle and model lists both depend on the current mode.
 function syncCameraToggle() {
   const vlm = (selMode.value || 'LLM').toUpperCase() === 'VLM';
   chkMockCamera.disabled = !vlm;
   chkMockCamera.parentElement.style.opacity = vlm ? '1' : '0.5';
 }
-selMode.addEventListener('change', syncCameraToggle);
+
+// Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
+// different model subsets), then also sync the camera toggle.
+function syncModelsByMode() {
+  const map = currentProviderModels();
+  const providers = Object.keys(map);
+  const prevProvider = selProvider.value;
+  fillSelect(selProvider, providers);
+  // Preserve the selected provider if it still exists in the new list.
+  if (providers.includes(prevProvider)) selProvider.value = prevProvider;
+  fillSelect(selModel, map[selProvider.value] || []);
+  syncCameraToggle();
+}
+selMode.addEventListener('change', syncModelsByMode);
 
 function renderStack(status) {
   const running = !!status.running;
@@ -214,13 +331,31 @@ async function stackAction(url, withPayload) {
     } else if (data.status) {
       renderStack(data.status);
       toast(data.status.running ? 'Stack running' : 'Stack stopped', 'success');
+      // The supervisor reaps orphaned stack processes before launching.
+      if (data.warning) toast('Stack: ' + data.warning, 'info', 6000);
     }
   } catch (err) {
     stackInfo.textContent = 'request failed: ' + err;
     toast('Stack request failed: ' + err, 'error');
   } finally {
     pollStack();
+    checkPreflight();
   }
+}
+
+// ---- preflight: warn loudly if a duplicate /execute_skill server appears ----
+// Only toast on the transition into the duplicate state so we don't spam the
+// 2s poll. A duplicate executor runs every skill twice and corrupts robot state.
+let lastDuplicate = false;
+
+async function checkPreflight() {
+  try {
+    const pf = await (await fetch('/api/preflight')).json();
+    if (pf.duplicate && !lastDuplicate) {
+      toast(pf.message, 'error', 10000);
+    }
+    lastDuplicate = !!pf.duplicate;
+  } catch (_e) { /* backend unreachable — health poll flags it */ }
 }
 
 stackStart.addEventListener('click', () => stackAction('/api/stack/start', true));
@@ -260,6 +395,14 @@ function renderDriver(status) {
 
   driverState.textContent = state;
   driverState.className = 'badge ' + (DRIVER_BADGE[state] || 'badge-off');
+
+  // Mirror the driver state into the LED popover, noting whether the teach
+  // pendant has connected on the reverse interface.
+  let driverLine = 'driver: ' + state;
+  if (state === 'connected') {
+    driverLine += status.robot_connected ? ' · pendant connected' : ' · pendant not connected';
+  }
+  popoverDriver.textContent = driverLine;
 
   const busy = state === 'connecting';
   driverStart.disabled = busy || state === 'connected';
@@ -324,6 +467,62 @@ driverReconnect.addEventListener('click', () => driverAction('/api/driver/reconn
 driverStop.addEventListener('click', () => driverAction('/api/driver/stop', false));
 headerReconnect.addEventListener('click', () => driverAction('/api/driver/reconnect', true));
 
+// ---- camera service supervisor ----
+function renderCameraService(status) {
+  const running = !!status.running;
+  const ready = !!status.ready;
+  if (ready) {
+    camSvcState.textContent = 'ready';
+    camSvcState.className = 'badge badge-on';
+  } else if (running) {
+    camSvcState.textContent = 'starting…';
+    camSvcState.className = 'badge badge-amber';
+  } else {
+    camSvcState.textContent = 'stopped';
+    camSvcState.className = 'badge badge-off';
+  }
+  camSvcStart.disabled = running;
+  camSvcStop.disabled = !running;
+
+  const bits = [];
+  if (status.pid) bits.push(`pid ${status.pid}`);
+  if (status.returncode != null) bits.push(`exit ${status.returncode}`);
+  camSvcInfo.textContent = bits.join(' · ');
+
+  const logs = status.logs || [];
+  camSvcLogs.textContent = logs.length
+    ? logs.map((l) => `${l.t}  ${l.line}`).join('\n')
+    : '(camera not started)';
+  camSvcLogs.scrollTop = camSvcLogs.scrollHeight;
+}
+
+async function pollCameraService() {
+  try {
+    renderCameraService(await (await fetch('/api/camera/service')).json());
+  } catch (_e) {}
+}
+
+async function cameraServiceAction(url) {
+  [camSvcStart, camSvcStop].forEach((b) => (b.disabled = true));
+  try {
+    const data = await postJSON(url, {});
+    if (data.error) {
+      camSvcInfo.textContent = data.error;
+      toast('Camera: ' + data.error, 'error');
+    } else if (data.status) {
+      renderCameraService(data.status);
+    }
+  } catch (err) {
+    camSvcInfo.textContent = 'request failed: ' + err;
+    toast('Camera request failed: ' + err, 'error');
+  } finally {
+    pollCameraService();
+  }
+}
+
+camSvcStart.addEventListener('click', () => cameraServiceAction('/api/camera/service/start'));
+camSvcStop.addEventListener('click', () => cameraServiceAction('/api/camera/service/stop'));
+
 // ---- health (polled) ----
 async function pollHealth() {
   try {
@@ -331,12 +530,15 @@ async function pollHealth() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
 
-    const robot = data.robot || { level: 'red', probes: {} };
+    const robot = data.robot || { level: 'red', probes: {}, pendant: {} };
     robotLed.className = 'led led-' + robot.level;
-    robotText.textContent = 'robot: ' + robot.level;
     setDot(probeTraj, robot.probes.trajectory_server);
     setDot(probeJoints, robot.probes.joint_states);
     setDot(probeIo, robot.probes.gripper_io);
+    // Pendant is only meaningful for a GUI-supervised real driver; show grey
+    // (red dot) until it connects, green once the reverse interface is up.
+    const pendant = robot.pendant || {};
+    setDot(probePendant, pendant.connected);
 
     bridgeNode.textContent = data.bridge_node || '—';
     nodeCount.textContent = data.node_count;
@@ -348,7 +550,7 @@ async function pollHealth() {
     });
   } catch (err) {
     robotLed.className = 'led led-red';
-    robotText.textContent = 'backend unreachable';
+    robotLed.className = 'led led-red';
   }
 }
 
@@ -412,12 +614,14 @@ function renderStep(step) {
   return li;
 }
 
-// Build the polished plan card; returns a map of step-index -> <li> so the
-// live execution log can flip each step's status as it completes.
-function renderPlan(block, plan) {
+// Render the polished, animated plan into the dedicated Plan panel (request #5
+// keeps the chat to requests + reports). Returns a map of step-index -> <li> so
+// the live execution log can flip each step's status as it completes.
+function renderPlanPanel(plan) {
+  planContent.innerHTML = '';
   const stepEls = {};
   if (plan.task_summary) {
-    block.appendChild(el('div', 'plan-summary', plan.task_summary));
+    planContent.appendChild(el('div', 'plan-summary', plan.task_summary));
   }
   const list = el('ol', 'plan-steps');
   (plan.plan || []).forEach((step) => {
@@ -425,14 +629,19 @@ function renderPlan(block, plan) {
     list.appendChild(li);
     stepEls[String(step.step ?? '?')] = li;
   });
-  block.appendChild(list);
+  planContent.appendChild(list);
 
   const details = el('details', 'raw-plan');
   details.appendChild(el('summary', null, 'raw JSON'));
   details.appendChild(el('pre', null, JSON.stringify(plan, null, 2)));
-  block.appendChild(details);
+  planContent.appendChild(details);
 
   return stepEls;
+}
+
+function setPlanState(label, kind) {
+  planState.textContent = label;
+  planState.className = 'badge ' + (kind || 'badge-off');
 }
 
 function setStepState(li, state) {
@@ -447,12 +656,15 @@ function applyLogLine(stepEls, line) {
 }
 
 async function sendCommand(command) {
+  // The chat holds only the request + the execution report (request #5); the
+  // animated plan lives in its own panel.
   const block = el('div', 'msg pending');
   block.appendChild(el('div', 'cmd', command));
   const status = el('div', 'label', 'planning…');
   block.appendChild(status);
   chatHistory.appendChild(block);
   scrollIntoView(block);
+  setPlanState('planning…', 'badge-amber');
 
   // 1. Plan.
   let planData;
@@ -461,6 +673,7 @@ async function sendCommand(command) {
   } catch (err) {
     block.className = 'msg failed';
     block.appendChild(el('div', 'error', 'Request failed: ' + err));
+    setPlanState('idle', 'badge-off');
     return;
   }
   if (planData.error) {
@@ -468,13 +681,15 @@ async function sendCommand(command) {
     status.remove();
     block.appendChild(el('div', 'error', 'Planning failed: ' + planData.error));
     toast('Planning failed: ' + planData.error, 'error');
+    setPlanState('planning failed', 'badge-off');
     scrollIntoView(block);
     return;
   }
 
-  // 2. Show the polished plan immediately, before execution starts.
-  const stepEls = renderPlan(block, planData.plan);
+  // 2. Show the polished plan in the Plan panel, before execution starts.
+  const stepEls = renderPlanPanel(planData.plan);
   status.textContent = 'executing…';
+  setPlanState('executing…', 'badge-amber');
   scrollIntoView(block);
 
   // 3. Stream /execution_log over a WebSocket while the robot runs.
@@ -483,7 +698,6 @@ async function sendCommand(command) {
   ws.onmessage = (ev) => {
     try {
       applyLogLine(stepEls, JSON.parse(ev.data).log);
-      scrollIntoView(block);
     } catch (_e) { /* ignore malformed frame */ }
   };
   await new Promise((resolve) => {
@@ -499,6 +713,7 @@ async function sendCommand(command) {
     block.className = 'msg failed';
     status.remove();
     block.appendChild(el('div', 'error', 'Request failed: ' + err));
+    setPlanState('error', 'badge-off');
     ws.close();
     return;
   } finally {
@@ -509,15 +724,17 @@ async function sendCommand(command) {
   if (execData.error) {
     block.className = 'msg failed';
     // Mark the first not-yet-done step as failed for a clear visual cue.
-    const pending = block.querySelector('.plan-step.pending');
+    const pending = planContent.querySelector('.plan-step.pending');
     setStepState(pending, 'failed');
     block.appendChild(el('div', 'error', 'Execution failed: ' + execData.error));
     toast('Execution failed: ' + execData.error, 'error');
+    setPlanState('failed', 'badge-off');
   } else {
     block.className = 'msg';
     Object.values(stepEls).forEach((li) => setStepState(li, 'done'));
     block.appendChild(el('div', 'label', 'execution report'));
     block.appendChild(el('pre', 'report', execData.report || '(no report)'));
+    setPlanState('done', 'badge-on');
   }
   scrollIntoView(block);
 }
@@ -542,6 +759,12 @@ loadOptions();
 pollHealth();
 pollStack();
 pollDriver();
+pollCameraService();
+pollCamera();
+checkPreflight();
 setInterval(pollHealth, 2000);
 setInterval(pollStack, 2000);
 setInterval(pollDriver, 2000);
+setInterval(pollCameraService, 2000);
+setInterval(pollCamera, 1000);
+setInterval(checkPreflight, 2000);

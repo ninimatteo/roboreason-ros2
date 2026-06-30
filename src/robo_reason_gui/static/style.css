@@ -40,21 +40,27 @@ header h1 { font-size: 20px; margin: 0; }
 
 main { padding: 24px; }
 
-/* Two-column layout: chat on the left, everything else on the right. */
+/* Three-column layout: chat · (camera + plan) · controls. */
 .layout {
   display: flex;
   align-items: flex-start;
   gap: 16px;
 }
 .layout > .chat-card {
-  flex: 1 1 42%;
+  flex: 1 1 30%;
   position: sticky;
   top: 24px;
   display: flex;
   flex-direction: column;
 }
+.layout > .col-center {
+  flex: 1 1 38%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 .layout > .col-right {
-  flex: 1 1 58%;
+  flex: 1 1 32%;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -66,11 +72,92 @@ main { padding: 24px; }
   max-height: calc(100vh - 220px);
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1100px) {
+  .layout { flex-wrap: wrap; }
+  .layout > .chat-card { flex: 1 1 100%; position: static; }
+  .layout > .col-center,
+  .layout > .col-right { flex: 1 1 45%; }
+}
+@media (max-width: 760px) {
   .layout { flex-direction: column; }
   .layout > .chat-card,
+  .layout > .col-center,
   .layout > .col-right { flex: 1 1 auto; width: 100%; position: static; }
 }
+
+/* ---- header LED popover (robot-connection detail) ---- */
+.status { position: relative; }
+.led-toggle {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  padding: 0;
+}
+.popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 280px;
+  background: var(--card);
+  border: 1px solid #2a2e37;
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 900;
+}
+.popover h3 { margin: 0 0 10px; font-size: 14px; }
+.popover .probes li { font-size: 13px; }
+
+/* ---- camera feed ---- */
+.camera-view {
+  position: relative;
+  margin-top: 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0d0f13;
+  border: 1px solid #2a2e37;
+  height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.camera-view img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.camera-placeholder {
+  position: absolute;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- copy / icon buttons in card headers ---- */
+.head-actions { display: inline-flex; align-items: center; gap: 8px; }
+.icon-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #1e222b;
+  color: var(--muted);
+  border: 1px solid #33384a;
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.icon-btn:hover { color: var(--fg); border-color: #555c70; }
 
 .card {
   background: var(--card);
@@ -237,6 +324,11 @@ label.check {
 .msg .cmd::before { content: '> '; color: var(--accent); }
 
 /* ---- plan ---- */
+.plan-content {
+  margin-top: 12px;
+  max-height: calc(100vh - 420px);
+  overflow-y: auto;
+}
 .plan-summary {
   font-size: 14px;
   color: var(--fg);
@@ -311,6 +403,13 @@ label.check {
 
 .raw-plan { margin-top: 8px; }
 .raw-plan summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.log-details { margin-top: 8px; }
+.log-details > summary {
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;

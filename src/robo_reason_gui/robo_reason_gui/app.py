@@ -4,7 +4,7 @@ from typing import Optional
 
 from ament_index_python.packages import get_package_share_directory
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from robo_reason_gui.options import get_options
@@ -41,7 +41,7 @@ class DriverRequest(BaseModel):
     reverse_ip: Optional[str] = None
 
 
-def create_app(bridge, supervisor, driver):
+def create_app(bridge, supervisor, driver, camera=None):
     """Build the FastAPI app, wired to the bridge, stack and UR driver."""
     app = FastAPI(title='RoboReason GUI', version='0.1.0')
 
@@ -62,6 +62,12 @@ def create_app(bridge, supervisor, driver):
     @app.get('/api/options')
     def options():
         return get_options()
+
+    @app.get('/api/preflight')
+    def preflight():
+        # Detect a duplicate /execute_skill action server before the operator
+        # runs a plan (a leftover executor would run every skill twice).
+        return bridge.preflight()
 
     @app.post('/api/plan')
     def plan(req: CommandRequest):
@@ -109,6 +115,35 @@ def create_app(bridge, supervisor, driver):
     @app.post('/api/driver/reconnect')
     def driver_reconnect(req: DriverRequest):
         return driver.reconnect(req.model_dump())
+
+    @app.get('/api/camera/status')
+    def camera_status():
+        return {'available': bridge.camera_available()}
+
+    @app.get('/api/camera/service')
+    def camera_service_status():
+        return camera.status() if camera else {'running': False, 'ready': False, 'logs': []}
+
+    @app.post('/api/camera/service/start')
+    def camera_service_start():
+        return camera.start() if camera else {'ok': False, 'error': 'no camera supervisor'}
+
+    @app.post('/api/camera/service/stop')
+    def camera_service_stop():
+        return camera.stop() if camera else {'ok': True}
+
+    @app.get('/api/camera/frame')
+    def camera_frame():
+        # Grab the latest frame on demand (the GUI polls this). 503 lets the
+        # frontend distinguish "no camera yet" from a hard error.
+        jpeg = bridge.grab_camera_jpeg()
+        if jpeg is None:
+            raise HTTPException(status_code=503, detail='camera frame unavailable')
+        return Response(
+            content=jpeg,
+            media_type='image/jpeg',
+            headers={'Cache-Control': 'no-store'},
+        )
 
     @app.websocket('/ws/execution')
     async def execution_log(ws: WebSocket):
