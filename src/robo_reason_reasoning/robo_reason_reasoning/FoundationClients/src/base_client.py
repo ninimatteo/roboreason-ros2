@@ -2,8 +2,7 @@ import os
 from typing import List, Dict, Union, Optional, Any
 from abc import ABC, abstractmethod
 
-from datetime import datetime
-
+import pandas as pd
 from dotenv import load_dotenv  # type: ignore[reportMissingImports]
 
 # Import provider SDKs
@@ -38,15 +37,11 @@ class ModelRegistry:
     
     # Groq Models
     GROQ_MODELS = {
-        "llama3.1-8b": "llama-3.1-8b-instant",
-        "llama3.3-70b": "llama-3.3-70b-versatile",
-        "llama4-maverick-17b": "meta-llama/llama-4-maverick-17b-128e-instruct",
-        "moonshotai-kimik2-32b": "moonshotai/kimi-k2-instruct-0905",
-        "qwen3-32b": "qwen/qwen3-32b",
         "openai-oss-20b": "openai/gpt-oss-20b",
         "openai-oss-120b": "openai/gpt-oss-120b",
+        "qwen3-32b": "qwen/qwen3-32b",
         # vision enabled models
-        "llama4-scout-17b": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "qwen3.6-27b": "qwen/qwen3.6-27b",
     }
 
     # Nebius Models
@@ -54,6 +49,7 @@ class ModelRegistry:
         'google-gemma-27b': 'google/gemma-3-27b-it',
         'nvidia-nemotron-30b': "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         'nvidia-nemotron-120b': "nvidia/nemotron-3-super-120b-a12b",
+        'nvidia-cosmos3-33b': "nvidia/Cosmos3-Super-Reasoner",
         'kimi-k2.6': "moonshotai/Kimi-K2.6",
         'qwen3-embedding-8b': 'Qwen/Qwen3-Embedding-8B',
         # vision enabled models
@@ -117,7 +113,7 @@ class BaseFoundationClient(ABC):
         self.model_name = ModelRegistry.get_model_id(self.provider, self.raw_model_name)
         
         self.temperature = model_parameters.get("temperature", 0.7)
-        self.max_tokens = model_parameters.get("max_tokens", 8192)
+        self.max_tokens = model_parameters.get("max_tokens", 1024)
         self.top_p = model_parameters.get("top_p", 1.0)
         self.stream = model_parameters.get("stream", False)
         
@@ -125,7 +121,7 @@ class BaseFoundationClient(ABC):
         self.base_url = model_parameters.get("base_url", os.getenv(f"{self.provider.upper()}_BASE_URL"))
         
         self.client = self._initialize_client()
-        self.usage_metrics: list = []
+        self.usage_metrics = None
 
     def _initialize_client(self):
         if self.provider == "groq":
@@ -150,8 +146,8 @@ class BaseFoundationClient(ABC):
 
     def _update_metrics(self, input_tokens: int, output_tokens: int, search_provider: str = None):
         """Standardized metric collection."""
-        entry = {
-            "timestamp": datetime.now().isoformat(),
+        new_metric = {
+            "timestamp": pd.Timestamp.now(),
             "provider": self.provider,
             "model": self.model_name,
             "input_tokens": input_tokens,
@@ -159,18 +155,23 @@ class BaseFoundationClient(ABC):
             "total_tokens": input_tokens + output_tokens,
         }
         if search_provider:
-            entry["search_provider"] = search_provider
-        self.usage_metrics.append(entry)
+             new_metric["search_provider"] = search_provider
+             
+        if self.usage_metrics is None:
+            self.usage_metrics = pd.DataFrame([new_metric])
+        else:
+            self.usage_metrics = pd.concat([self.usage_metrics, pd.DataFrame([new_metric])], ignore_index=True)
 
     def get_total_usage(self) -> Dict[str, int]:
+        if self.usage_metrics is None:
+             return {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0}
         return {
-            "total_tokens": sum(e["total_tokens"] for e in self.usage_metrics),
-            "input_tokens": sum(e["input_tokens"] for e in self.usage_metrics),
-            "output_tokens": sum(e["output_tokens"] for e in self.usage_metrics),
+            "total_tokens": int(self.usage_metrics["total_tokens"].sum()),
+            "input_tokens": int(self.usage_metrics["input_tokens"].sum()),
+            "output_tokens": int(self.usage_metrics["output_tokens"].sum()),
         }
 
     def log_metrics(self):
-        if self.usage_metrics:
-            print(f"\n[{self.__class__.__name__}] Usage Metrics:")
-            for entry in self.usage_metrics:
-                print(entry)
+        if self.usage_metrics is not None:
+             print(f"\n[{self.__class__.__name__}] Usage Metrics:")
+             print(self.usage_metrics)
