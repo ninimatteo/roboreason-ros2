@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     TEMPERATURE: float = 0.1
 
     # ── VLM planner ───────────────────────────────────────────────────────────
-    TMP_DIR: str = '/root/ws/src/vlm_frames'
+    TMP_DIR: str = 'src/vlm_frames'
 
     # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
     DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'

@@ -120,6 +120,17 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
+Procedure if the venv dependencies are not respected after the build
+
+```bash
+# activate venv
+source venv/bin/activate
+# build with the current venv data
+python3 $(which colcon) build --symlink-install --cmake-args -DPython3_EXECUTABLE=$(which python3)
+# source installation
+source install/setup.bash
+```
+
 ### API key
 
 ```bash
@@ -134,20 +145,21 @@ export GROQ_API_KEY=gsk_...
 ### LLM Dry-run (no robot, no camera)
 
 ```bash
-# Mock plan (no API key needed)
-ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=true
+# In the first terminal either call:
+ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=true    # Mock plan (no API key needed)
+ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=false reasoning_method:=fhp    # Real LLM, fake executor
 
-# Real LLM, fake executor
-ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=false reasoning_method:=fhp
+# In the second terminal:
+ros2 run robo_reason_task_interface task_interface_node
 ```
 
 ### VLM Dry-run (no robot, no camera — uses PNG images as mock camera)
 
 ```bash
-# Place PNGs in /root/ws/src/mock_frames/ first
+# Place PNGs in /your_path/mock_frames/ first
 ros2 launch robo_reason_bringup vlm_dry_run.launch.py \
-  images_dir:=/root/ws/src/mock_frames \
-  model_name:=groq/llama4-scout-17b
+  images_dir:=/your_path/mock_frames \
+  model_name:=groq/qwen3.6-27b
 # In a second terminal:
 ros2 run robo_reason_task_interface task_interface_node
 ```

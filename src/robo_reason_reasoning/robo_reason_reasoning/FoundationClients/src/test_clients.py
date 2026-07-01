@@ -1,6 +1,6 @@
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 # Mock dependencies if not installed
 try:
@@ -29,6 +29,11 @@ except ImportError:
     sys.modules["google"] = mock_google
     sys.modules["google.genai"] = mock_genai_pkg
 
+try:
+    from pydantic import BaseModel
+except ImportError:
+    BaseModel = MagicMock()
+
 # Now import the module to test
 try:
     from . import base_client
@@ -40,6 +45,12 @@ except ImportError:
     from llm_client import LLMClient
     from vlm_client import VLMClient
     from base_client import ModelRegistry
+
+class TestResponseModel(BaseModel):
+    """Test Pydantic model for structured output tests."""
+    name: str
+    age: int
+
 
 class TestFoundationClients(unittest.TestCase):
 
@@ -253,6 +264,109 @@ class TestFoundationClients(unittest.TestCase):
                 }
             }
         )
+
+    def test_llm_client_groq_structured_output(self):
+        client = LLMClient(model_name="groq/llama3.1-8b", api_key="test_key")
+
+        mock_create = self.mock_groq_instance.chat.completions.create
+        mock_message = MagicMock()
+        mock_message.choices[0].message.content = '{"name": "Alice", "age": 30}'
+        mock_message.usage.prompt_tokens = 10
+        mock_message.usage.completion_tokens = 20
+        mock_create.return_value = mock_message
+
+        response = client(
+            "Extract name and age",
+            force_json=True,
+            forced_json_schema=TestResponseModel
+        )
+
+        call_args = mock_create.call_args[1]
+        self.assertEqual(call_args["model"], "llama-3.1-8b-instant")
+        expected_schema = TestResponseModel.model_json_schema()
+        self.assertEqual(
+            call_args["response_format"],
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "TestResponseModel",
+                    "schema": expected_schema
+                }
+            }
+        )
+        self.assertEqual(response, '{"name": "Alice", "age": 30}')
+
+    def test_llm_client_groq_json_mode_only(self):
+        client = LLMClient(model_name="groq/llama3.1-8b", api_key="test_key")
+
+        mock_create = self.mock_groq_instance.chat.completions.create
+        mock_message = MagicMock()
+        mock_message.choices[0].message.content = '{"key": "value"}'
+        mock_message.usage.prompt_tokens = 10
+        mock_message.usage.completion_tokens = 5
+        mock_create.return_value = mock_message
+
+        response = client(
+            "Give me JSON",
+            force_json=True
+        )
+
+        call_args = mock_create.call_args[1]
+        self.assertEqual(call_args["response_format"], {"type": "json_object"})
+        self.assertEqual(response, '{"key": "value"}')
+
+    def test_vlm_client_groq_structured_output(self):
+        client = VLMClient(model_name="groq/llama4-scout-17b", api_key="test_key")
+
+        mock_create = self.mock_groq_instance.chat.completions.create
+        mock_message = MagicMock()
+        mock_message.choices[0].message.content = '{"name": "Bob", "age": 25}'
+        mock_message.usage.prompt_tokens = 50
+        mock_message.usage.completion_tokens = 10
+        mock_create.return_value = mock_message
+
+        response = client(
+            "Extract info from image",
+            "https://example.com/image.jpg",
+            force_json=True,
+            forced_json_schema=TestResponseModel
+        )
+
+        call_args = mock_create.call_args[1]
+        self.assertEqual(call_args["model"], "meta-llama/llama-4-scout-17b-16e-instruct")
+        expected_schema = TestResponseModel.model_json_schema()
+        self.assertEqual(
+            call_args["response_format"],
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "TestResponseModel",
+                    "schema": expected_schema
+                }
+            }
+        )
+        self.assertEqual(response, '{"name": "Bob", "age": 25}')
+
+    def test_vlm_client_groq_json_mode_only(self):
+        client = VLMClient(model_name="groq/llama4-scout-17b", api_key="test_key")
+
+        mock_create = self.mock_groq_instance.chat.completions.create
+        mock_message = MagicMock()
+        mock_message.choices[0].message.content = '{"result": "ok"}'
+        mock_message.usage.prompt_tokens = 50
+        mock_message.usage.completion_tokens = 5
+        mock_create.return_value = mock_message
+
+        response = client(
+            "Describe the image as JSON",
+            "https://example.com/image.jpg",
+            force_json=True
+        )
+
+        call_args = mock_create.call_args[1]
+        self.assertEqual(call_args["response_format"], {"type": "json_object"})
+        self.assertEqual(response, '{"result": "ok"}')
+
 
 if __name__ == '__main__':
     unittest.main()
