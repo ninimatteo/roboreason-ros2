@@ -7,6 +7,7 @@ const probeTraj = document.getElementById('probe-traj');
 const probeJoints = document.getElementById('probe-joints');
 const probeIo = document.getElementById('probe-io');
 const probePendant = document.getElementById('probe-pendant');
+const calibLed = document.getElementById('calib-led');
 
 const cameraImg = document.getElementById('camera-img');
 const cameraPlaceholder = document.getElementById('camera-placeholder');
@@ -285,11 +286,31 @@ function syncModelsByMode() {
 }
 selMode.addEventListener('change', syncModelsByMode);
 
+// Gate stack Start/Restart on real-robot readiness: in real-robot mode (mock
+// robot unchecked) the stack talks to controllers that only exist once the
+// GUI-owned UR driver is up AND the teach pendant has accepted the reverse
+// interface — starting the stack earlier just produces confusing planner/
+// executor timeouts. Mock-robot mode has no such dependency.
+let stackRunning = false;
+let robotReady = false;
+
+function updateStackStartGate() {
+  const needsRealRobot = !chkMockRobot.checked;
+  const blockedByDriver = needsRealRobot && !robotReady;
+  stackStart.disabled = stackRunning || blockedByDriver;
+  stackRestart.disabled = blockedByDriver;
+  stackStart.title = blockedByDriver
+    ? 'Start the UR driver and wait for it to connect (green LED) before starting the stack in real-robot mode.'
+    : '';
+}
+chkMockRobot.addEventListener('change', updateStackStartGate);
+
 function renderStack(status) {
   const running = !!status.running;
   stackState.textContent = running ? 'running' : 'stopped';
   stackState.className = 'badge ' + (running ? 'badge-on' : 'badge-off');
-  stackStart.disabled = running;
+  stackRunning = running;
+  updateStackStartGate();
   stackStop.disabled = !running;
 
   if (status.target) {
@@ -523,6 +544,19 @@ async function cameraServiceAction(url) {
 camSvcStart.addEventListener('click', () => cameraServiceAction('/api/camera/service/start'));
 camSvcStop.addEventListener('click', () => cameraServiceAction('/api/camera/service/stop'));
 
+document.getElementById('cam-recalibrate').addEventListener('click', async function () {
+  this.disabled = true;
+  try {
+    const data = await fetch('/api/camera/recalibrate', { method: 'POST' }).then(r => r.json());
+    toast(data.message || (data.ok ? 'Recalibration started' : (data.error || 'failed')),
+          data.ok ? 'info' : 'error');
+  } catch (err) {
+    toast('Recalibrate request failed: ' + err, 'error');
+  } finally {
+    this.disabled = false;
+  }
+});
+
 // ---- health (polled) ----
 async function pollHealth() {
   try {
@@ -532,6 +566,11 @@ async function pollHealth() {
 
     const robot = data.robot || { level: 'red', probes: {}, pendant: {} };
     robotLed.className = 'led led-' + robot.level;
+    // 'green' already means controllers up AND (not GUI-supervised OR pendant
+    // connected) — see bridge_node.py::_robot_status(). Reuse it to gate the
+    // stack Start button instead of re-deriving driver/pendant state here.
+    robotReady = robot.level === 'green';
+    updateStackStartGate();
     setDot(probeTraj, robot.probes.trajectory_server);
     setDot(probeJoints, robot.probes.joint_states);
     setDot(probeIo, robot.probes.gripper_io);
@@ -539,6 +578,12 @@ async function pollHealth() {
     // (red dot) until it connects, green once the reverse interface is up.
     const pendant = robot.pendant || {};
     setDot(probePendant, pendant.connected);
+
+    // Calibration LED: amber until the first status message arrives (camera
+    // node not up yet / never calibrated), green once locked, red if a
+    // recalibration reset it back to unlocked.
+    const calib = data.calibration || { calibrated: false, seen: false };
+    calibLed.className = 'led led-' + (!calib.seen ? 'amber' : (calib.calibrated ? 'green' : 'red'));
 
     bridgeNode.textContent = data.bridge_node || '—';
     nodeCount.textContent = data.node_count;

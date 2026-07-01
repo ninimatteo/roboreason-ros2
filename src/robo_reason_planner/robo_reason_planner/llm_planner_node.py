@@ -22,6 +22,7 @@ from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner.command_grounding import check_command_grounding
+from robo_reason_planner.debug_recorder import DebugRun
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
 
@@ -58,34 +59,45 @@ class LLMPlannerNode(Node):
 
         self.get_logger().info(f'[LLMPlannerNode] Received: "{user_command}"')
 
+        use_mock = self.get_parameter('use_mock_llm').value
+        run = DebugRun(mode='LLM-mock' if use_mock else 'LLM', command=user_command, config={
+            'reasoning_method': self.get_parameter('reasoning_method').value,
+            'model_name': self.get_parameter('model_name').value,
+            'temperature': self.get_parameter('temperature').value,
+            'scene_json': scene_json,
+        })
+
         grounded, err = check_command_grounding(user_command, scene_json)
         if not grounded:
             response.success = False
             response.error_message = err
+            run.finish(success=False, error=err)
             return response
 
         try:
-            if self.get_parameter('use_mock_llm').value:
+            if use_mock:
                 plan_data = self._mock_plan(user_command, scene_json)
                 self.get_logger().info('[LLMPlannerNode] Generated mock plan.')
             else:
-                plan_data = self._llm_plan(user_command, scene_json)
+                plan_data = self._llm_plan(user_command, scene_json, run)
                 self.get_logger().info('[LLMPlannerNode] Generated LLM plan.')
 
             response.success = True
             response.plan_json = json.dumps(plan_data)
+            run.finish(success=True, response=plan_data)
 
         except Exception:
             tb = traceback.format_exc()
             self.get_logger().error(f'[LLMPlannerNode] Planning error:\n{tb}')
             response.success = False
             response.error_message = tb
+            run.finish(success=False, error=tb)
 
         return response
 
     # ── LLM plan ───────────────────────────────────────────────────────────────
 
-    def _llm_plan(self, user_command: str, scene_json: str) -> dict:
+    def _llm_plan(self, user_command: str, scene_json: str, run: DebugRun) -> dict:
         reasoning_method = self.get_parameter('reasoning_method').value
         model_name = self.get_parameter('model_name').value
         temperature = self.get_parameter('temperature').value
@@ -104,6 +116,7 @@ class LLMPlannerNode(Node):
             'environment_map': scene_json,
         }
         self.get_logger().info(f'[LLMPlannerNode] Starting plan with\n{observation}')
+        run.log(f'Starting plan with {observation}')
 
         plan_steps = run_plan_loop(agent, observation)
 
@@ -112,10 +125,15 @@ class LLMPlannerNode(Node):
             f'method: {reasoning_method}, model: {model_name}, '
             f'steps: {len(plan_steps)}'
         )
+        run.log(
+            f'Plan done — "{user_command}", method: {reasoning_method}, '
+            f'model: {model_name}, steps: {len(plan_steps)}'
+        )
         for s in plan_steps:
             self.get_logger().info(
                 f'[LLMPlannerNode]   Step {s["step"]}: {s.get("action_name", "?")}'
             )
+            run.log(f'  Step {s["step"]}: {s.get("action_name", "?")}')
 
         return {
             'task_summary': user_command,

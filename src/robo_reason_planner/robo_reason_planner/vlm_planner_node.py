@@ -31,6 +31,7 @@ from rclpy.node import Node
 from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
+from robo_reason_planner.debug_recorder import DebugRun
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
 
@@ -92,22 +93,30 @@ class VLMPlannerNode(Node):
         user_command = request.user_command
         self.get_logger().info(f'[VLMPlannerNode] Received: "{user_command}"')
 
+        run = DebugRun(mode='VLM', command=user_command, config={
+            'reasoning_method': self.get_parameter('reasoning_method').value,
+            'model_name': self.get_parameter('model_name').value,
+            'temperature': self.get_parameter('temperature').value,
+        })
+
         try:
-            plan_data = self._vlm_plan(user_command)
+            plan_data = self._vlm_plan(user_command, run)
             response.success = True
             response.plan_json = json.dumps(plan_data)
+            run.finish(success=True, response=plan_data)
             self.get_logger().info('[VLMPlannerNode] Generated VLM plan.')
         except Exception:
             tb = traceback.format_exc()
             self.get_logger().error(f'[VLMPlannerNode] Planning error:\n{tb}')
             response.success = False
             response.error_message = tb
+            run.finish(success=False, error=tb)
 
         return response
 
     # ── VLM plan ───────────────────────────────────────────────────────────────
 
-    def _vlm_plan(self, user_command: str) -> dict:
+    def _vlm_plan(self, user_command: str, run: DebugRun) -> dict:
         # 1. Capture RGB frame.
         img_resp = self._call_get_image()
         if not img_resp.success:
@@ -118,6 +127,8 @@ class VLMPlannerNode(Node):
         task_dir.mkdir(parents=True, exist_ok=True)
         image_paths = self._save_frame(img_resp.image, task_dir, index=0)
         self.get_logger().info(f'[VLMPlannerNode] Saved frame → {image_paths[0]}')
+        run.log(f'Saved frame -> {image_paths[0]}')
+        run.save_raw_frame(image_paths[0])
 
         # 3. Run VLM agent — returns actions with pixel [h, w] coordinates.
         reasoning_method = self.get_parameter('reasoning_method').value
@@ -137,6 +148,13 @@ class VLMPlannerNode(Node):
             'user_request': user_command,
             'image': image_paths[-1],
         })
+        run.log(f'VLM raw pixel steps: {json.dumps(pixel_steps)}')
+
+        # 3b. Save debug image with pixel markers — written before deprojection
+        #     so it exists even when the plan fails mid-way or deproject errors.
+        debug_path = self._save_debug_frame(image_paths[0], pixel_steps, task_dir)
+        if debug_path is not None:
+            run.save_debug_image(str(debug_path))
 
         # 4. Batch-deproject pixel coords → world [x, y, z].
         plan_steps = self._deproject_plan(pixel_steps)
@@ -144,10 +162,12 @@ class VLMPlannerNode(Node):
         self.get_logger().info(
             f'[VLMPlannerNode] Plan done — "{user_command}", steps: {len(plan_steps)}'
         )
+        run.log(f'Plan done — "{user_command}", steps: {len(plan_steps)}')
         for s in plan_steps:
             self.get_logger().info(
                 f'[VLMPlannerNode]   Step {s["step"]}: {s.get("action_name", "?")}'
             )
+            run.log(f'  Step {s["step"]}: {s.get("action_name", "?")}')
 
         return {
             'task_summary': user_command,
@@ -173,6 +193,61 @@ class VLMPlannerNode(Node):
             raise RuntimeError('/camera/get_image service not available (timeout 5 s)')
         future = self._get_image_client.call_async(GetImage.Request())
         return self._wait_for_future(future, '/camera/get_image')
+
+    def _save_debug_frame(self, source_path: str, pixel_steps: list, task_dir: Path) -> 'Path | None':
+        """Overlay VLM pixel predictions on the raw saved frame and write debug.png.
+
+        Pixel fields are [h, w] (row, col).  We convert to (u=col, v=row) for
+        drawing so the markers land on the correct image pixels.
+
+        Out-of-bounds predictions (e.g. a row/col outside the actual frame
+        size — a real failure mode we've seen from the VLM) are clamped to
+        the nearest edge and drawn in magenta with a "!" suffix instead of
+        being silently skipped, so a mispointing bias is still visible in
+        the debug image rather than just producing a deproject error later.
+        """
+        PIXEL_FIELDS = ('target_position', 'release_position')
+        pixels = []
+        for step in pixel_steps:
+            for field in PIXEL_FIELDS:
+                val = step.get(field)
+                if isinstance(val, (list, tuple)) and len(val) == 2:
+                    h, w = val
+                    pixels.append((int(w), int(h)))  # (u, v) = (col, row)
+        if not pixels:
+            return None
+        frame = self._cv2.imread(source_path)
+        if frame is None:
+            return None
+        height, width = frame.shape[:2]
+        marker_size = 14
+        radius = marker_size // 2
+        for index, (u, v) in enumerate(pixels, start=1):
+            out_of_bounds = u < 0 or v < 0 or u >= width or v >= height
+            cu = min(max(u, 0), width - 1)
+            cv = min(max(v, 0), height - 1)
+            color = (255, 0, 255) if out_of_bounds else (0, 255, 255)
+            x0 = max(0, cu - radius)
+            y0 = max(0, cv - radius)
+            x1 = min(width - 1, cu + radius)
+            y1 = min(height - 1, cv + radius)
+            self._cv2.rectangle(frame, (x0, y0), (x1, y1), color, 2)
+            self._cv2.drawMarker(
+                frame, (cu, cv), (0, 0, 255),
+                markerType=self._cv2.MARKER_CROSS,
+                markerSize=max(marker_size, 10), thickness=2,
+            )
+            label = f'{index}!' if out_of_bounds else str(index)
+            self._cv2.putText(
+                frame, label,
+                (min(width - 1, x1 + 4), max(12, y0 - 4)),
+                self._cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1,
+                self._cv2.LINE_AA,
+            )
+        debug_path = task_dir / 'debug.png'
+        self._cv2.imwrite(str(debug_path), frame)
+        self.get_logger().info(f'[VLMPlannerNode] Saved debug frame → {debug_path}')
+        return debug_path
 
     def _save_frame(self, ros_image, task_dir: Path, index: int) -> list:
         """Decode a sensor_msgs/Image and write it to disk. Returns [path_str]."""

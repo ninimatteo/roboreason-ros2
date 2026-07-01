@@ -62,3 +62,6 @@ log/
 __pycache__/
 *.pyc
 venv/
+
+# Per-run planner debug artifacts (command/response/errors/images/summary.csv)
+/debug/

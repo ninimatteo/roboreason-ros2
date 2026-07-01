@@ -132,6 +132,10 @@ def create_app(bridge, supervisor, driver, camera=None):
     def camera_service_stop():
         return camera.stop() if camera else {'ok': True}
 
+    @app.post('/api/camera/recalibrate')
+    def camera_recalibrate():
+        return bridge.recalibrate_camera()
+
     @app.get('/api/camera/frame')
     def camera_frame():
         # Grab the latest frame on demand (the GUI polls this). 503 lets the

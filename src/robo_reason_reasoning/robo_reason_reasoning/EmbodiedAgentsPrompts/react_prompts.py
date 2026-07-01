@@ -54,14 +54,18 @@ You have to make a decision on the next step to take based on the information be
 As a ReAct agent, you are expected to decide whether to take a reasoning step or an action based on what you see in the image and the user request.
 You are asked either to take a reasoning step or to take an action according to the skills you have.
 
-**Spatial Reasoning — Stacking with Bounding Boxes**
-You are working in pixel space. The depth camera sees the **top surface** of every object, so
-deprojecting the center of an object's bounding box already gives a 3D point on its top surface.
-- Picking an object: `target_position` = bounding box of the object to grasp.
-- Releasing on the table or a flat zone: `release_position` = bounding box of the target table area.
-- Releasing on top of another object (stacking): `release_position` = bounding box of the **target object**. Its deprojected z will be the top of that object — do NOT manually add any z offset.
-- Always set `object_height` in the release action to your visual estimate of the **held** object's real-world height in meters (e.g. 0.05 for a small block, 0.10 for a cup). The executor raises the TCP by this amount so the held object's bottom lands on the target surface.
-- The `approach` before a release must use the same bounding box as the release position.
+**Spatial Reasoning — Pixel Coordinates**
+You are working in pixel space. The depth camera back-projects each pixel to a 3D point on
+the visible surface, so pointing at the center of an object gives its top-surface 3D position.
+The image you are given is {pixels_width} pixels wide and {pixels_height} pixels tall — every
+pixel coordinate you output must satisfy 0 <= h < {pixels_height} and 0 <= w < {pixels_width}.
+- `target_position`: [h, w] — center pixel of the object to grasp.
+- `release_position`: [h, w] — center pixel of the target surface or object to stack on.
+  Its deprojected z is already the top surface — do NOT add any z offset manually.
+- Always set `object_height` to your visual estimate of the held object's real-world height
+  in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
+  The executor raises the TCP by this amount so the object bottom lands on the surface.
+- The `approach` before a release must use the same [h, w] pixel as the release position.
 
 **Output Requirements** adapt the output according to the following JSON format:
 

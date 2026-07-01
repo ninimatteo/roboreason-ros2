@@ -60,7 +60,9 @@ class FHP(ReasoningMethod):
             'user_request': self.user_request,
             'current_predicates': predicates,
         }
-        if not self.use_vlm:
+        if self.use_vlm:
+            format_args['pixels_width'], format_args['pixels_height'] = self._image_pixel_dims(image)
+        else:
             format_args['current_env_config'] = env_config
 
         msg = task_planning_prompt.format(**format_args)

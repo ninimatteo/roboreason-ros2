@@ -9,8 +9,11 @@ from geometry_msgs.msg import Point
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
+from std_msgs.msg import Bool
 from robo_reason_interfaces.msg import PixelArray
 from robo_reason_interfaces.srv import Deproject, GetImage
+
+from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
 from vlm_camera_service.charuco_utils import (
@@ -22,6 +25,10 @@ from vlm_camera_service.charuco_utils import (
     detect_charuco_pose,
     transform_point_to_base,
 )
+
+
+_CALIB_REQUIRED_HITS = 5       # consecutive consistent detections to lock
+_CALIB_CONSISTENCY_M = 0.005   # max translation deviation between hits (5 mm)
 
 
 class CameraServicesNode(Node):
@@ -39,6 +46,8 @@ class CameraServicesNode(Node):
         self.declare_parameter("get_image_service", settings.GET_IMAGE_SERVICE)
         self.declare_parameter("deproject_service", settings.DEPROJECT_SERVICE)
         self.declare_parameter("pixel_debug_topic", settings.PIXEL_DEBUG_TOPIC)
+        self.declare_parameter("charuco_axis_topic", settings.CHARUCO_AXIS_TOPIC)
+        self.declare_parameter("calibration_status_topic", settings.CALIBRATION_STATUS_TOPIC)
         self.declare_parameter("charuco_enabled", settings.CHARUCO_ENABLED)
         self.declare_parameter("charuco_dictionary", settings.CHARUCO_DICTIONARY)
         self.declare_parameter("charuco_squares_x", settings.CHARUCO_SQUARES_X)
@@ -70,6 +79,8 @@ class CameraServicesNode(Node):
         get_image_service = self.get_parameter("get_image_service").value
         deproject_service = self.get_parameter("deproject_service").value
         pixel_debug_topic = self.get_parameter("pixel_debug_topic").value
+        charuco_axis_topic = self.get_parameter("charuco_axis_topic").value
+        calibration_status_topic = self.get_parameter("calibration_status_topic").value
         self._charuco_enabled = bool(self.get_parameter("charuco_enabled").value)
         self._charuco_frame_id = self.get_parameter("charuco_frame_id").value
         self._charuco_config = CharucoConfig(
@@ -102,6 +113,7 @@ class CameraServicesNode(Node):
         # Set once on the first successful ChArUco detection, then locked forever.
         self._T_base_camera: Optional[np.ndarray] = None
         self._charuco_calibrated: bool = False
+        self._calib_hits: list = []   # accumulate consistent detections before locking
         # TF2 broadcaster — publishes camera optical frame → base_link.
         self._tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
 
@@ -118,8 +130,11 @@ class CameraServicesNode(Node):
             qos_profile_sensor_data,
         )
         self._pixel_debug_pub = self.create_publisher(PixelArray, pixel_debug_topic, 10)
+        self._charuco_axis_pub = self.create_publisher(PixelArray, charuco_axis_topic, 10)
+        self._calibration_status_pub = self.create_publisher(Bool, calibration_status_topic, 10)
         self.create_service(GetImage, get_image_service, self._handle_get_image)
         self.create_service(Deproject, deproject_service, self._handle_deproject)
+        self.create_service(Trigger, '/camera/recalibrate', self._handle_recalibrate)
 
         self.get_logger().info("Camera service bridge started")
         self.get_logger().info(f"color_topic={color_topic}")
@@ -130,6 +145,7 @@ class CameraServicesNode(Node):
             f"{deproject_service}: returns real depth deprojection in camera frame"
         )
         self.get_logger().info(f"pixel_debug_topic={pixel_debug_topic}")
+        self.get_logger().info(f"calibration_status_topic={calibration_status_topic}")
         self.get_logger().info(
             "charuco="
             f"{self._charuco_enabled}, dictionary={self._charuco_config.dictionary_name}, "
@@ -145,6 +161,13 @@ class CameraServicesNode(Node):
         # One-shot calibration: try every 0.5 s until the board is detected once,
         # then lock the transform and cancel this timer.
         self._calib_timer = self.create_timer(0.5, self._try_calibrate)
+        # Publish projected ChArUco axis keypoints at ~2 Hz for the GUI overlay.
+        self.create_timer(0.5, self._publish_charuco_axis)
+        self.get_logger().info(f"charuco_axis_topic={charuco_axis_topic}")
+        # Publish calibration-lock status at ~2 Hz so the GUI LED reflects the
+        # current state (and flips back to "not calibrated" immediately after
+        # a recalibrate request, rather than showing a stale locked state).
+        self.create_timer(0.5, self._publish_calibration_status)
 
     def _on_color(self, msg: Image) -> None:
         if self._latest_color is None:
@@ -297,10 +320,13 @@ class CameraServicesNode(Node):
         return response
 
     def _try_calibrate(self) -> None:
-        """Periodic callback: attempt one-shot ChArUco calibration.
+        """Periodic callback: accumulate consistent ChArUco detections before locking.
 
-        Runs at 0.5 Hz until the board is detected successfully.  Once
-        calibrated, the timer cancels itself and _T_base_camera is locked.
+        Requires _CALIB_REQUIRED_HITS consecutive detections whose translation
+        vectors agree within _CALIB_CONSISTENCY_M (5 mm).  Any inconsistent
+        detection resets the counter so a single noisy frame can't corrupt the
+        locked transform.  Once enough consistent hits accumulate the translation
+        is averaged, the last rotation is used, and the timer cancels itself.
         """
         if self._charuco_calibrated:
             self._calib_timer.cancel()
@@ -323,27 +349,89 @@ class CameraServicesNode(Node):
             return
 
         if pose is None:
-            self.get_logger().warn(
-                "[CameraServicesNode] Board not visible — waiting for ChArUco board to appear..."
-            )
+            if self._calib_hits:
+                self.get_logger().warn(
+                    f"[CameraServicesNode] Board lost during calibration — resetting "
+                    f"({len(self._calib_hits)} hits discarded)"
+                )
+                self._calib_hits = []
             return
 
-        # Successful detection — compute and lock the transform.
-        T_base_cam = compute_T_base_camera(pose, self._T_base_board)
-        self._T_base_camera = T_base_cam
+        T_candidate = compute_T_base_camera(pose, self._T_base_board)
+        t_candidate = T_candidate[:3, 3]
+
+        if not self._calib_hits:
+            self._calib_hits = [T_candidate]
+            self.get_logger().info(
+                f"[CameraServicesNode] Calibration: first detection — "
+                f"need {_CALIB_REQUIRED_HITS} consistent hits"
+            )
+        else:
+            mean_t = np.mean([T[:3, 3] for T in self._calib_hits], axis=0)
+            dist = float(np.linalg.norm(t_candidate - mean_t))
+            if dist < _CALIB_CONSISTENCY_M:
+                self._calib_hits.append(T_candidate)
+                self.get_logger().info(
+                    f"[CameraServicesNode] Calibration: {len(self._calib_hits)}/"
+                    f"{_CALIB_REQUIRED_HITS} consistent hits "
+                    f"(deviation={dist * 1000:.1f} mm)"
+                )
+            else:
+                self._calib_hits = [T_candidate]
+                self.get_logger().warn(
+                    f"[CameraServicesNode] Calibration: inconsistent detection "
+                    f"(deviation={dist * 1000:.1f} mm > {_CALIB_CONSISTENCY_M * 1000:.0f} mm) — "
+                    "resetting hit counter"
+                )
+
+        if len(self._calib_hits) < _CALIB_REQUIRED_HITS:
+            return
+
+        # Enough consistent hits: average translations, keep last rotation.
+        mean_t = np.mean([T[:3, 3] for T in self._calib_hits], axis=0)
+        T_locked = self._calib_hits[-1].copy()
+        T_locked[:3, 3] = mean_t
+        self._T_base_camera = T_locked
         self._charuco_calibrated = True
+        self._calib_hits = []
         self._calib_timer.cancel()
 
         tv = pose.tvec.flatten()
         board_base = self._T_base_board[:3, 3]
-        cam_base = T_base_cam[:3, 3]
+        cam_base = T_locked[:3, 3]
         self.get_logger().info(
-            f"[CameraServicesNode] LOCKED — ChArUco calibration complete. "
+            f"[CameraServicesNode] LOCKED after {_CALIB_REQUIRED_HITS} consistent hits — "
             f"tvec(cam_frame)=[{tv[0]:+.3f}, {tv[1]:+.3f}, {tv[2]:+.3f}] m  |  "
             f"board_origin(base_link)=[{board_base[0]:+.3f}, {board_base[1]:+.3f}, {board_base[2]:+.3f}] m  |  "
             f"camera(base_link)=[{cam_base[0]:+.3f}, {cam_base[1]:+.3f}, {cam_base[2]:+.3f}] m"
         )
-        self._publish_camera_tf(T_base_cam)
+        self._publish_camera_tf(T_locked)
+
+    def _handle_recalibrate(self, _request: Trigger.Request, response: Trigger.Response):
+        """Reset calibration state and restart the detection loop.
+
+        Useful when the board was moved or the initial calibration locked onto a
+        bad detection.  The old timer is cancelled before a new one is created —
+        otherwise the previous timer keeps firing alongside the new one (it was
+        never stopped), silently leaking timers and letting a stale in-flight
+        callback race the fresh calibration attempt.
+        """
+        if self._calib_timer is not None:
+            self._calib_timer.cancel()
+        self._T_base_camera = None
+        self._charuco_calibrated = False
+        self._calib_hits = []
+        self._calib_timer = self.create_timer(0.5, self._try_calibrate)
+        self.get_logger().info(
+            f'[CameraServicesNode] Calibration reset — '
+            f'need {_CALIB_REQUIRED_HITS} consistent hits to lock'
+        )
+        response.success = True
+        response.message = (
+            f'Calibration reset. Need {_CALIB_REQUIRED_HITS} consistent '
+            f'detections within {_CALIB_CONSISTENCY_M * 1000:.0f} mm to lock.'
+        )
+        return response
 
     def _fill_charuco_points(
         self, camera_points: list[Point], response: Deproject.Response
@@ -403,6 +491,68 @@ class CameraServicesNode(Node):
         msg.v = [int(v) for v in v_values]
         self._pixel_debug_pub.publish(msg)
         self.get_logger().info(f"Published {len(msg.u)} debug pixels")
+
+    def _publish_calibration_status(self) -> None:
+        """Publish whether the camera→base_link transform is currently locked."""
+        msg = Bool()
+        msg.data = bool(self._charuco_calibrated)
+        self._calibration_status_pub.publish(msg)
+
+    def _publish_charuco_axis(self) -> None:
+        """Project the ChArUco board XYZ axis to 2-D pixel coords and publish.
+
+        Publishes a PixelArray with exactly 4 points (or 0 if the board is not
+        visible), encoding [origin, X-end, Y-end, Z-end] so the GUI can draw:
+          origin(white) → X-end(red) → Y-end(green) → Z-end(blue)
+
+        An empty message means "board not detected this frame."
+        """
+        import cv2
+
+        msg = PixelArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self._camera_frame_id()
+
+        if not self._charuco_enabled or self._latest_color is None or self._latest_camera_info is None:
+            self._charuco_axis_pub.publish(msg)
+            return
+
+        try:
+            bgr = image_msg_to_bgr(self._latest_color)
+            pose = detect_charuco_pose(
+                bgr_image=bgr,
+                camera_info=self._latest_camera_info,
+                config=self._charuco_config,
+            )
+        except Exception:
+            self._charuco_axis_pub.publish(msg)
+            return
+
+        if pose is None:
+            self._charuco_axis_pub.publish(msg)
+            return
+
+        axis_len = self._charuco_config.axis_length_m
+        z_sign = self._charuco_config.z_sign
+        axis_3d = np.float32([
+            [0.0, 0.0, 0.0],
+            [axis_len, 0.0, 0.0],
+            [0.0, axis_len, 0.0],
+            [0.0, 0.0, z_sign * axis_len],
+        ])
+        try:
+            projected, _ = cv2.projectPoints(
+                axis_3d, pose.rvec, pose.tvec,
+                pose.camera_matrix, pose.dist_coeffs,
+            )
+        except Exception:
+            self._charuco_axis_pub.publish(msg)
+            return
+
+        pts = np.round(projected.reshape(-1, 2)).astype(np.int32).tolist()
+        msg.u = [p[0] for p in pts]
+        msg.v = [p[1] for p in pts]
+        self._charuco_axis_pub.publish(msg)
 
     def _camera_frame_id(self) -> str:
         if self._latest_depth is not None and self._latest_depth.header.frame_id:

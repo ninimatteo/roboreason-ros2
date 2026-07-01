@@ -28,6 +28,22 @@ class ReasoningMethod(ABC):
         getter = prompt_cls.get_vlm_prompts if self.use_vlm else prompt_cls.get_llm_prompts
         return getter()
 
+    def _image_pixel_dims(self, image) -> tuple:
+        """Return (width, height) of the image file, or (0, 0) if unavailable.
+
+        Used to fill the {pixels_width}/{pixels_height} placeholders in VLM
+        prompts so the model knows the valid pixel coordinate range for the
+        image it's reasoning about.
+        """
+        if not image:
+            return 0, 0
+        try:
+            from PIL import Image
+            with Image.open(image) as img:
+                return img.size
+        except Exception:
+            return 0, 0
+
     def _call_client(self, user_message: str, system_message: str, force_json: bool = False, image=None, **kwargs):
         if self.use_vlm:
             text_prompt = f"**System Message**:\n{system_message}\n\n**User Message**: \n{user_message}"

@@ -54,7 +54,9 @@ class TreeOfThought(ReasoningMethod):
             'action_placeholder1': self.action_placeholder,
             'eos_action_placeholder': self.eos_placeholder,
         }
-        if not self.use_vlm:
+        if self.use_vlm:
+            format_args['pixels_width'], format_args['pixels_height'] = self._image_pixel_dims(image)
+        else:
             format_args['environment_map'] = environment_map
 
         msg = action_generation_prompt.format(**format_args)

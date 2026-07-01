@@ -89,9 +89,9 @@ class UR5SkillExecutorNode(Node):
     # For horizontal approaches the rotation is computed dynamically from the
     # EE→object direction — no fixed quaternion needed.
 
-    # TCP offset (metres) — adjust to match your tool + gripper stack
-    # _TCP_OFFSET = (0.148, -0.128, 0.265)
-    _TCP_OFFSET = (0.0, 0.0, 0.16) #OnRobot Gripper
+    # TCP offset (metres) — configured in robo_reason_bringup/config.py
+    # (ROBOREASON_TCP_OFFSET_X/Y/Z env vars, or .env file to override).
+    _TCP_OFFSET = (settings.TCP_OFFSET_X, settings.TCP_OFFSET_Y, settings.TCP_OFFSET_Z)
 
     def __init__(self):
         super().__init__('ur5_skill_executor_node')

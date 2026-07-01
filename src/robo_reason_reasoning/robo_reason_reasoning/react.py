@@ -38,7 +38,9 @@ class React(ReasoningMethod):
             'actions_memory': self.actions_memory,
             'action_placeholder': self.action_placeholder,
         }
-        if not self.use_vlm:
+        if self.use_vlm:
+            format_args['pixels_width'], format_args['pixels_height'] = self._image_pixel_dims(image)
+        else:
             format_args['current_env_config'] = environment_map
 
         msg = react_prompt_message.format(**format_args)

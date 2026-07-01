@@ -35,11 +35,19 @@ class Settings(BaseSettings):
     # ── VLM planner ───────────────────────────────────────────────────────────
     TMP_DIR: str = '/root/ws/src/vlm_frames'
 
+    # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
+    DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'
+
     # ── Executor ──────────────────────────────────────────────────────────────
     ROBOT_IP: str = '192.168.2.60'
     HOME_JOINTS: List[float] = Field(
         default=[-1.9, -1.5708, -1.5708, -1.5708, 1.5708, 0.0]
     )
+    # TCP offset (metres) — tool + gripper stack, e.g. OnRobot RG2 on UR5cb.
+    # Set ROBOREASON_TCP_OFFSET_X/Y/Z env vars (or .env) to override without rebuild.
+    TCP_OFFSET_X: float = 0.0
+    TCP_OFFSET_Y: float = 0.0
+    TCP_OFFSET_Z: float = 0.16
 
     # ── Camera topics / services ──────────────────────────────────────────────
     COLOR_TOPIC: str = '/camera/color/image_raw'
@@ -48,6 +56,8 @@ class Settings(BaseSettings):
     GET_IMAGE_SERVICE: str = '/camera/get_image'
     DEPROJECT_SERVICE: str = '/camera/deproject'
     PIXEL_DEBUG_TOPIC: str = '/camera/debug_pixels'
+    CHARUCO_AXIS_TOPIC: str = '/camera/charuco_axis'
+    CALIBRATION_STATUS_TOPIC: str = '/camera/calibration_status'
 
     # ── Depth filtering ───────────────────────────────────────────────────────
     WINDOW_SIZE: int = 7

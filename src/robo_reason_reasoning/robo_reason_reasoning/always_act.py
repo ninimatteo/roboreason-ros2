@@ -36,7 +36,9 @@ class StepAction(ReasoningMethod):
             'action_placeholder': self.action_placeholder,
             'actions_memory': self.actions_memory,
         }
-        if not self.use_vlm:
+        if self.use_vlm:
+            format_args['pixels_width'], format_args['pixels_height'] = self._image_pixel_dims(image)
+        else:
             format_args['environment_map'] = environment_map
 
         msg = step_action_prompt.format(**format_args)
