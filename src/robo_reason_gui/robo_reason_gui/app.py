@@ -79,6 +79,13 @@ def create_app(bridge, supervisor, driver, camera=None):
     def execute(req: ExecuteRequest):
         return bridge.execute_command(req.plan_json)
 
+    @app.post('/api/execute/cancel')
+    def execute_cancel():
+        # Emergency stop — cancels the in-flight skill, aborts the rest of the
+        # plan, and returns the robot home. Sync route -> runs in a threadpool
+        # so it isn't blocked behind a stuck /api/execute call on the same loop.
+        return bridge.cancel_execution()
+
     @app.post('/api/config')
     def config(req: ConfigRequest):
         # Live-retune the running planner (B2) — no relaunch.

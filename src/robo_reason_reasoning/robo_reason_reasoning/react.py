@@ -52,7 +52,7 @@ class React(ReasoningMethod):
             image=image
         )
 
-        output = dict(json.loads(raw))
+        output = dict(json.loads(self._strip_json_fence(raw)))
         decision = output.get('react_decision')
 
         if decision == 'reasoning':

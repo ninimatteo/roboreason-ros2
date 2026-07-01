@@ -50,7 +50,7 @@ class StepAction(ReasoningMethod):
             image=image
         )
 
-        output = dict(json.loads(raw))
+        output = dict(json.loads(self._strip_json_fence(raw)))
         action_dict = output.get('action', {'action_name': 'move_home'})
         action = UR5Action(**action_dict)
         eos = output.get('end_of_simulation', False)

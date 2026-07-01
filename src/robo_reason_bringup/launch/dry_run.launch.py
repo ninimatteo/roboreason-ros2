@@ -17,7 +17,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_mock_llm', default_value='true'),
         DeclareLaunchArgument('reasoning_method', default_value='fhp'),
-        DeclareLaunchArgument('model_name', default_value='groq/llama4-scout-17b'),
+        DeclareLaunchArgument('model_name', default_value='groq/qwen3-32b'),
         DeclareLaunchArgument('temperature', default_value='0.1'),
 
         Node(

@@ -22,7 +22,7 @@ Two-terminal usage (recommended):
 
 Parameters:
   reasoning_method        fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
-  model_name              groq/llama4-scout-17b | nebius/qwen3-2.5-70b | etc. (default: groq/llama4-scout-17b)
+  model_name              groq/qwen3.6-27b | nebius/qwen3-2.5-70b | etc. (default: groq/qwen3.6-27b)
   temperature             LLM temperature (default: 0.1)
   images_dir              Path to folder with .png mock frames (default: /root/ws/src/mock_frames)
   include_task_interface  Launch the CLI node in this process (default: false)
@@ -38,7 +38,7 @@ from launch.conditions import IfCondition
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('reasoning_method', default_value='fhp'),
-        DeclareLaunchArgument('model_name', default_value='groq/llama4-scout-17b'),
+        DeclareLaunchArgument('model_name', default_value='groq/qwen3.6-27b'),
         DeclareLaunchArgument('temperature', default_value='0.1'),
         DeclareLaunchArgument('images_dir', default_value='/root/ws/src/mock_frames'),
         DeclareLaunchArgument('include_task_interface', default_value='false'),

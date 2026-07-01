@@ -20,7 +20,7 @@ from ur_msgs.srv import SetIO
 from std_srvs.srv import Trigger
 
 from robo_reason_interfaces.msg import PixelArray
-from robo_reason_interfaces.srv import ExecutePlan, GetImage, PlanTask
+from robo_reason_interfaces.srv import CancelExecution, ExecutePlan, GetImage, PlanTask
 
 # Topic the plan manager publishes per-step execution progress on.
 EXECUTION_LOG_TOPIC = '/execution_log'
@@ -129,6 +129,7 @@ class GuiBridgeNode(Node):
         # --- planning / execution ---
         self._plan_client = self.create_client(PlanTask, '/plan_task')
         self._exec_client = self.create_client(ExecutePlan, '/execute_plan')
+        self._cancel_client = self.create_client(CancelExecution, '/cancel_execution')
         self._command_lock = threading.Lock()
         self._scene_json = self._load_scene()
 
@@ -500,6 +501,19 @@ class GuiBridgeNode(Node):
         finally:
             self._command_lock.release()
         return result
+
+    def cancel_execution(self) -> dict:
+        """Emergency-stop: cancel the in-flight skill, abort the rest of the
+        plan, and command the robot home via /cancel_execution.
+
+        Not gated behind _command_lock — this must be callable while
+        execute_command() is blocked waiting on /execute_plan.
+        """
+        try:
+            resp = self._call(self._cancel_client, CancelExecution.Request(), 20.0)
+            return {'ok': resp.success, 'message': resp.message}
+        except Exception as exc:
+            return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
 
     # ------------------------------------------------------------ live config
     @staticmethod

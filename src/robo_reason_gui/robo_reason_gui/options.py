@@ -33,7 +33,7 @@ DEFAULT_TEMPERATURE = 0.1
 # To add a new VLM model: append its key (as it appears in ModelRegistry) to
 # the relevant provider list.  To add a new provider: add a new key.
 VLM_ONLY_MODELS: dict = {
-    'groq':   ['llama4-scout-17b'],
+    'groq':   ['qwen3.6-27b'],
     'nebius': ['qwen3-2.5-70b'],
 }
 # -----------------------------------------------------------------------------

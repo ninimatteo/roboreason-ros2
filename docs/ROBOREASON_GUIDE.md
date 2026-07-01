@@ -2,6 +2,90 @@
 
 Step-by-step instructions to launch and use the full system, from dry-run to real robot.
 
+> **Recommended path:** use the web GUI (below) — it supervises the stack and
+> the UR driver for you, with live retuning and an emergency-stop button. The
+> manual multi-terminal sequence further down still works and is useful for
+> scripted/headless runs, or when the GUI itself is unavailable.
+
+---
+
+## Web GUI
+
+`robo_reason_gui` is a FastAPI server with an embedded `rclpy` bridge node
+(`GuiBridgeNode`) that serves a browser control panel. It owns the ROS2 stack
+and the UR driver as supervised child processes, so there's no manual
+multi-terminal launch sequence and no babysitting the flaky UR driver.
+
+### Launch
+
+```bash
+ros2 run robo_reason_gui gui_node
+# binds 0.0.0.0:8080; container runs --network host, so open
+# http://localhost:8080 on the host
+```
+
+### Panel overview
+
+- **Command** — type a natural-language instruction; **Send** runs `/plan_task`
+  then `/execute_plan`, and the plan card updates step-by-step as
+  `/execution_log` streams over a WebSocket. **Stop** is the emergency stop
+  (see below); **Clear** empties the chat history.
+- **Camera** (center) — live preview via `/api/camera/frame`, with VLM target
+  pixels and the ChArUco axis overlay drawn on top when available.
+- **Plan** — the animated, per-step plan view.
+- **Configuration** — mode (`LLM`/`VLM`), reasoning method, provider, model,
+  temperature, mock LLM. **Apply to running planner** pushes these onto the
+  live `llm_planner_node`/`vlm_planner_node` via ROS `SetParameters` — no
+  relaunch needed.
+- **Camera (service)** — start/stop the Orbbec camera script, **Recalibrate
+  ChArUco** to force a fresh camera→base transform without restarting the
+  camera node, and a "Calibrated" LED reflecting `/camera/calibration_status`.
+- **UR driver** — start/reconnect/stop the real driver with robot/reverse IP;
+  shows state (stopped/connecting/connected/failed), attempt history and a log
+  tail. Robot-connection LED in the header mirrors four probes: trajectory
+  controller, joint states, gripper I/O service, and the teach pendant
+  (reverse interface) — click it for the detail popover.
+- **Stack** — start/restart/stop the ROS2 stack, with independent mock toggles
+  for robot and camera (`gui_stack.launch.py`).
+- **Backend** — ROS bridge node name, discovered node count/list.
+
+### Emergency stop
+
+The **Stop** button next to Send calls `POST /api/execute/cancel`, which:
+
+1. Cancels the in-flight `/execute_skill` goal (`goal_handle.cancel_goal_async()`).
+2. Aborts the rest of the plan (the manager's step loop checks a stop flag
+   before every remaining step).
+3. Sends a `move_home` skill goal to return the robot to its home joints.
+4. Clears the stop flag so the system is ready for a new command.
+
+This is served by a new `/cancel_execution` service
+(`robo_reason_interfaces/srv/CancelExecution.srv`) on `plan_manager_node`, and
+is not gated behind the GUI's single-command lock — it's callable even while a
+plan is mid-execution.
+
+### HTTP API
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET  | `/api/health` | ROS + robot connectivity + calibration snapshot |
+| GET  | `/api/options` | selector options built from the model registry |
+| GET  | `/api/preflight` | detect a duplicate `/execute_skill` action server before running a plan |
+| POST | `/api/plan` | plan a command via `/plan_task` (no execution) |
+| POST | `/api/execute` | execute a previously-planned plan via `/execute_plan` |
+| POST | `/api/execute/cancel` | emergency stop — cancel + abort + return home |
+| POST | `/api/config` | live-retune the running planner (`SetParameters`) |
+| GET/POST | `/api/stack[/start\|/stop\|/restart]` | stack supervisor |
+| GET/POST | `/api/driver[/start\|/stop\|/reconnect]` | UR driver supervisor |
+| GET  | `/api/camera/status` | whether `/camera/get_image` is reachable |
+| GET/POST | `/api/camera/service[/start\|/stop]` | Orbbec camera process supervisor |
+| POST | `/api/camera/recalibrate` | force ChArUco re-calibration |
+| GET  | `/api/camera/frame` | latest RGB frame as JPEG (503 if unavailable) |
+| WS   | `/ws/execution` | live `/execution_log` stream |
+
+See [`src/robo_reason_gui/README.md`](../src/robo_reason_gui/README.md) for the
+architecture diagram and build notes.
+
 ---
 
 ## Prerequisites
@@ -49,7 +133,7 @@ export GROQ_API_KEY=gsk_...
 ros2 launch robo_reason_bringup dry_run_services.launch.py \
   use_mock_llm:=false \
   reasoning_method:=fhp \
-  model_name:=groq/llama4-scout-17b
+  model_name:=groq/qwen3-32b
 ```
 
 In a second terminal:
@@ -83,7 +167,7 @@ export GROQ_API_KEY=gsk_...
 # Terminal 1: all services
 ros2 launch robo_reason_bringup vlm_dry_run.launch.py \
   images_dir:=/root/ws/src/mock_frames \
-  model_name:=groq/llama4-scout-17b \
+  model_name:=groq/qwen3.6-27b \
   reasoning_method:=fhp
 
 # Terminal 2: CLI
@@ -102,7 +186,7 @@ ros2 run robo_reason_task_interface task_interface_node
 | Parameter | Default | Description |
 |---|---|---|
 | `reasoning_method` | `fhp` | Reasoning method |
-| `model_name` | `groq/llama4-scout-17b` | VLM model (must support vision) |
+| `model_name` | `groq/qwen3.6-27b` | VLM model (must support vision) |
 | `temperature` | `0.1` | LLM temperature |
 | `images_dir` | `/root/ws/src/mock_frames` | Folder with `.png` files to serve |
 | `include_task_interface` | `false` | Launch CLI in same process |
@@ -178,7 +262,7 @@ Wait until `Robot ready to receive control commands` appears.
 ros2 launch robo_reason_bringup real_robot.launch.py \
   mode:=LLM \
   reasoning_method:=fhp \
-  model_name:=groq/llama4-scout-17b \
+  model_name:=groq/qwen3-32b \
   temperature:=0.1
 ```
 
@@ -186,7 +270,7 @@ ros2 launch robo_reason_bringup real_robot.launch.py \
 ```bash
 ros2 launch robo_reason_bringup real_robot.launch.py \
   mode:=VLM \
-  model_name:=groq/llama4-scout-17b \
+  model_name:=groq/qwen3.6-27b \
   temperature:=0.1
 ```
 
@@ -197,7 +281,7 @@ ros2 launch robo_reason_bringup real_robot.launch.py \
 | `mode` | `LLM` | `LLM` or `VLM` |
 | `robot_ip` | `192.168.2.60` | UR5 robot IP |
 | `reasoning_method` | `fhp` | Reasoning method (LLM mode) |
-| `model_name` | `groq/llama4-scout-17b` | LLM/VLM model |
+| `model_name` | `groq/qwen3.6-27b` | LLM/VLM model |
 | `temperature` | `0.1` | 0.0 = deterministic |
 | `use_mock_llm` | `false` | Skip LLM, use hardcoded plan (LLM mode only) |
 | `include_task_interface` | `false` | Launch CLI in same process (not recommended) |
@@ -238,18 +322,20 @@ Select with `reasoning_method:=<value>`.
 
 ## Available Models
 
+> The old Groq lineup (`llama4-scout-17b`, `llama4-maverick-17b`, `llama3.3-70b`,
+> `llama3.1-8b`, `moonshotai-kimik2-32b`) has been **removed entirely** from
+> `ModelRegistry.GROQ_MODELS`. All launch-file defaults have been updated to
+> current model keys (`groq/qwen3.6-27b`/`groq/qwen3-32b`); if you have your
+> own scripts or `.env` files still referencing an old key, update them too.
+
 ### Groq (fast, free tier available)
 
 | `model_name` | API model ID | Notes |
 |---|---|---|
-| `groq/llama4-scout-17b` | `meta-llama/llama-4-scout-17b-16e-instruct` | Default — vision enabled |
-| `groq/llama4-maverick-17b` | `meta-llama/llama-4-maverick-17b-128e-instruct` | Higher quality |
-| `groq/llama3.3-70b` | `llama-3.3-70b-versatile` | Reliable JSON, no vision |
-| `groq/llama3.1-8b` | `llama-3.1-8b-instant` | Fastest, less accurate |
-| `groq/moonshotai-kimik2-32b` | `moonshotai/kimi-k2-instruct-0905` | High quality |
-| `groq/qwen3-32b` | `qwen/qwen3-32b` | Strong reasoning |
 | `groq/openai-oss-20b` | `openai/gpt-oss-20b` | OpenAI OSS model |
 | `groq/openai-oss-120b` | `openai/gpt-oss-120b` | Largest OSS model on Groq |
+| `groq/qwen3-32b` | `qwen/qwen3-32b` | Strong reasoning, no vision |
+| `groq/qwen3.6-27b` | `qwen/qwen3.6-27b` | Vision enabled — use for VLM mode |
 
 ### Nebius (OpenAI-compatible API)
 
@@ -257,13 +343,17 @@ Set `NEBIUS_API_KEY` and use `nebius/` prefix.
 
 | `model_name` | API model ID | Notes |
 |---|---|---|
-| `nebius/qwen3-2.5-70b` | `Qwen/Qwen2.5-VL-72B-Instruct` | Vision enabled |
+| `nebius/qwen3-2.5-70b` | `Qwen/Qwen2.5-VL-72B-Instruct` | Vision enabled — use for VLM mode |
 | `nebius/google-gemma-27b` | `google/gemma-3-27b-it` | Good reasoning |
 | `nebius/nvidia-nemotron-30b` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Efficient |
-| `nebius/nvidia-nemotron-120b` | `nvidia/nemotron-3-super-120b-a12b` | Largest |
-| `nebius/kimi-k2.6` | `moonshotai/Kimi-K2.6` | High quality |
+| `nebius/nvidia-nemotron-120b` | `nvidia/nemotron-3-super-120b-a12b` | Largest — planner default (`config.py`) |
+| `nebius/nvidia-cosmos3-33b` | `nvidia/Cosmos3-Super-Reasoner` | New reasoning model |
+| `nebius/kimi-k2.6` | `moonshotai/Kimi-K2.6` | High quality (renamed from `kimi-k2`) |
+| `nebius/qwen3-embedding-8b` | `Qwen/Qwen3-Embedding-8B` | Embeddings, not for planning |
 
-> For VLM mode, only vision-enabled models work: `groq/llama4-scout-17b` and `nebius/qwen3-2.5-70b`.
+> For VLM mode, only vision-enabled models work: `groq/qwen3.6-27b` and
+> `nebius/qwen3-2.5-70b` (the GUI's model dropdown restricts VLM mode to these
+> automatically — see `robo_reason_gui/options.py`'s `VLM_ONLY_MODELS`).
 
 ---
 
@@ -377,13 +467,44 @@ Add a small positive `z_offset_m` (e.g. `0.01`) to lift deprojected points sligh
 All defaults are defined in `robo_reason_bringup/robo_reason_bringup/config.py` and can be overridden with `ROBOREASON_` prefixed environment variables:
 
 ```bash
-export ROBOREASON_MODEL_NAME=groq/llama3.3-70b
+export ROBOREASON_MODEL_NAME=groq/qwen3-32b
 export ROBOREASON_REASONING_METHOD=react
 export ROBOREASON_ROBOT_IP=192.168.2.61
 export ROBOREASON_Z_OFFSET_M=0.02
+export ROBOREASON_DEBUG_TIMEZONE=Europe/Berlin
 ```
 
 Or add them to a `.env` file in the working directory.
+
+---
+
+## Debug Recorder
+
+Every `/plan_task` call is recorded to `debug/<timestamp>-<id>/` under the
+repo root (`Settings.DEBUG_DIR`), regardless of mode or reasoning method:
+
+| Artifact | Contents |
+|---|---|
+| `command.txt` | the user's natural-language command |
+| `config.json` | mode, reasoning method, model, temperature at call time |
+| `response.json` | the parsed plan (empty string if the call raised — see below) |
+| `error.txt` | present only on failure — exception type + message |
+| `logs.txt` | planner log lines captured during the call |
+| `raw/` | the captured camera frame (VLM mode only) |
+| `debug/debug.png` | pixel/ChArUco overlay image (VLM mode only) |
+
+A row is appended to a root-level `debug/summary.csv` for every run (mode,
+reasoning method, provider/model, success, timestamp), making it easy to
+scan a batch of runs for pass/fail patterns.
+
+Timestamps use `Settings.DEBUG_TIMEZONE` (default `Europe/Berlin`, overridable
+via `ROBOREASON_DEBUG_TIMEZONE`/`.env`) rather than the container's UTC clock,
+so run folder names match the operator's local time.
+
+**Note:** `response.json` is empty specifically when the run raised an
+exception (`response=None` is passed to the recorder on any failure path) —
+it is not necessarily evidence that the raw LLM/VLM completion itself was
+empty. Check `error.txt` for the actual failure reason.
 
 ---
 
@@ -406,6 +527,24 @@ Or add them to a `.env` file in the working directory.
 1. Check the saved image in `vlm_frames/<latest>/`.
 2. If image is correct: model reasoning issue — try a different `reasoning_method` or `temperature:=0.0`.
 3. If image is stale: camera subscription not receiving frames — check Terminal 1 and 2.
+
+### `fhp`/`ffhp` fail on Groq with an empty completion (`JSONDecodeError`)
+Seen with Groq's `qwen3.6-27b` on `fhp`/`ffhp` (chained predicates→plan calls,
+longer prompt); `cot_sc`'s shorter single-shot prompt does not exhibit this.
+Likely cause: the model's reasoning/thinking-token budget is exhausted before
+it emits the final JSON on longer, chained prompts. Groq's client only sets
+`response_format` when both `force_json` and `forced_json_schema` are given
+(`fhp_ffhp.py` never passes a schema, so it relies purely on prompt-based JSON
+enforcement — see `vlm_client.py`'s `_call_groq`). Check `debug/<run>/error.txt`
+to confirm; try a shorter-schema reasoning method or a different model.
+
+### `fhp`/`ffhp`/`always_act` "grounded" the wrong spot on Nebius (deproject: no valid depth)
+This is not a JSON error — the plan parses fine, but the returned pixel
+coordinates don't land on the target's actual surface. Correlates with the
+same schema/prompt-complexity hypothesis as the Groq failure above, but
+manifests as inaccurate grounding rather than a parse failure. Cross-check
+against `debug/<run>/debug.png` (the pixel overlay) to see where the model
+actually pointed.
 
 ### Build errors (stale symlinks)
 ```bash

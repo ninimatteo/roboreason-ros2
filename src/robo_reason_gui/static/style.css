@@ -311,6 +311,10 @@ label.check {
   cursor: pointer;
 }
 .chat-form button:disabled { opacity: 0.5; cursor: default; }
+.chat-form button.estop {
+  background: #e5484d;
+  flex: 0 0 auto;
+}
 
 #chat-history { display: flex; flex-direction: column; gap: 12px; }
 

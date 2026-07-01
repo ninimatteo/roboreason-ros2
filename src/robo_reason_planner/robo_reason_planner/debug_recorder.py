@@ -20,8 +20,16 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from robo_reason_bringup.config import settings
+
+_TZ = ZoneInfo(settings.DEBUG_TIMEZONE)
+
+
+def _now() -> datetime:
+    """Wall-clock time in the operator's timezone, not the container's (UTC)."""
+    return datetime.now(_TZ)
 
 _CSV_FIELDS = [
     'timestamp', 'run_id', 'mode', 'command', 'reasoning_method', 'model_name',
@@ -37,7 +45,7 @@ class DebugRun:
         self.mode = mode
         self.command = command
         self.config = config
-        self._started = datetime.now()
+        self._started = _now()
         self._logs = []
 
         root = Path(settings.DEBUG_DIR)
@@ -50,7 +58,7 @@ class DebugRun:
 
     def log(self, line: str) -> None:
         """Record one line of 'terminal output' scoped to just this run."""
-        self._logs.append(f'{datetime.now():%H:%M:%S.%f} {line}')
+        self._logs.append(f'{_now():%H:%M:%S.%f} {line}')
 
     def save_raw_frame(self, source_path: str) -> None:
         """Copy the captured camera frame into <run>/raw/."""

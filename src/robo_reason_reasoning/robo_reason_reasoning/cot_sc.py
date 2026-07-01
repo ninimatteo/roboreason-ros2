@@ -53,7 +53,7 @@ class CoTSC(ReasoningMethod):
             image=image
         )
         try:
-            parsed = json.loads(resp)
+            parsed = json.loads(self._strip_json_fence(resp))
             # LLMs sometimes return the plan as a bare array instead of
             # {"plan": [...]}.  Accept both shapes.
             if isinstance(parsed, list):

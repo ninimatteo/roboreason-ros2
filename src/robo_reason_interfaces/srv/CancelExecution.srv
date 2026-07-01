@@ -1,0 +1,7 @@
+# Request: emergency-stop the plan currently running via /execute_plan.
+# Cancels the in-flight /execute_skill goal (interrupting any motion in
+# progress), aborts remaining plan steps, and commands the robot home.
+---
+# Response: outcome of the cancel + return-home sequence
+bool success
+string message

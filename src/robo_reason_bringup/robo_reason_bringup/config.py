@@ -37,6 +37,9 @@ class Settings(BaseSettings):
 
     # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
     DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'
+    # Container clock runs in UTC regardless of the operator's local time, so
+    # debug timestamps need an explicit IANA zone to match wall-clock reality.
+    DEBUG_TIMEZONE: str = 'Europe/Berlin'
 
     # ── Executor ──────────────────────────────────────────────────────────────
     ROBOT_IP: str = '192.168.2.60'

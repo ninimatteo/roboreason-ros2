@@ -30,7 +30,7 @@ Parameters:
   robot_ip                UR5 robot IP (default: 192.168.2.60)
   use_mock_llm            Dry-run without API key, LLM mode only (default: false)
   reasoning_method        fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
-  model_name              groq/llama4-scout-17b | etc. (default: groq/llama4-scout-17b)
+  model_name              groq/qwen3.6-27b | etc. (default: groq/qwen3.6-27b)
   temperature             LLM/VLM temperature (default: 0.1)
   include_task_interface  Launch the CLI node in this process (default: false)
 
@@ -55,7 +55,7 @@ def generate_launch_description():
                               description='Use mock planner (no API key needed, LLM mode only)'),
         DeclareLaunchArgument('reasoning_method', default_value='fhp',
                               description='Reasoning method'),
-        DeclareLaunchArgument('model_name', default_value='groq/llama4-scout-17b',
+        DeclareLaunchArgument('model_name', default_value='groq/qwen3.6-27b',
                               description='LLM/VLM model name'),
         DeclareLaunchArgument('temperature', default_value='0.1',
                               description='Temperature (0.0 = deterministic)'),

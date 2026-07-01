@@ -45,7 +45,7 @@ def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict
         f"mock_robot:={'true' if mock_robot else 'false'}",
         f"mock_camera:={'true' if mock_camera else 'false'}",
         f"reasoning_method:={config.get('reasoning_method', 'fhp')}",
-        f"model_name:={config.get('model_name', 'groq/llama4-scout-17b')}",
+        f"model_name:={config.get('model_name', 'groq/qwen3.6-27b')}",
         f"temperature:={config.get('temperature', 0.1)}",
     ]
 

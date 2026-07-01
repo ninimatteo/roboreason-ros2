@@ -605,9 +605,27 @@ const chatInput = document.getElementById('chat-input');
 const chatSend = document.getElementById('chat-send');
 const chatHistory = document.getElementById('chat-history');
 const chatClear = document.getElementById('chat-clear');
+const chatEstop = document.getElementById('chat-estop');
 
 chatClear.addEventListener('click', () => {
   chatHistory.innerHTML = '';
+});
+
+chatEstop.addEventListener('click', async () => {
+  chatEstop.disabled = true;
+  try {
+    const data = await postJSON('/api/execute/cancel', {});
+    if (data.error || data.ok === false) {
+      toast('Emergency stop: ' + (data.error || data.message || 'failed'), 'error');
+    } else {
+      toast(data.message || 'Robot stopped and returned home', 'info');
+      setPlanState('cancelled', 'badge-off');
+    }
+  } catch (err) {
+    toast('Emergency stop request failed: ' + err, 'error');
+  }
+  // Left enabled=false here — sendCommand() re-enables it only while a new
+  // plan/execute cycle is actually in flight.
 });
 
 function el(tag, className, text) {
@@ -750,7 +768,10 @@ async function sendCommand(command) {
     ws.onerror = resolve; // proceed even if the log stream is unavailable
   });
 
-  // 4. Execute.
+  // 4. Execute. Enabled only for this window, since /cancel_execution is
+  // meaningless before a skill is in flight and the plan is done by the time
+  // execute() resolves either way.
+  chatEstop.disabled = false;
   let execData;
   try {
     execData = await postJSON('/api/execute', { plan_json: planData.plan_json });
@@ -763,6 +784,7 @@ async function sendCommand(command) {
     return;
   } finally {
     ws.close();
+    chatEstop.disabled = true;
   }
 
   status.remove();

@@ -66,7 +66,7 @@ class TreeOfThought(ReasoningMethod):
             temperature=1.5, top_p=0.4, force_json=True,
             image=image
         )
-        return json.loads(resp.strip()).get('sampled_actions', [])
+        return json.loads(self._strip_json_fence(resp)).get('sampled_actions', [])
 
     def _evaluate_thought(self, thought, environment_map: str, user_request: str, image=None) -> int:
         _, _, thought_evaluation_prompt, _, _ = self._select_prompts(ToTPrompts)
@@ -87,7 +87,7 @@ class TreeOfThought(ReasoningMethod):
             image=image
         )
         score = 0
-        data = json.loads(resp)
+        data = json.loads(self._strip_json_fence(resp))
         for key in ('user_request_consistency', 'environment_feasibility', 'embodiment_feasibility'):
             score += self._scores_map.get(data.get(key, '').strip().lower(), 0)
         return score

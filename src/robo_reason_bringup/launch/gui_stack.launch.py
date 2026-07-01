@@ -59,7 +59,7 @@ def generate_launch_description():
         DeclareLaunchArgument('mock_robot', default_value='true'),
         DeclareLaunchArgument('mock_camera', default_value='true'),
         DeclareLaunchArgument('reasoning_method', default_value='fhp'),
-        DeclareLaunchArgument('model_name', default_value='groq/llama4-scout-17b'),
+        DeclareLaunchArgument('model_name', default_value='groq/qwen3.6-27b'),
         DeclareLaunchArgument('temperature', default_value='0.1'),
         DeclareLaunchArgument('robot_ip', default_value='192.168.2.60'),
         DeclareLaunchArgument('images_dir', default_value='/root/ws/src/mock_frames'),

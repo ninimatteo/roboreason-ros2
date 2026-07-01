@@ -1,6 +1,6 @@
 # Session Context — RoboReason ROS2 VLM Pipeline
 
-**Last updated:** 2026-06-24
+**Last updated:** 2026-07-01
 
 ---
 
@@ -22,6 +22,7 @@
 | `robo_reason_real` | Real-robot hardware interface (UR driver integration) |
 | `robo_reason_bringup` | Launch files for bringing up the full stack |
 | `vlm_camera_service` | Camera bridge: ChArUco calibration, image/depth services |
+| `robo_reason_gui` | Web control panel — FastAPI + embedded `rclpy` bridge node (Session 3) |
 
 ### Service / Action Data Flow
 
@@ -287,6 +288,12 @@ All `self.get_logger()` calls now use `[{self.__class__.__name__}]` as the prefi
 
 ## Launch Reference
 
+### Web GUI (recommended, Session 3)
+```bash
+ros2 run robo_reason_gui gui_node
+# open http://localhost:8080
+```
+
 ### Camera Driver (Orbbec)
 ```bash
 ./scripts/run_orbbec_registered.sh
@@ -310,7 +317,7 @@ export GROQ_API_KEY=gsk_...
 ros2 launch robo_reason_bringup real_robot.launch.py \
   mode:=LLM \
   reasoning_method:=fhp \
-  model_name:=groq/llama4-scout-17b \
+  model_name:=groq/qwen3-32b \
   temperature:=0.1
 ```
 
@@ -319,7 +326,7 @@ ros2 launch robo_reason_bringup real_robot.launch.py \
 export GROQ_API_KEY=gsk_...
 ros2 launch robo_reason_bringup real_robot.launch.py \
   mode:=VLM \
-  model_name:=groq/llama4-scout-17b \
+  model_name:=groq/qwen3.6-27b \
   temperature:=0.1
 ```
 
@@ -330,8 +337,150 @@ ros2 run robo_reason_task_interface task_interface_node
 
 ---
 
+### Session 3 — Web GUI, Emergency Stop, Debug Recorder, Model Registry Refresh
+
+Everything below postdates Session 2 and is on branch `feature/gui`.
+
+#### 1. `robo_reason_gui` package (new)
+
+A full web control panel, built across 6 phases (commits `f74b35b` scaffold →
+`a70e616` Phase 6 polish) plus later hardening work:
+
+- **`server_node.py`** — entry point. `rclpy.init()`, spins `GuiBridgeNode` on
+  a `MultiThreadedExecutor` in a background thread, wires
+  `StackSupervisor`/`UrDriverSupervisor`/`CameraServiceSupervisor` together,
+  and runs `uvicorn` on `0.0.0.0:8080` (container uses `--network host`).
+- **`bridge_node.py`** (`GuiBridgeNode`) — the ROS bridge: connectivity probes
+  (trajectory action server, `/joint_states` freshness, gripper I/O), `/plan_task`
+  + `/execute_plan` + `/cancel_execution` service clients, `/execution_log`
+  fan-out to WebSocket subscribers via `call_soon_threadsafe`, live planner
+  retuning through `SetParameters`, camera frame grab + JPEG encode with pixel/
+  ChArUco-axis overlay drawing (Pillow, no OpenCV/numpy dependency in this
+  path), and a `/api/preflight`-backing check for duplicate `/execute_skill`
+  action servers (a leftover executor would double-run every skill).
+- **`stack_supervisor.py`** (`StackSupervisor`) — launches
+  `gui_stack.launch.py` as a child process group; reaps stale processes by
+  name before every start, and refuses to launch while the graph still shows
+  an `/execute_skill` server from a previous session (hard guard against
+  double-executors, not just a name-based sweep).
+- **`ur_driver_supervisor.py`** (`UrDriverSupervisor`) — the stock
+  `ur_control.launch.py` driver fails intermittently on startup; this
+  supervisor retries with backoff (up to `MAX_ATTEMPTS=10`) until the bridge's
+  `robot_ready()` probe passes, and auto-reconnects on unexpected process
+  exit. Tracks the teach-pendant reverse-interface connection separately from
+  controller readiness so the header LED can stay amber even once controllers
+  are up but the pendant hasn't connected.
+- **`camera_service_supervisor.py`** (`CameraServiceSupervisor`) — same
+  subprocess-supervision pattern as the UR driver, wrapping
+  `scripts/run_orbbec_registered.sh`; readiness is the bridge's
+  `camera_available()` probe (`/camera/get_image` reachable).
+- **`options.py`** — builds the GUI's dropdown payload from
+  `ModelRegistry` (see #4 below); `VLM_ONLY_MODELS` restricts the model
+  dropdown to vision-capable models when `mode=VLM`.
+- Frontend: plain `index.html` + `app.js` + `style.css`, no build step. Static
+  files are served through a custom `/static/{path:path}` route rather than
+  Starlette's `StaticFiles`, because `--symlink-install` produces symlinks
+  that `StaticFiles` refuses to follow outside the served directory.
+
+See [`src/robo_reason_gui/README.md`](../src/robo_reason_gui/README.md) and
+[`docs/ROBOREASON_GUIDE.md`](ROBOREASON_GUIDE.md)'s new "Web GUI" section for
+full usage and the HTTP API table.
+
+#### 2. Emergency stop (`CancelExecution.srv`, new)
+
+Request: "stop the robot, abort the plan, and return home, ready for the next
+command." Implemented as a new `/cancel_execution` service on
+`plan_manager_node`:
+
+- `robo_reason_interfaces/srv/CancelExecution.srv` — empty request, `bool
+  success` + `string message` response. Registered in `CMakeLists.txt` and
+  rebuilt in the running container (`colcon build --packages-select
+  robo_reason_interfaces`).
+- `plan_manager_node.py` — `_execute_plan_callback`'s step loop now checks a
+  `threading.Event` (`_stop_requested`) before every step and aborts cleanly if
+  set. The active `/execute_skill` goal handle is tracked
+  (`_active_goal_handle`, under a lock) so the new
+  `_cancel_execution_callback` can call `.cancel_goal_async()` on it, then
+  send a `move_home` goal synchronously before clearing the stop flag.
+- `bridge_node.py` — new `_cancel_client` + `cancel_execution()`, deliberately
+  **not** gated behind `_command_lock` so it's callable while
+  `execute_command()` is blocked waiting on `/execute_plan`.
+- `app.py` — `POST /api/execute/cancel`.
+- Frontend — a red **Stop** button next to Send, enabled only while a plan is
+  executing.
+
+#### 3. Fence-stripping + `force_json` fixes (reasoning methods)
+
+All 6 reasoning-method files (`always_act.py`, `cot_sc.py`, `fhp_ffhp.py`,
+`react.py`, `self_refine.py`, `tot.py`) plus the `ReasoningMethod` base class
+gained a shared `_strip_json_fence()` classmethod that strips
+markdown-code-fence wrapping (` ```json ... ``` `) before `json.loads()`, and a
+fix for a `force_json`/`force_json_response` kwarg-name mismatch that had been
+silently disabling JSON enforcement on some call sites.
+
+#### 4. Model registry refresh (`FoundationClients/src/base_client.py`)
+
+- **Groq** — old lineup entirely removed: `llama4-scout-17b`,
+  `llama4-maverick-17b`, `llama3.3-70b`, `llama3.1-8b`,
+  `moonshotai-kimik2-32b`. New set: `openai-oss-20b`, `openai-oss-120b`,
+  `qwen3-32b`, `qwen3.6-27b` (vision-enabled, replaces `llama4-scout-17b` as
+  the GUI's default VLM-capable Groq model in `options.py` and
+  `stack_supervisor.py`).
+- **Nebius** — added `nvidia-cosmos3-33b`, `qwen3-embedding-8b`; renamed
+  `kimi-k2` → `kimi-k2.6`.
+- **Fixed:** several launch files hardcoded `model_name`'s default to
+  `groq/llama4-scout-17b`, which no longer resolves in
+  `ModelRegistry.GROQ_MODELS`. Updated defaults: `dry_run.launch.py` and
+  `dry_run_services.launch.py`'s docstring example → `groq/qwen3-32b`;
+  `vlm_dry_run.launch.py`, `real_robot.launch.py`, `gui_stack.launch.py` →
+  `groq/qwen3.6-27b` (vision-enabled, works for both LLM and VLM mode so a
+  bare `mode:=VLM` override without a `model_name:=` override still works).
+
+#### 5. Debug recorder + `DEBUG_TIMEZONE`
+
+`robo_reason_planner/debug_recorder.py`'s `DebugRun` captures per-`/plan_task`
+artifacts (`command.txt`, `config.json`, `response.json`, `error.txt`,
+`logs.txt`, camera frame + overlay in VLM mode) into `debug/<run_id>/`, plus a
+root `debug/summary.csv` row per run. `response.json` is empty specifically
+when `response=None` is passed on any exception — not necessarily an empty raw
+LLM/VLM completion. New `Settings.DEBUG_TIMEZONE` (default `Europe/Berlin`)
+makes run-folder timestamps match the operator's local time instead of the
+container's UTC clock (`zoneinfo.ZoneInfo`, wired via a `_now()` helper).
+
+#### 6. New failure modes surfaced by the debug recorder (2026-07-01 debug review)
+
+Two distinct failure categories, both hypothesised to trace back to
+prompt/schema complexity but manifesting differently per provider:
+
+- **Groq empty completions on `fhp`/`ffhp`** — `json.loads()` raises on an
+  empty string from `plan_task()`'s second (chained) LLM call. Groq's
+  `qwen3.6-27b` likely exhausts its reasoning/thinking-token budget on the
+  longer, chained predicates→plan prompt; `cot_sc`'s shorter single-shot
+  prompt doesn't show this. Groq's `response_format` is only set when both
+  `force_json` and `forced_json_schema` are passed, and `fhp_ffhp.py` never
+  passes a schema — see `vlm_client.py`'s `_call_groq`.
+- **Nebius bad-grounding-depth on `fhp`/`ffhp`/`always_act`** — the plan
+  parses fine (not a JSON error), but the returned pixel coordinates don't
+  land on the target's actual surface, so `/camera/deproject` gets no valid
+  depth. Reproduced across different reasoning methods on Nebius, correlating
+  with the same schema-complexity hypothesis but as a grounding-accuracy
+  failure rather than a parse failure.
+- A reduced-schema / split-grounding-from-planning reasoning method was
+  discussed as a mitigation (ground objects in one simpler call, plan in a
+  second) but **has not been implemented** — offered as an additive method
+  (not replacing any of the existing 6) pending confirmation.
+
+---
+
 ## Known Open Issues
 
 - VLM may appear to use a stale image if the model hallucinates object positions. Verify by checking the saved image in `/root/ws/src/vlm_frames/<latest>/` — if the image is correct but coordinates are wrong, it is a model reasoning issue.
 - Workspace limits in `scene_mock.json` must be manually tuned to match the real table. The validator uses these even in VLM mode.
 - `charuco_z_sign` default was -1.0 (left-handed); corrected to 1.0.
+- **Groq empty-completion failures** on `fhp`/`ffhp` (`qwen3.6-27b`) and
+  **Nebius bad-grounding-depth failures** on `fhp`/`ffhp`/`always_act` — see
+  Session 3 §6 above. A reduced-schema mitigation was discussed but not yet
+  implemented.
+- Working tree on `feature/gui` currently has 19 modified files + 1 new file
+  (`CancelExecution.srv`) uncommitted, covering all of Session 3's changes —
+  awaiting the operator's own commit.
