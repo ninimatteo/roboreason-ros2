@@ -78,6 +78,13 @@ class DebugRun:
         except OSError as exc:
             self.log(f'[debug] failed to copy debug image {source_path}: {exc}')
 
+    def save_generated_scene(self, source_path: str) -> None:
+        """Copy the VLM-generated scene JSON (VLM_LLM mode) into <run>/generated_scene.json."""
+        try:
+            shutil.copy2(source_path, self.dir / 'generated_scene.json')
+        except OSError as exc:
+            self.log(f'[debug] failed to copy generated scene {source_path}: {exc}')
+
     def finish(self, success: bool, response: dict = None, error: str = None) -> None:
         """Write the response/error/logs and append one row to summary.csv."""
         (self.dir / 'response.json').write_text(

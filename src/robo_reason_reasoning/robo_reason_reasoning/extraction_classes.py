@@ -50,3 +50,39 @@ class UR5Action(BaseModel):
         default=None,
         description='Action importance score 0–1'
     )
+
+
+class DetectedObject(BaseModel):
+    """A single graspable object detected by the VLM scene-grounding step."""
+    label: str = Field(description='Short unique name for the object, e.g. "black_cube"')
+    type: str = Field(default='object', description='Object shape/category, e.g. "cube", "cylinder"')
+    color: Optional[str] = Field(default=None, description='Dominant color of the object')
+    pixel_center: List[float] = Field(
+        description='[w, h] (x, y) center pixel of the object in the source image'
+    )
+    size: List[float] = Field(
+        default=[0.05, 0.05, 0.05],
+        description='Visually estimated [width, depth, height] in meters'
+    )
+    graspable: bool = Field(default=True, description='Whether the gripper can pick this object')
+    state: str = Field(default='on_table', description='Current object state, e.g. "on_table"')
+
+
+class DetectedTarget(BaseModel):
+    """A single placement target/zone detected by the VLM scene-grounding step."""
+    label: str = Field(description='Short unique name for the target, e.g. "white_box"')
+    type: str = Field(default='zone', description='Target category, e.g. "zone", "box"')
+    color: Optional[str] = Field(default=None, description='Dominant color of the target')
+    pixel_center: List[float] = Field(
+        description='[w, h] (x, y) center pixel of the target surface in the source image'
+    )
+    size: List[float] = Field(
+        default=[0.15, 0.15, 0.01],
+        description='Visually estimated [width, depth, height] in meters'
+    )
+
+
+class VLMSceneDescription(BaseModel):
+    """Full VLM scene-grounding output: every detected object and placement target."""
+    objects: List[DetectedObject] = Field(default_factory=list)
+    targets: List[DetectedTarget] = Field(default_factory=list)

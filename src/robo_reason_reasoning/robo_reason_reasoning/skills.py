@@ -50,19 +50,19 @@ class UR5Skills:
     Skills:
     - approach: [target_position: list[float], offset: float, approach_direction: str]
       Move the end-effector to a safe hovering position near the target before grasping or releasing.
-      - target_position: [h, w] — center pixel of the target object or surface in the image
+      - target_position: [x, y] — center pixel of the target object or surface in the image
       - offset: approach distance in meters (default: 0.1 m = 10 cm above)
       - approach_direction: 'z' (from above — standard), 'x' (from front), 'y' (from side)
 
     - pick: [target_position: list[float], grasp_axis: str, come_back: bool]
       Move the end-effector to the object and close the gripper to grasp it.
-      - target_position: [h, w] — center pixel of the object to grasp in the image
+      - target_position: [x, y] — center pixel of the object to grasp in the image
       - grasp_axis: final approach axis for closing: 'z' (top-down), 'x', 'y'
       - come_back: if true, return to the pre-grasp approach position after picking
 
     - release: [release_position: list[float], object_height: float, come_back: bool]
       Move the end-effector to release_position and open the gripper to deposit the object.
-      - release_position: [h, w] — center pixel of the target surface or object in the image
+      - release_position: [x, y] — center pixel of the target surface or object in the image
       - object_height: estimated real-world height of the held object in meters
         (e.g. 0.05 for a small block, 0.10 for a cup, 0.15 for a tall bottle).
         The executor raises the TCP by this amount so the object bottom touches the surface
@@ -77,7 +77,7 @@ class UR5Skills:
       - time: duration in seconds (must be >= 0)
 
     Parameter notes:
-    - All positions are pixel coordinates [h, w]: h = row from top (0 = top edge), w = column from left (0 = left edge)
+    - All positions are pixel coordinates [x, y]: x = column from left (0 = left edge), y = row from top (0 = top edge)
     - Point at the CENTER of the object/area — not a corner, not an edge
     - Standard pick-and-place sequence: approach → pick → approach(target_zone) → release → move_home
     - Always call approach before pick and before release for safety clearance.
@@ -97,8 +97,8 @@ class UR5Skills:
 
     vlm_action_example_placeholder = """
     "action_name": "<approach | pick | release | move_home | wait>",
-    "target_position": [h, w],
-    "release_position": [h, w],
+    "target_position": [x, y],
+    "release_position": [x, y],
     "object_height": 0.0,
     "offset": 0.1,
     "approach_direction": "<z | x | y>",

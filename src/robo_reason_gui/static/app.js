@@ -28,6 +28,13 @@ const inpTemp = document.getElementById('inp-temp');
 const chkMockLlm = document.getElementById('chk-mock-llm');
 const optionsError = document.getElementById('options-error');
 
+// VLM_LLM-only scene-grounding model selectors (independent of the planning
+// provider/model above — see vlm_llm_planner_node's vlm_model_name param).
+const groundingFields = document.getElementById('grounding-fields');
+const selVlmProvider = document.getElementById('sel-vlm-provider');
+const selVlmModel = document.getElementById('sel-vlm-model');
+const inpVlmTemp = document.getElementById('inp-vlm-temp');
+
 const cfgApply = document.getElementById('cfg-apply');
 const cfgResult = document.getElementById('cfg-result');
 
@@ -197,7 +204,12 @@ async function loadOptions() {
     llmProviderModels = data.providers || {};
     vlmProviderModels = data.vlm_providers || {};
 
-    if (data.temperature_default != null) inpTemp.value = data.temperature_default;
+    if (data.temperature_default != null) {
+      inpTemp.value = data.temperature_default;
+      inpVlmTemp.value = data.temperature_default;
+    }
+    fillSelect(selVlmProvider, Object.keys(vlmProviderModels));
+    fillSelect(selVlmModel, vlmProviderModels[selVlmProvider.value] || []);
     syncModelsByMode();  // populates providers + models for the initial mode
   } catch (err) {
     optionsError.hidden = false;
@@ -209,19 +221,29 @@ async function loadOptions() {
 selProvider.addEventListener('change', () => {
   fillSelect(selModel, currentProviderModels()[selProvider.value] || []);
 });
+selVlmProvider.addEventListener('change', () => {
+  fillSelect(selVlmModel, vlmProviderModels[selVlmProvider.value] || []);
+});
 
 // ---- live config (B2) ----
 function currentConfig() {
   // The backend expects model_name as "provider/model" (see ModelRegistry);
   // the dropdown keys are bare, so prefix them with the selected provider.
   const model = selModel.value ? `${selProvider.value}/${selModel.value}` : '';
-  return {
+  const config = {
     mode: selMode.value || 'LLM',
     reasoning_method: selReasoning.value,
     model_name: model,
     temperature: parseFloat(inpTemp.value),
     use_mock_llm: chkMockLlm.checked,
   };
+  if ((selMode.value || 'LLM').toUpperCase() === 'VLM_LLM') {
+    config.vlm_model_name = selVlmModel.value
+      ? `${selVlmProvider.value}/${selVlmModel.value}`
+      : '';
+    config.vlm_temperature = parseFloat(inpVlmTemp.value);
+  }
+  return config;
 }
 
 cfgApply.addEventListener('click', async () => {
@@ -267,9 +289,16 @@ function stackPayload() {
 
 // The camera toggle and model lists both depend on the current mode.
 function syncCameraToggle() {
-  const vlm = (selMode.value || 'LLM').toUpperCase() === 'VLM';
-  chkMockCamera.disabled = !vlm;
-  chkMockCamera.parentElement.style.opacity = vlm ? '1' : '0.5';
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  const usesCamera = mode === 'VLM' || mode === 'VLM_LLM';
+  chkMockCamera.disabled = !usesCamera;
+  chkMockCamera.parentElement.style.opacity = usesCamera ? '1' : '0.5';
+}
+
+// The grounding provider/model/temperature fields only apply to VLM_LLM
+// (independent scene-grounding model, see vlm_llm_planner_node).
+function syncGroundingVisibility() {
+  groundingFields.hidden = (selMode.value || 'LLM').toUpperCase() !== 'VLM_LLM';
 }
 
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
@@ -283,6 +312,7 @@ function syncModelsByMode() {
   if (providers.includes(prevProvider)) selProvider.value = prevProvider;
   fillSelect(selModel, map[selProvider.value] || []);
   syncCameraToggle();
+  syncGroundingVisibility();
 }
 selMode.addEventListener('change', syncModelsByMode);
 
@@ -318,7 +348,7 @@ function renderStack(status) {
     const parts = [
       t.mode,
       `robot:${t.mock_robot ? 'mock' : 'real'}`,
-      t.mode === 'VLM' ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
+      (t.mode === 'VLM' || t.mode === 'VLM_LLM') ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
       t.mock_llm ? 'llm:mock' : 'llm:real',
     ].filter(Boolean);
     stackInfo.textContent =

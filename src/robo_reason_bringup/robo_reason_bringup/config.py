@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # ── VLM planner ───────────────────────────────────────────────────────────
     TMP_DIR: str = 'src/vlm_frames'
 
+    # ── VLM+LLM hybrid planner (scene grounding call, independent of MODEL_NAME
+    # which is used for the subsequent LLM planning call) ─────────────────────
+    VLM_MODEL_NAME: str = 'groq/qwen3.6-27b'
+    VLM_TEMPERATURE: float = 0.1
+
     # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
     DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'
     # Container clock runs in UTC regardless of the operator's local time, so

@@ -5,11 +5,12 @@ Composed stack used by the web GUI (B1 orchestration). Unlike the hand-written
 dry_run / real_robot launch files, this one exposes three independent mock axes
 so the operator can mix real and simulated pieces:
 
-  mode         LLM | VLM            — which planner to run
+  mode         LLM | VLM | VLM_LLM  — which planner to run (VLM_LLM: VLM scene
+                                       grounding, then LLM planning against it)
   use_mock_llm true | false         — mock the *reasoning* (hardcoded plan, no API)
   mock_robot   true | false         — fake skill executor vs the real UR5 driver
   mock_camera  true | false         — PNG mock camera vs the real camera services
-                                       (VLM mode only; ignored in LLM mode)
+                                       (VLM/VLM_LLM only; ignored in LLM mode)
 
 The task_interface CLI node is never launched here — the GUI replaces it.
 
@@ -37,16 +38,20 @@ def generate_launch_description():
     reasoning_method = LaunchConfiguration('reasoning_method')
     model_name = LaunchConfiguration('model_name')
     temperature = LaunchConfiguration('temperature')
+    vlm_model_name = LaunchConfiguration('vlm_model_name')
+    vlm_temperature = LaunchConfiguration('vlm_temperature')
     robot_ip = LaunchConfiguration('robot_ip')
     images_dir = LaunchConfiguration('images_dir')
 
-    # Camera nodes only exist in VLM mode; combine that with the mock_camera flag.
-    vlm_mock_camera = PythonExpression(
-        ["'", mode, "' == 'VLM' and '", mock_camera, "' == 'true'"]
-    )
-    vlm_real_camera = PythonExpression(
-        ["'", mode, "' == 'VLM' and '", mock_camera, "' == 'false'"]
-    )
+    # Camera nodes exist in VLM and VLM_LLM modes; combine that with mock_camera.
+    vlm_mock_camera = PythonExpression([
+        "('", mode, "' == 'VLM' or '", mode, "' == 'VLM_LLM') and '",
+        mock_camera, "' == 'true'",
+    ])
+    vlm_real_camera = PythonExpression([
+        "('", mode, "' == 'VLM' or '", mode, "' == 'VLM_LLM') and '",
+        mock_camera, "' == 'false'",
+    ])
 
     camera_services_launch = os.path.join(
         get_package_share_directory('vlm_camera_service'),
@@ -61,6 +66,8 @@ def generate_launch_description():
         DeclareLaunchArgument('reasoning_method', default_value='fhp'),
         DeclareLaunchArgument('model_name', default_value='groq/qwen3.6-27b'),
         DeclareLaunchArgument('temperature', default_value='0.1'),
+        DeclareLaunchArgument('vlm_model_name', default_value='groq/qwen3.6-27b'),
+        DeclareLaunchArgument('vlm_temperature', default_value='0.1'),
         DeclareLaunchArgument('robot_ip', default_value='192.168.2.60'),
         DeclareLaunchArgument('images_dir', default_value='/root/ws/src/mock_frames'),
 
@@ -88,6 +95,20 @@ def generate_launch_description():
                 'reasoning_method': reasoning_method,
                 'model_name': model_name,
                 'temperature': temperature,
+            }],
+        ),
+        Node(
+            package='robo_reason_planner',
+            executable='vlm_llm_planner_node',
+            name='vlm_llm_planner_node',
+            output='screen',
+            condition=LaunchConfigurationEquals('mode', 'VLM_LLM'),
+            parameters=[{
+                'reasoning_method': reasoning_method,
+                'model_name': model_name,
+                'temperature': temperature,
+                'vlm_model_name': vlm_model_name,
+                'vlm_temperature': vlm_temperature,
             }],
         ),
 

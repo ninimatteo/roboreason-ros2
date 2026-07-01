@@ -130,7 +130,7 @@ class VLMPlannerNode(Node):
         run.log(f'Saved frame -> {image_paths[0]}')
         run.save_raw_frame(image_paths[0])
 
-        # 3. Run VLM agent — returns actions with pixel [h, w] coordinates.
+        # 3. Run VLM agent — returns actions with pixel [x, y] coordinates.
         reasoning_method = self.get_parameter('reasoning_method').value
         model_name = self.get_parameter('model_name').value
         temperature = self.get_parameter('temperature').value
@@ -197,8 +197,8 @@ class VLMPlannerNode(Node):
     def _save_debug_frame(self, source_path: str, pixel_steps: list, task_dir: Path) -> 'Path | None':
         """Overlay VLM pixel predictions on the raw saved frame and write debug.png.
 
-        Pixel fields are [h, w] (row, col).  We convert to (u=col, v=row) for
-        drawing so the markers land on the correct image pixels.
+        Pixel fields are [x, y] (col, row) — the VLM's native grounding
+        convention. We read them directly as (u=x, v=y) for drawing.
 
         Out-of-bounds predictions (e.g. a row/col outside the actual frame
         size — a real failure mode we've seen from the VLM) are clamped to
@@ -212,8 +212,8 @@ class VLMPlannerNode(Node):
             for field in PIXEL_FIELDS:
                 val = step.get(field)
                 if isinstance(val, (list, tuple)) and len(val) == 2:
-                    h, w = val
-                    pixels.append((int(w), int(h)))  # (u, v) = (col, row)
+                    x, y = val
+                    pixels.append((int(x), int(y)))  # (u, v) = (x, y)
         if not pixels:
             return None
         frame = self._cv2.imread(source_path)
@@ -261,11 +261,12 @@ class VLMPlannerNode(Node):
         return [str(path)]
 
     def _deproject_plan(self, pixel_steps: list) -> list:
-        """Replace pixel [h, w] fields with deprojected [x, y, z] world coords.
+        """Replace pixel [x, y] fields with deprojected [x, y, z] world coords.
 
-        The VLM outputs pixel coordinates as [h, w] where:
-          h = row index (y-axis, top→bottom)  → camera v
-          w = column index (x-axis, left→right) → camera u
+        The VLM outputs pixel coordinates as [x, y] (its native grounding
+        convention) where:
+          x = column index (x-axis, left→right) → camera u
+          y = row index (y-axis, top→bottom)    → camera v
 
         Collects all pixel-coordinate fields, issues a single batched Deproject
         call, then substitutes the results back in place.
@@ -283,8 +284,8 @@ class VLMPlannerNode(Node):
             return pixel_steps
 
         req = Deproject.Request()
-        req.u = [int(p[2][1]) for p in pending]   # w (column) → u
-        req.v = [int(p[2][0]) for p in pending]   # h (row)    → v
+        req.u = [int(p[2][0]) for p in pending]   # x (column) → u
+        req.v = [int(p[2][1]) for p in pending]   # y (row)    → v
 
         if not self._deproject_client.wait_for_service(timeout_sec=5.0):
             raise RuntimeError('/camera/deproject service not available (timeout 5 s)')

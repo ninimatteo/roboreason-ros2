@@ -94,6 +94,17 @@
           <input id="chk-mock-llm" type="checkbox" /> Mock LLM (LLM mode)
         </label>
       </div>
+      <div id="grounding-fields" class="grid" hidden>
+        <label>Grounding provider
+          <select id="sel-vlm-provider"></select>
+        </label>
+        <label>Grounding model
+          <select id="sel-vlm-model"></select>
+        </label>
+        <label>Grounding temperature
+          <input id="inp-vlm-temp" type="number" step="0.1" min="0" max="2" />
+        </label>
+      </div>
       <div class="actions">
         <button id="cfg-apply" type="button">Apply to running planner</button>
         <span id="cfg-result" class="muted"></span>
@@ -167,7 +178,7 @@
           <input id="chk-mock-robot" type="checkbox" checked /> Mock robot (no UR5)
         </label>
         <label class="check">
-          <input id="chk-mock-camera" type="checkbox" checked /> Mock camera (VLM only)
+          <input id="chk-mock-camera" type="checkbox" checked /> Mock camera (VLM/VLM_LLM only)
         </label>
       </div>
       <div class="actions">

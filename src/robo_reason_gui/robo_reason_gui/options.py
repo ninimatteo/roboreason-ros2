@@ -24,7 +24,7 @@ REASONING_METHODS = ['fhp', 'ffhp', 'react', 'cot_sc', 'tot', 'always_act', 'sel
 
 GUI_PROVIDERS = ('groq', 'nebius')
 
-MODES = ['LLM', 'VLM']
+MODES = ['LLM', 'VLM', 'VLM_LLM']
 
 DEFAULT_TEMPERATURE = 0.1
 

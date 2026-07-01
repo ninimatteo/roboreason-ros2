@@ -36,14 +36,14 @@ Your task is to plan a sequence of actions to achieve the user's request, based 
 You are working in pixel space. The depth camera back-projects each pixel to a 3D point on
 the visible surface, so pointing at the center of an object gives its top-surface 3D position.
 The image you are given is {pixels_width} pixels wide and {pixels_height} pixels tall — every
-pixel coordinate you output must satisfy 0 <= h < {pixels_height} and 0 <= w < {pixels_width}.
-- `target_position`: [h, w] — center pixel of the object to grasp.
-- `release_position`: [h, w] — center pixel of the target surface or object to stack on.
+pixel coordinate you output must satisfy 0 <= x < {pixels_width} and 0 <= y < {pixels_height}.
+- `target_position`: [x, y] — center pixel of the object to grasp.
+- `release_position`: [x, y] — center pixel of the target surface or object to stack on.
   Its deprojected z is already the top surface — do NOT add any z offset manually.
 - Always set `object_height` to your visual estimate of the held object's real-world height
   in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
   The executor raises the TCP by this amount so the object bottom lands on the surface.
-- The `approach` before a release must use the same [h, w] pixel as the release position.
+- The `approach` before a release must use the same [x, y] pixel as the release position.
 
 **JSON Output schema**:
 ```json

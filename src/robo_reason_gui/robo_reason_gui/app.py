@@ -24,6 +24,8 @@ class ConfigRequest(BaseModel):
     model_name: Optional[str] = None
     temperature: Optional[float] = None
     use_mock_llm: Optional[bool] = None
+    vlm_model_name: Optional[str] = None
+    vlm_temperature: Optional[float] = None
 
 
 class StackRequest(BaseModel):
@@ -34,6 +36,8 @@ class StackRequest(BaseModel):
     model_name: Optional[str] = None
     temperature: Optional[float] = None
     use_mock_llm: Optional[bool] = None
+    vlm_model_name: Optional[str] = None
+    vlm_temperature: Optional[float] = None
 
 
 class DriverRequest(BaseModel):

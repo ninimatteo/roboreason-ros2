@@ -27,6 +27,7 @@ _STACK_PROCESS_PATTERNS = (
     'gui_stack.launch.py',
     'llm_planner_node',
     'vlm_planner_node',
+    'vlm_llm_planner_node',
     'plan_manager_node',
     'fake_skill_executor_node',
     'ur5_skill_executor_node',
@@ -47,6 +48,10 @@ def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict
         f"reasoning_method:={config.get('reasoning_method', 'fhp')}",
         f"model_name:={config.get('model_name', 'groq/qwen3.6-27b')}",
         f"temperature:={config.get('temperature', 0.1)}",
+        # Only used by the VLM_LLM planner's scene-grounding call; harmless
+        # (declared-but-unused launch arg) in LLM/VLM mode.
+        f"vlm_model_name:={config.get('vlm_model_name', 'groq/qwen3.6-27b')}",
+        f"vlm_temperature:={config.get('vlm_temperature', 0.1)}",
     ]
 
 

@@ -32,7 +32,11 @@ EXECUTION_LOG_TOPIC = '/execution_log'
 EXECUTE_SKILL_STATUS_TOPIC = '/execute_skill/_action/status'
 
 # Planner node names per mode — targets for live parameter updates.
-PLANNER_NODE_BY_MODE = {'LLM': 'llm_planner_node', 'VLM': 'vlm_planner_node'}
+PLANNER_NODE_BY_MODE = {
+    'LLM': 'llm_planner_node',
+    'VLM': 'vlm_planner_node',
+    'VLM_LLM': 'vlm_llm_planner_node',
+}
 
 # use_mock_llm only exists on the LLM planner.
 SET_PARAM_TIMEOUT_S = 5.0
@@ -552,7 +556,9 @@ class GuiBridgeNode(Node):
             return result
 
         # Build the parameter list from the fields the GUI sent. use_mock_llm
-        # is LLM-only; skip it for the VLM planner which never declares it.
+        # is LLM-only; skip it for the VLM/VLM_LLM planners which never declare
+        # it. vlm_model_name/vlm_temperature only exist on the VLM_LLM planner
+        # (independent scene-grounding model, see vlm_llm_planner_node).
         params = []
         if config.get('reasoning_method') is not None:
             params.append(('reasoning_method', str(config['reasoning_method'])))
@@ -562,6 +568,11 @@ class GuiBridgeNode(Node):
             params.append(('temperature', float(config['temperature'])))
         if mode == 'LLM' and config.get('use_mock_llm') is not None:
             params.append(('use_mock_llm', bool(config['use_mock_llm'])))
+        if mode == 'VLM_LLM':
+            if config.get('vlm_model_name') is not None:
+                params.append(('vlm_model_name', str(config['vlm_model_name'])))
+            if config.get('vlm_temperature') is not None:
+                params.append(('vlm_temperature', float(config['vlm_temperature'])))
 
         if not params:
             result['error'] = 'no parameters to set'
