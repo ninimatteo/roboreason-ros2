@@ -43,6 +43,9 @@ pixel coordinate you output must satisfy 0 <= x < {pixels_width} and 0 <= y < {p
 - Always set `object_height` to your visual estimate of the held object's real-world height
   in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
   The executor raises the TCP by this amount so the object bottom lands on the surface.
+- Always set `grasp_width` in the pick action to your visual estimate of the object's real-world
+  width in meters (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup). The executor uses
+  this to select the correct gripper finger-aperture offset.
 - The `approach` before a release must use the same [x, y] pixel as the release position.
 
 **JSON Output schema**:

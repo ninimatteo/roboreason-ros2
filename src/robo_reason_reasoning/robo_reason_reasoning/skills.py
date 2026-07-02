@@ -16,9 +16,12 @@ class UR5Skills:
       - offset: approach distance in meters (default: 0.1 m = 10 cm above)
       - approach_direction: 'z' (from above — standard), 'x' (from front), 'y' (from side)
 
-    - pick: [target_position: list[float], grasp_axis: str, come_back: bool]
+    - pick: [target_position: list[float], grasp_width: float, grasp_axis: str, come_back: bool]
       Move the end-effector to the object and close the gripper to grasp it.
       - target_position: [x, y, z] in robot base frame (meters) — actual contact position
+      - grasp_width: estimated real-world width of the object in meters (e.g. object.size[0]).
+        The gripper fingers pivot, so the executor uses this to select the correct flange-to-contact
+        offset for the gripper's finger aperture. Set to 0.0 if unknown (falls back to a default offset).
       - grasp_axis: final approach axis for closing: 'z' (top-down), 'x', 'y'
       - come_back: if true, return to the pre-grasp approach position after picking
 
@@ -54,9 +57,12 @@ class UR5Skills:
       - offset: approach distance in meters (default: 0.1 m = 10 cm above)
       - approach_direction: 'z' (from above — standard), 'x' (from front), 'y' (from side)
 
-    - pick: [target_position: list[float], grasp_axis: str, come_back: bool]
+    - pick: [target_position: list[float], grasp_width: float, grasp_axis: str, come_back: bool]
       Move the end-effector to the object and close the gripper to grasp it.
       - target_position: [x, y] — center pixel of the object to grasp in the image
+      - grasp_width: your visual estimate of the object's real-world width in meters
+        (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup). The gripper fingers pivot, so
+        the executor uses this to select the correct flange-to-contact offset. Set to 0.0 if unknown.
       - grasp_axis: final approach axis for closing: 'z' (top-down), 'x', 'y'
       - come_back: if true, return to the pre-grasp approach position after picking
 
@@ -88,6 +94,7 @@ class UR5Skills:
     "target_position": [x, y, z],
     "release_position": [x, y, z],
     "object_height": 0.0,
+    "grasp_width": 0.0,
     "offset": 0.1,
     "approach_direction": "<z | x | y>",
     "grasp_axis": "<z | x | y>",
@@ -100,6 +107,7 @@ class UR5Skills:
     "target_position": [x, y],
     "release_position": [x, y],
     "object_height": 0.0,
+    "grasp_width": 0.0,
     "offset": 0.1,
     "approach_direction": "<z | x | y>",
     "grasp_axis": "<z | x | y>",

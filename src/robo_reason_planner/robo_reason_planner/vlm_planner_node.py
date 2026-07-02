@@ -5,8 +5,10 @@ Captures an RGB frame from /camera/get_image, runs EmbodiedAgent with a VLM
 client (pixel-coordinate outputs), then batch-deprojects pixel coords to world
 [x, y, z] via /camera/deproject before returning the plan.
 
-The scene_json field from the PlanTask request is ignored — the camera provides
-all perception.
+The scene_json field from the PlanTask request is not used for object
+grounding — the camera provides all perception — but its
+workspace.table.surface_z (if present) is read as a known reference height so
+pick/release z can be depth-compensated (see _deproject_plan).
 
 ROS2 parameters:
   reasoning_method  (str,   default 'fhp')                    — fhp|ffhp|react|cot_sc|tot|always_act|self_refine
@@ -100,7 +102,7 @@ class VLMPlannerNode(Node):
         })
 
         try:
-            plan_data = self._vlm_plan(user_command, run)
+            plan_data = self._vlm_plan(user_command, request.scene_json, run)
             response.success = True
             response.plan_json = json.dumps(plan_data)
             run.finish(success=True, response=plan_data)
@@ -116,7 +118,7 @@ class VLMPlannerNode(Node):
 
     # ── VLM plan ───────────────────────────────────────────────────────────────
 
-    def _vlm_plan(self, user_command: str, run: DebugRun) -> dict:
+    def _vlm_plan(self, user_command: str, scene_json: str, run: DebugRun) -> dict:
         # 1. Capture RGB frame.
         img_resp = self._call_get_image()
         if not img_resp.success:
@@ -156,8 +158,10 @@ class VLMPlannerNode(Node):
         if debug_path is not None:
             run.save_debug_image(str(debug_path))
 
-        # 4. Batch-deproject pixel coords → world [x, y, z].
-        plan_steps = self._deproject_plan(pixel_steps)
+        # 4. Batch-deproject pixel coords → world [x, y, z], then depth-compensate
+        #    pick/release z using the table surface height from scene_json (if any).
+        table_surface_z = self._extract_table_surface_z(scene_json)
+        plan_steps = self._deproject_plan(pixel_steps, table_surface_z)
 
         self.get_logger().info(
             f'[VLMPlannerNode] Plan done — "{user_command}", steps: {len(plan_steps)}'
@@ -260,8 +264,23 @@ class VLMPlannerNode(Node):
         self._cv2.imwrite(str(path), cv_img)
         return [str(path)]
 
-    def _deproject_plan(self, pixel_steps: list) -> list:
-        """Replace pixel [x, y] fields with deprojected [x, y, z] world coords.
+    @staticmethod
+    def _extract_table_surface_z(scene_json: str):
+        """Read workspace.table.surface_z out of the request's scene_json, if any.
+
+        VLM mode doesn't use scene_json for object grounding (the camera
+        provides that), but the table height is a fixed physical constant we
+        still need as a depth reference — see _deproject_plan.
+        """
+        try:
+            data = json.loads(scene_json) if scene_json else {}
+            return float(data['workspace']['table']['surface_z'])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return None
+
+    def _deproject_plan(self, pixel_steps: list, table_surface_z: 'float | None') -> list:
+        """Replace pixel [x, y] fields with deprojected [x, y, z] world coords,
+        then depth-compensate pick/release z for the gripper's grasp geometry.
 
         The VLM outputs pixel coordinates as [x, y] (its native grounding
         convention) where:
@@ -270,6 +289,20 @@ class VLMPlannerNode(Node):
 
         Collects all pixel-coordinate fields, issues a single batched Deproject
         call, then substitutes the results back in place.
+
+        Depth compensation (only when table_surface_z is known): a pick's
+        target_position.z from deprojection is the object's raw TOP SURFACE
+        point, not a good gripper contact height, and the VLM's per-step
+        object_height guess has no access to depth. So for every pick step we
+        instead compute a real object_height = table_surface_z -
+        top_surface_z, overwrite the step's object_height with it, and lower
+        the pick target by a fraction of that height (mid-body grasp) rather
+        than closing the gripper right at the top surface — capped by
+        TCP_CLAMP_CLEARANCE_M so tall objects are gripped nearer their top
+        instead of driving the rigid TCP clamp into the object. The computed
+        height is then carried forward to the next release step (replacing
+        its guessed object_height) so the TCP is raised by the correct
+        amount when placing the same held object.
         """
         PIXEL_FIELDS = ('target_position', 'release_position')
 
@@ -299,6 +332,31 @@ class VLMPlannerNode(Node):
         for k, (i, field, _) in enumerate(pending):
             pt = dep.points[k]
             plan_steps[i][field] = [pt.x, pt.y, pt.z]
+
+        if table_surface_z is not None:
+            fraction = settings.PICK_GRASP_DEPTH_FRACTION
+            min_height = settings.MIN_OBJECT_HEIGHT_M
+            # A tall object can't be grasped past this depth below its top
+            # surface without the rigid TCP clamp (not the pivoting fingers)
+            # crashing into it on the way down — see TCP_CLAMP_CLEARANCE_M.
+            max_descent = max(settings.TCP_OFFSET_Z - settings.TCP_CLAMP_CLEARANCE_M, 0.0)
+            held_object_height = None
+            for step in plan_steps:
+                action = step.get('action_name')
+                if action == 'pick' and isinstance(step.get('target_position'), list):
+                    top_z = step['target_position'][2]
+                    height = max(table_surface_z - top_z, min_height)
+                    step['object_height'] = height
+                    descent = min(fraction * height, max_descent)
+                    step['target_position'][2] = top_z - descent
+                    held_object_height = height
+                    self.get_logger().info(
+                        f'[VLMPlannerNode] pick: depth-computed object_height={height:.3f} m, '
+                        f'target z {top_z:.3f} -> {step["target_position"][2]:.3f}'
+                    )
+                elif action == 'release' and held_object_height is not None:
+                    step['object_height'] = held_object_height
+                    held_object_height = None
 
         return plan_steps
 

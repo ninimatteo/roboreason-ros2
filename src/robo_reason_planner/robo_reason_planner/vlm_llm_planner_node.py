@@ -228,13 +228,45 @@ class VLMLLMPlannerNode(Node):
 
     def _build_generated_scene(self, scene_json: str, detected) -> dict:
         """Merge VLM-detected objects/targets (deprojected to world xyz) into a
-        scene_mock.json-shaped dict, keeping frame/units/robot/workspace as-is."""
+        scene_mock.json-shaped dict, keeping frame/units/robot/workspace as-is.
+
+        Depth-informed grasp height: the LLM planning prompt sets
+        `target_position.z = object.position.z` verbatim for pick actions (see
+        fhp_ffhp_prompts.py), so position.z here must already BE a good pick
+        contact height — not the raw deprojected top-surface point. The VLM's
+        size[2] (height) is also just a blind visual guess with no depth
+        grounding. When workspace.table.surface_z is known we replace both:
+        real height = surface_z - top_surface_z, and position.z descends a
+        fraction of that height below the top surface (mid-body grasp),
+        capped by TCP_CLAMP_CLEARANCE_M so tall objects are gripped nearer
+        their top instead of driving the rigid TCP clamp into the object.
+
+        Targets get the same depth-informed treatment for an analogous
+        reason: the LLM stacking formula (release_position.z =
+        target.position.z + target.size[2] — see fhp_ffhp_prompts.py)
+        expects position.z to be a *base* reference and size[2] the height
+        to reach the top surface, matching scene_mock.json's convention.
+        The VLM's size[2] guess for a target is not depth-grounded, so
+        using it verbatim while also using the (already-correct, real)
+        deprojected top_z as position.z would double-count the target's
+        height. Instead we derive the real height from depth (surface_z -
+        top_z, no MIN_OBJECT_HEIGHT_M floor — a flat zone marked directly on
+        the table should read ~0 height, not be lifted) and set
+        position.z = top_z - height, so position.z + size[2] reconstructs
+        the true measured top surface.
+        """
         try:
             base = json.loads(scene_json) if scene_json else {}
         except json.JSONDecodeError:
             base = {}
         base.setdefault('frame', 'base_link')
         base.setdefault('units', 'meters')
+
+        table_surface_z = None
+        try:
+            table_surface_z = float(base['workspace']['table']['surface_z'])
+        except (KeyError, TypeError, ValueError):
+            pass
 
         pixel_centers = [obj.pixel_center for obj in detected.objects]
         pixel_centers += [tgt.pixel_center for tgt in detected.targets]
@@ -244,15 +276,29 @@ class VLMLLMPlannerNode(Node):
         object_points = points[:n_objects]
         target_points = points[n_objects:]
 
+        fraction = settings.PICK_GRASP_DEPTH_FRACTION
+        min_height = settings.MIN_OBJECT_HEIGHT_M
+        # A tall object can't be grasped past this depth below its top
+        # surface without the rigid TCP clamp (not the pivoting fingers)
+        # crashing into it on the way down — see TCP_CLAMP_CLEARANCE_M.
+        max_descent = max(settings.TCP_OFFSET_Z - settings.TCP_CLAMP_CLEARANCE_M, 0.0)
+
         objects = {}
         used_keys = set()
         for obj, pt in zip(detected.objects, object_points):
             key = self._unique_key(obj.label, used_keys, 'object')
+            top_z = pt.z
+            size = list(obj.size)
+            position_z = top_z
+            if table_surface_z is not None:
+                height = max(table_surface_z - top_z, min_height)
+                size[2] = height
+                position_z = top_z - min(fraction * height, max_descent)
             objects[key] = {
                 'type': obj.type,
                 'color': obj.color,
-                'position': [pt.x, pt.y, pt.z],
-                'size': obj.size,
+                'position': [pt.x, pt.y, position_z],
+                'size': size,
                 'state': obj.state,
                 'graspable': obj.graspable,
             }
@@ -260,12 +306,19 @@ class VLMLLMPlannerNode(Node):
         targets = {}
         for tgt, pt in zip(detected.targets, target_points):
             key = self._unique_key(tgt.label, used_keys, 'target')
+            top_z = pt.z
+            size = list(tgt.size)
+            position_z = top_z
+            if table_surface_z is not None:
+                height = max(top_z - table_surface_z, 0.0)
+                size[2] = height
+                position_z = top_z - height
             targets[key] = {
                 'type': tgt.type,
                 'color': tgt.color,
                 'label': tgt.label,
-                'position': [pt.x, pt.y, pt.z],
-                'size': tgt.size,
+                'position': [pt.x, pt.y, position_z],
+                'size': size,
             }
 
         base['objects'] = objects

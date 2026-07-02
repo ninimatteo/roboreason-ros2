@@ -31,7 +31,7 @@ from rclpy.node import Node
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
-from robo_reason_bringup.config import settings
+from robo_reason_bringup.config import settings, tcp_offset_z_for_width
 from robo_reason_interfaces.action import ExecuteSkill
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
@@ -541,6 +541,19 @@ class UR5SkillExecutorNode(Node):
         elif skill_name == 'pick':
             target = args['target_position']
             force = float(args.get('force', 40.0))
+            # grasp_width: estimated object width (metres) — the RG2 fingers
+            # pivot/arc, so the flange-to-contact-point distance depends on
+            # how wide the fingers must open. Select the calibrated offset
+            # for this width and apply it to the IK tool transform before
+            # moving in, so target_position (the contact point) is reached
+            # accurately regardless of object size.
+            grasp_width = float(args.get('grasp_width', 0.0))
+            tcp_offset_z = tcp_offset_z_for_width(grasp_width if grasp_width > 0.0 else None)
+            self._robot_model.tool = SE3(settings.TCP_OFFSET_X, settings.TCP_OFFSET_Y, tcp_offset_z)
+            self.get_logger().info(
+                f'[UR5SkillExecutorNode] pick: grasp_width={grasp_width:.3f} m '
+                f'→ tcp_offset_z={tcp_offset_z:.3f} m'
+            )
             feedback.status = 'Opening gripper before grasp'
             feedback.progress = 0.1
             goal_handle.publish_feedback(feedback)
@@ -585,6 +598,11 @@ class UR5SkillExecutorNode(Node):
             goal_handle.publish_feedback(feedback)
             if not self._gripper_open(force=open_force):
                 raise RuntimeError('gripper open failed')
+
+            # Object released — restore the default TCP offset (mid-open
+            # calibration) so subsequent moves (retract, next approach) use a
+            # known baseline until the next pick sets it from grasp_width.
+            self._robot_model.tool = SE3(*self._TCP_OFFSET)
 
             # 3. Retract linearly back to the approach hover position
             retract_target = self._last_approach_hover

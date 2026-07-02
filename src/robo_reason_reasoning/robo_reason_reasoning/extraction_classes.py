@@ -26,6 +26,10 @@ class UR5Action(BaseModel):
         default=0.0,
         description='Estimated real-world height of the held object in meters — used by release to lift TCP above the surface'
     )
+    grasp_width: Optional[float] = Field(
+        default=0.0,
+        description='Estimated real-world width of the object to grasp, in meters — used to compute the finger-aperture-dependent TCP offset for a pick (and carried through to release while holding it)'
+    )
     offset: Optional[float] = Field(
         default=0.1,
         description='Approach offset in meters (default 0.1)'

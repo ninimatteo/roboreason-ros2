@@ -73,37 +73,39 @@
     <!-- Right column: stack / driver / configuration / backend controls. -->
     <div class="col-right">
     <section class="card">
-      <h2>Configuration</h2>
-      <div class="grid">
-        <label>Mode
+      <h2>Configuration
+        <span class="head-actions mode-select">
+          <label for="sel-mode">Mode</label>
           <select id="sel-mode"></select>
-        </label>
+        </span>
+      </h2>
+      <div class="grid">
         <label>Reasoning method
           <select id="sel-reasoning"></select>
         </label>
-        <label>Provider
+        <label>Planning provider
           <select id="sel-provider"></select>
         </label>
-        <label>Model
+        <label>Planning model
           <select id="sel-model"></select>
         </label>
         <label>Temperature
           <input id="inp-temp" type="number" step="0.1" min="0" max="2" />
         </label>
-        <label class="check">
-          <input id="chk-mock-llm" type="checkbox" /> Mock LLM (LLM mode)
-        </label>
       </div>
-      <div id="grounding-fields" class="grid" hidden>
-        <label>Grounding provider
-          <select id="sel-vlm-provider"></select>
-        </label>
-        <label>Grounding model
-          <select id="sel-vlm-model"></select>
-        </label>
-        <label>Grounding temperature
-          <input id="inp-vlm-temp" type="number" step="0.1" min="0" max="2" />
-        </label>
+      <div id="grounding-fields" class="grounding-section" hidden>
+        <h3 class="grounding-title">Scene grounding <span class="hint">(VLM — detects objects before LLM planning)</span></h3>
+        <div class="grid">
+          <label>Grounding provider (VLM)
+            <select id="sel-vlm-provider"></select>
+          </label>
+          <label>Grounding model (VLM)
+            <select id="sel-vlm-model"></select>
+          </label>
+          <label>Grounding temperature
+            <input id="inp-vlm-temp" type="number" step="0.1" min="0" max="2" />
+          </label>
+        </div>
       </div>
       <div class="actions">
         <button id="cfg-apply" type="button">Apply to running planner</button>
@@ -177,8 +179,11 @@
         <label class="check">
           <input id="chk-mock-robot" type="checkbox" checked /> Mock robot (no UR5)
         </label>
-        <label class="check">
-          <input id="chk-mock-camera" type="checkbox" checked /> Mock camera (VLM/VLM_LLM only)
+        <label class="check" id="wrap-mock-camera">
+          <input id="chk-mock-camera" type="checkbox" checked /> Mock camera
+        </label>
+        <label class="check" id="wrap-mock-llm">
+          <input id="chk-mock-llm" type="checkbox" /> Mock LLM
         </label>
       </div>
       <div class="actions">

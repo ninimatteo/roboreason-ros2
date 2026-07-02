@@ -58,6 +58,8 @@ const headerReconnect = document.getElementById('header-reconnect');
 
 const chkMockRobot = document.getElementById('chk-mock-robot');
 const chkMockCamera = document.getElementById('chk-mock-camera');
+const wrapMockCamera = document.getElementById('wrap-mock-camera');
+const wrapMockLlm = document.getElementById('wrap-mock-llm');
 const stackState = document.getElementById('stack-state');
 const stackInfo = document.getElementById('stack-info');
 const stackLogs = document.getElementById('stack-logs');
@@ -249,25 +251,46 @@ function currentConfig() {
 cfgApply.addEventListener('click', async () => {
   cfgApply.disabled = true;
   cfgResult.className = 'muted';
-  cfgResult.textContent = 'applying…';
+  // The stack only ever launches ONE planner node (per PLANNER_NODE_BY_MODE),
+  // so switching Mode to something other than what the stack was started with
+  // has no live target to patch — restart the stack instead of PATCHing.
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  const modeMismatch = stackRunning && (stackTarget?.mode || '').toUpperCase() !== mode;
   try {
-    const data = await postJSON('/api/config', currentConfig());
-    if (data.error) {
-      cfgResult.className = 'error';
-      cfgResult.textContent = data.error;
-      toast('Config: ' + data.error, 'error');
-    } else if (data.applied) {
-      cfgResult.className = 'ok';
-      cfgResult.textContent = `applied to ${data.target}`;
-      toast(`Config applied to ${data.target}`, 'success');
+    if (modeMismatch) {
+      cfgResult.textContent = 'mode changed — restarting stack…';
+      const data = await postJSON('/api/stack/restart', stackPayload());
+      if (data.error) {
+        cfgResult.className = 'error';
+        cfgResult.textContent = data.error;
+        toast('Stack: ' + data.error, 'error');
+      } else if (data.status) {
+        renderStack(data.status);
+        cfgResult.className = 'ok';
+        cfgResult.textContent = `stack restarted in ${mode} mode`;
+        toast(`Stack restarted in ${mode} mode`, 'success');
+        if (data.warning) toast('Stack: ' + data.warning, 'info', 6000);
+      }
     } else {
-      cfgResult.className = 'error';
-      const failed = Object.entries(data.results || {})
-        .filter(([, r]) => !r.successful)
-        .map(([k, r]) => `${k}: ${r.reason || 'rejected'}`)
-        .join('; ');
-      cfgResult.textContent = failed || 'some parameters were rejected';
-      toast('Config: ' + (failed || 'some parameters were rejected'), 'error');
+      cfgResult.textContent = 'applying…';
+      const data = await postJSON('/api/config', currentConfig());
+      if (data.error) {
+        cfgResult.className = 'error';
+        cfgResult.textContent = data.error;
+        toast('Config: ' + data.error, 'error');
+      } else if (data.applied) {
+        cfgResult.className = 'ok';
+        cfgResult.textContent = `applied to ${data.target}`;
+        toast(`Config applied to ${data.target}`, 'success');
+      } else {
+        cfgResult.className = 'error';
+        const failed = Object.entries(data.results || {})
+          .filter(([, r]) => !r.successful)
+          .map(([k, r]) => `${k}: ${r.reason || 'rejected'}`)
+          .join('; ');
+        cfgResult.textContent = failed || 'some parameters were rejected';
+        toast('Config: ' + (failed || 'some parameters were rejected'), 'error');
+      }
     }
   } catch (err) {
     cfgResult.className = 'error';
@@ -287,12 +310,14 @@ function stackPayload() {
   };
 }
 
-// The camera toggle and model lists both depend on the current mode.
+// The mock-camera and mock-LLM toggles (in the Stack card) only apply to
+// modes that actually use a camera / an LLM, so hide them otherwise.
 function syncCameraToggle() {
   const mode = (selMode.value || 'LLM').toUpperCase();
   const usesCamera = mode === 'VLM' || mode === 'VLM_LLM';
-  chkMockCamera.disabled = !usesCamera;
-  chkMockCamera.parentElement.style.opacity = usesCamera ? '1' : '0.5';
+  const usesLlm = mode === 'LLM';
+  wrapMockCamera.hidden = !usesCamera;
+  wrapMockLlm.hidden = !usesLlm;
 }
 
 // The grounding provider/model/temperature fields only apply to VLM_LLM
@@ -322,6 +347,8 @@ selMode.addEventListener('change', syncModelsByMode);
 // interface — starting the stack earlier just produces confusing planner/
 // executor timeouts. Mock-robot mode has no such dependency.
 let stackRunning = false;
+let stackTarget = null;  // status.target from the last /api/stack poll — used to
+                          // detect a mode mismatch between the GUI and the running stack.
 let robotReady = false;
 
 function updateStackStartGate() {
@@ -340,6 +367,7 @@ function renderStack(status) {
   stackState.textContent = running ? 'running' : 'stopped';
   stackState.className = 'badge ' + (running ? 'badge-on' : 'badge-off');
   stackRunning = running;
+  stackTarget = status.target || null;
   updateStackStartGate();
   stackStop.disabled = !running;
 

@@ -18,6 +18,41 @@ from typing import List
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Calibrated (object_width_m, flange_to_contact_offset_z_m) pairs for the RG2
+# gripper, sorted by width ascending. The fingers pivot/arc, so the true
+# flange-to-contact-point distance shrinks as the fingers open wider to grip
+# larger objects: fully closed (0.00 m wide) ~0.213 m, mid-open (0.05 m wide)
+# ~0.207 m, fully open (0.10 m wide) ~0.175 m.
+TCP_OFFSET_Z_CALIBRATION: List[List[float]] = [
+    [0.00, 0.213],
+    [0.05, 0.207],
+    [0.10, 0.175],
+]
+
+
+def tcp_offset_z_for_width(width_m: float) -> float:
+    """Piecewise-linear interpolation of TCP_OFFSET_Z from grasp width (meters).
+
+    Falls back to `settings.TCP_OFFSET_Z` (mid-open calibration) when width_m
+    is None or non-positive, i.e. unknown. Clamps to the calibration table's
+    endpoints outside its measured range.
+    """
+    if width_m is None or width_m <= 0.0:
+        return settings.TCP_OFFSET_Z
+
+    table = TCP_OFFSET_Z_CALIBRATION
+    if width_m <= table[0][0]:
+        return table[0][1]
+    if width_m >= table[-1][0]:
+        return table[-1][1]
+
+    for (w0, z0), (w1, z1) in zip(table, table[1:]):
+        if w0 <= width_m <= w1:
+            t = (width_m - w0) / (w1 - w0)
+            return z0 + t * (z1 - z0)
+
+    return settings.TCP_OFFSET_Z
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -40,6 +75,15 @@ class Settings(BaseSettings):
     VLM_MODEL_NAME: str = 'groq/qwen3.6-27b'
     VLM_TEMPERATURE: float = 0.1
 
+    # ── Depth-informed grasp geometry (VLM/VLM_LLM pipelines) ──────────────────
+    # Neither camera-grounded pipeline has a hand-calibrated EE contact height
+    # the way scene_mock.json does for LLM mode, so we derive one from real
+    # depth: object height = table_surface_z - deprojected_top_surface_z, and
+    # the pick contact point descends a fraction of that height below the top
+    # surface (mid-body grasp) instead of targeting the bare top surface.
+    PICK_GRASP_DEPTH_FRACTION: float = 0.5   # fraction of object height to descend for pick
+    MIN_OBJECT_HEIGHT_M: float = 0.02        # clamp for depth-computed object height
+
     # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
     DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'
     # Container clock runs in UTC regardless of the operator's local time, so
@@ -55,7 +99,18 @@ class Settings(BaseSettings):
     # Set ROBOREASON_TCP_OFFSET_X/Y/Z env vars (or .env) to override without rebuild.
     TCP_OFFSET_X: float = 0.0
     TCP_OFFSET_Y: float = 0.0
-    TCP_OFFSET_Z: float = 0.16
+    # The RG2 fingers pivot/arc, so the true flange-to-contact-point distance
+    # varies with finger aperture (i.e. with object width). Calibrated values:
+    # fully open ~0.175 m, mid-open ~0.207 m, fully closed ~0.213 m. Until
+    # width-based interpolation picks the right one per object, default to the
+    # mid-open calibration (closest to how the previous 0.16 default was set).
+    TCP_OFFSET_Z: float = 0.207
+    # Length of the rigid clamp/mount body below the flange (metres) — unlike
+    # the fingers, this part doesn't pivot around the object, so a pick that
+    # needs to descend more than (TCP_OFFSET_Z - TCP_CLAMP_CLEARANCE_M) below
+    # an object's top surface will crash the clamp into the object on the way
+    # down. Used to cap pick-target descent depth for tall objects.
+    TCP_CLAMP_CLEARANCE_M: float = 0.15
 
     # ── Camera topics / services ──────────────────────────────────────────────
     COLOR_TOPIC: str = '/camera/color/image_raw'
