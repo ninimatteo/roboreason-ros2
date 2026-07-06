@@ -56,6 +56,10 @@ def main(args=None):
         logger=bridge.get_logger(),
     )
 
+    # Let planner nodes pull camera/robot/stack terminal-log snapshots into
+    # their per-run debug folders via /gui/get_terminal_logs.
+    bridge.set_log_sources(stack=supervisor, camera=camera, driver=driver)
+
     app = create_app(bridge, supervisor, driver, camera)
     bridge.get_logger().info(
         f'[GuiBridgeNode] serving GUI on http://{HOST}:{PORT}'

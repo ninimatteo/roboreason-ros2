@@ -17,14 +17,53 @@ import csv
 import json
 import shutil
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from std_srvs.srv import Trigger
+
 from robo_reason_bringup.config import settings
 
 _TZ = ZoneInfo(settings.DEBUG_TIMEZONE)
+
+# Exposed by GuiBridgeNode (GUI server process) — snapshots the in-memory
+# camera/robot/stack subprocess log ring buffers owned by the GUI's
+# supervisors, so a planner node can pull them into its own per-run debug
+# folder at finish() time. Not available when a planner is launched standalone
+# outside the GUI stack; callers must treat a failed/unreachable call as
+# "no logs" rather than an error (see fetch_terminal_logs).
+TERMINAL_LOGS_SERVICE = '/gui/get_terminal_logs'
+TERMINAL_LOGS_TIMEOUT_S = 3.0
+
+
+def fetch_terminal_logs(client, timeout_sec: float = TERMINAL_LOGS_TIMEOUT_S) -> dict:
+    """Best-effort synchronous call to /gui/get_terminal_logs.
+
+    Returns {} when the GUI server isn't reachable (service unavailable,
+    timeout, or any error) so a missing GUI process never breaks planning —
+    the caller then just writes empty terminal-log files. The calling node
+    must spin on a MultiThreadedExecutor with a callback group distinct from
+    the one blocked here, or this will deadlock (same requirement as the
+    existing /camera/get_image and /camera/deproject client calls).
+    """
+    try:
+        if not client.service_is_ready() and not client.wait_for_service(timeout_sec=1.0):
+            return {}
+        future = client.call_async(Trigger.Request())
+        deadline = time.monotonic() + timeout_sec
+        while not future.done():
+            if time.monotonic() > deadline:
+                return {}
+            time.sleep(0.05)
+        resp = future.result()
+        if resp is None or not resp.success:
+            return {}
+        return json.loads(resp.message)
+    except Exception:
+        return {}
 
 
 def _now() -> datetime:
@@ -84,6 +123,32 @@ class DebugRun:
             shutil.copy2(source_path, self.dir / 'generated_scene.json')
         except OSError as exc:
             self.log(f'[debug] failed to copy generated scene {source_path}: {exc}')
+
+    def save_terminal_logs(self, logs: dict) -> None:
+        """Write camera/robot/stack subprocess-log snapshots fetched from the
+        GUI server (see fetch_terminal_logs) into <run>/*_terminal.log.
+
+        A missing/empty key just yields an empty file — the GUI process may
+        be unreachable or a given supervisor (e.g. the real UR driver) may
+        not be running in this session. Never raises: this is best-effort
+        debug capture and must not be able to take down the planner node
+        (see the vlm_planner_node crash this caused when it briefly did).
+        """
+        for key, filename in (
+            ('camera', 'camera_terminal.log'),
+            ('robot', 'robot_terminal.log'),
+            ('stack', 'stack_terminal.log'),
+        ):
+            try:
+                entries = logs.get(key) or []
+                lines = [
+                    f"{entry.get('t', '??:??:??')} {entry.get('line', '')}"
+                    if isinstance(entry, dict) else str(entry)
+                    for entry in entries
+                ]
+                (self.dir / filename).write_text('\n'.join(lines))
+            except Exception as exc:
+                self.log(f'[debug] failed to write {filename}: {exc}')
 
     def finish(self, success: bool, response: dict = None, error: str = None) -> None:
         """Write the response/error/logs and append one row to summary.csv."""

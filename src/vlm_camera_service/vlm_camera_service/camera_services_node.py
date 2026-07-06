@@ -69,6 +69,13 @@ class CameraServicesNode(Node):
         self.declare_parameter("board_in_base_yaw",   settings.BOARD_IN_BASE_YAW)
         # Extra Z offset added to base_link points before returning to the planner.
         self.declare_parameter("z_offset_m", settings.Z_OFFSET_M)
+        # Opt-in experiment: refine a clicked pixel to the centroid of its
+        # local top horizontal plane (see local_plane_centroid()) instead of
+        # trusting the raw click.
+        self.declare_parameter("local_plane_centroid_enabled", settings.LOCAL_PLANE_CENTROID_ENABLED)
+        self.declare_parameter("local_plane_centroid_radius_px", settings.LOCAL_PLANE_CENTROID_RADIUS_PX)
+        self.declare_parameter("local_plane_centroid_z_tol_m", settings.LOCAL_PLANE_CENTROID_Z_TOL_M)
+        self.declare_parameter("local_plane_centroid_min_points", settings.LOCAL_PLANE_CENTROID_MIN_POINTS)
 
         color_topic = self.get_parameter("color_topic").value
         depth_topic = self.get_parameter("depth_topic").value
@@ -99,6 +106,18 @@ class CameraServicesNode(Node):
         )
 
         self._z_offset_m = float(self.get_parameter("z_offset_m").value)
+        self._local_plane_centroid_enabled = bool(
+            self.get_parameter("local_plane_centroid_enabled").value
+        )
+        self._local_plane_centroid_radius_px = int(
+            self.get_parameter("local_plane_centroid_radius_px").value
+        )
+        self._local_plane_centroid_z_tol_m = float(
+            self.get_parameter("local_plane_centroid_z_tol_m").value
+        )
+        self._local_plane_centroid_min_points = int(
+            self.get_parameter("local_plane_centroid_min_points").value
+        )
 
         # Build the known board→base transform from parameters.
         self._T_base_board = board_pose_to_matrix(
@@ -156,6 +175,12 @@ class CameraServicesNode(Node):
         self.get_logger().info(
             f"window_size={self._window_size}, "
             f"valid depth range=[{self._min_depth_m:.3f}, {self._max_depth_m:.3f}] m"
+        )
+        self.get_logger().info(
+            f"local_plane_centroid_enabled={self._local_plane_centroid_enabled}, "
+            f"radius_px={self._local_plane_centroid_radius_px}, "
+            f"z_tol_m={self._local_plane_centroid_z_tol_m:.3f}, "
+            f"min_points={self._local_plane_centroid_min_points}"
         )
         self._status_timer = self.create_timer(2.0, self._log_input_status)
         # One-shot calibration: try every 0.5 s until the board is detected once,
@@ -297,6 +322,35 @@ class CameraServicesNode(Node):
 
         if self._T_base_camera is not None:
             base_points = [transform_point_to_base(p, self._T_base_camera) for p in points]
+            if self._local_plane_centroid_enabled:
+                for i, (u_raw, v_raw) in enumerate(zip(request.u, request.v)):
+                    centroid = local_plane_centroid(
+                        depth_image=depth_image,
+                        u=int(u_raw),
+                        v=int(v_raw),
+                        radius_px=self._local_plane_centroid_radius_px,
+                        z_tol_m=self._local_plane_centroid_z_tol_m,
+                        min_points=self._local_plane_centroid_min_points,
+                        encoding=self._latest_depth.encoding,
+                        intrinsics=intrinsics,
+                        T_base_camera=self._T_base_camera,
+                        min_depth_m=self._min_depth_m,
+                        max_depth_m=self._max_depth_m,
+                    )
+                    if centroid is None:
+                        continue
+                    x_c, y_c, z_c, num_points = centroid
+                    raw = base_points[i]
+                    delta_mm = 1000.0 * float(np.linalg.norm(
+                        [x_c - raw.x, y_c - raw.y, z_c - raw.z]
+                    ))
+                    self.get_logger().info(
+                        f"local_plane_centroid: pixel=({int(u_raw)},{int(v_raw)}) "
+                        f"raw=({raw.x:+.3f},{raw.y:+.3f},{raw.z:+.3f}) -> "
+                        f"corrected=({x_c:+.3f},{y_c:+.3f},{z_c:+.3f}) m, "
+                        f"delta={delta_mm:.1f} mm, n={num_points}"
+                    )
+                    raw.x, raw.y, raw.z = x_c, y_c, z_c
             if self._z_offset_m != 0.0:
                 for p in base_points:
                     p.z += self._z_offset_m
@@ -712,6 +766,76 @@ def deproject_pixel_to_3d(
     point.y = (float(v) - cy) * z / fy
     point.z = z
     return point
+
+
+def local_plane_centroid(
+    depth_image: np.ndarray,
+    u: int,
+    v: int,
+    radius_px: int,
+    z_tol_m: float,
+    min_points: int,
+    encoding: str,
+    intrinsics: CameraIntrinsics,
+    T_base_camera: np.ndarray,
+    min_depth_m: float,
+    max_depth_m: float,
+) -> Optional[tuple[float, float, float, int]]:
+    """Refine a clicked pixel to the centroid of its local top horizontal plane.
+
+    VLM clicks often land on a random point of an object's visible surface
+    (an edge, a side facet) rather than its centre. This takes a local window
+    of raw depth around (u, v), back-projects every valid pixel in it to
+    base_link XYZ, keeps only the points within z_tol_m of the window's
+    highest z (the object's local top face — the point closest to an
+    overhead-ish camera), and returns that plane's (x, y) centroid, its z, and
+    how many points supported it.
+
+    Returns None (fail-open — caller keeps the raw click) when the window has
+    no valid depth or too few points survive the z threshold, e.g. the click
+    landed on bare table or a poorly-conditioned view of the object.
+    """
+    height, width = depth_image.shape
+    if u < 0 or v < 0 or u >= width or v >= height:
+        return None
+
+    x_min = max(0, u - radius_px)
+    x_max = min(width, u + radius_px + 1)
+    y_min = max(0, v - radius_px)
+    y_max = min(height, v + radius_px + 1)
+
+    window = depth_image[y_min:y_max, x_min:x_max]
+    if encoding == "16UC1":
+        depth_m = window.astype(np.float64) / 1000.0
+    elif encoding == "32FC1":
+        depth_m = window.astype(np.float64)
+    else:
+        raise ValueError(f"Unsupported depth encoding '{encoding}'")
+
+    valid = np.isfinite(depth_m) & (depth_m > 0.0)
+    valid &= depth_m >= min_depth_m
+    valid &= depth_m <= max_depth_m
+    if not np.any(valid):
+        return None
+
+    vv, uu = np.nonzero(valid)
+    depths = depth_m[valid]
+    uu = (uu + x_min).astype(np.float64)
+    vv = (vv + y_min).astype(np.float64)
+
+    x_cam = (uu - intrinsics.cx) * depths / intrinsics.fx
+    y_cam = (vv - intrinsics.cy) * depths / intrinsics.fy
+    points_cam = np.stack([x_cam, y_cam, depths, np.ones_like(depths)], axis=1)
+    points_base = (T_base_camera @ points_cam.T).T[:, :3]
+
+    top_z = float(np.max(points_base[:, 2]))
+    survivors = points_base[points_base[:, 2] >= (top_z - z_tol_m)]
+    if survivors.shape[0] < min_points:
+        return None
+
+    x_c = float(np.mean(survivors[:, 0]))
+    y_c = float(np.mean(survivors[:, 1]))
+    return x_c, y_c, top_z, int(survivors.shape[0])
 
 
 def main(args: Optional[list[str]] = None) -> None:

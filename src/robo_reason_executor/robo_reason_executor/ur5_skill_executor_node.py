@@ -31,7 +31,8 @@ from rclpy.node import Node
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
-from robo_reason_bringup.config import settings, tcp_offset_z_for_width
+from robo_reason_bringup.config import settings
+from robo_reason_bringup.grasp_geometry import tcp_offset_z_for_width
 from robo_reason_interfaces.action import ExecuteSkill
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint

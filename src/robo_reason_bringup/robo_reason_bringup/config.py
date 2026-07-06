@@ -18,41 +18,6 @@ from typing import List
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Calibrated (object_width_m, flange_to_contact_offset_z_m) pairs for the RG2
-# gripper, sorted by width ascending. The fingers pivot/arc, so the true
-# flange-to-contact-point distance shrinks as the fingers open wider to grip
-# larger objects: fully closed (0.00 m wide) ~0.213 m, mid-open (0.05 m wide)
-# ~0.207 m, fully open (0.10 m wide) ~0.175 m.
-TCP_OFFSET_Z_CALIBRATION: List[List[float]] = [
-    [0.00, 0.213],
-    [0.05, 0.207],
-    [0.10, 0.175],
-]
-
-
-def tcp_offset_z_for_width(width_m: float) -> float:
-    """Piecewise-linear interpolation of TCP_OFFSET_Z from grasp width (meters).
-
-    Falls back to `settings.TCP_OFFSET_Z` (mid-open calibration) when width_m
-    is None or non-positive, i.e. unknown. Clamps to the calibration table's
-    endpoints outside its measured range.
-    """
-    if width_m is None or width_m <= 0.0:
-        return settings.TCP_OFFSET_Z
-
-    table = TCP_OFFSET_Z_CALIBRATION
-    if width_m <= table[0][0]:
-        return table[0][1]
-    if width_m >= table[-1][0]:
-        return table[-1][1]
-
-    for (w0, z0), (w1, z1) in zip(table, table[1:]):
-        if w0 <= width_m <= w1:
-            t = (width_m - w0) / (w1 - w0)
-            return z0 + t * (z1 - z0)
-
-    return settings.TCP_OFFSET_Z
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -104,6 +69,8 @@ class Settings(BaseSettings):
     # fully open ~0.175 m, mid-open ~0.207 m, fully closed ~0.213 m. Until
     # width-based interpolation picks the right one per object, default to the
     # mid-open calibration (closest to how the previous 0.16 default was set).
+    # The width->offset calibration table + interpolation function live in
+    # grasp_geometry.py (derived logic, not a plain setting).
     TCP_OFFSET_Z: float = 0.207
     # Length of the rigid clamp/mount body below the flange (metres) — unlike
     # the fingers, this part doesn't pivot around the object, so a pick that
@@ -127,6 +94,19 @@ class Settings(BaseSettings):
     MIN_DEPTH_M: float = 0.15
     MAX_DEPTH_M: float = 3.0
     Z_OFFSET_M: float = 0.01   # lift deprojected points above table surface
+
+    # ── Local plane-centroid experiment (Deproject pixel refinement) ─────────
+    # Opt-in, fail-open experiment addressing VLM clicks landing on a random
+    # point of the object (often an edge/side facet, not the centre): take a
+    # local window of raw depth around the clicked pixel, keep only the points
+    # near the window's highest base-frame z (the object's local top
+    # horizontal plane), and re-target the (x, y) centroid + z of that plane
+    # instead of trusting the raw click. Falls back to the existing raw
+    # single-pixel lookup whenever too few points survive the threshold.
+    LOCAL_PLANE_CENTROID_ENABLED: bool = True
+    LOCAL_PLANE_CENTROID_RADIUS_PX: int = 25
+    LOCAL_PLANE_CENTROID_Z_TOL_M: float = 0.01
+    LOCAL_PLANE_CENTROID_MIN_POINTS: int = 8
 
     # ── ChArUco calibration board ─────────────────────────────────────────────
     CHARUCO_ENABLED: bool = True

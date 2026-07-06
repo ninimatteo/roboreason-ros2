@@ -150,6 +150,17 @@ class GuiBridgeNode(Node):
         # One SetParameters client per target node, created lazily and cached.
         self._param_clients = {}
 
+        # --- terminal-log snapshots (camera/robot/stack subprocess output) ---
+        # The GUI-owned supervisors each keep an in-memory ring buffer of their
+        # subprocess's stdout/stderr; this service lets a planner node pull a
+        # snapshot into its own per-run debug folder (see debug_recorder.py).
+        # Populated via set_log_sources() once server_node.py constructs the
+        # supervisors, so it's None (-> empty logs) until then.
+        self._log_sources = {'stack': None, 'camera': None, 'robot': None}
+        self.create_service(
+            Trigger, '/gui/get_terminal_logs', self._handle_get_terminal_logs
+        )
+
         self.get_logger().info('[GuiBridgeNode] started')
 
     # ------------------------------------------------------------ log fan-out
@@ -205,6 +216,27 @@ class GuiBridgeNode(Node):
         """
         self._pendant_connected = pendant_connected
         self._driver_active = driver_active
+
+    def set_log_sources(self, stack=None, camera=None, driver=None) -> None:
+        """Register the GUI-owned supervisors so /gui/get_terminal_logs can
+        snapshot their live subprocess-log ring buffers on request."""
+        self._log_sources = {'stack': stack, 'camera': camera, 'robot': driver}
+
+    def _handle_get_terminal_logs(self, _request, response):
+        """Snapshot camera/robot/stack subprocess logs for a planner's
+        per-run debug folder (see debug_recorder.DebugRun.save_terminal_logs)."""
+        logs = {}
+        for key, supervisor in self._log_sources.items():
+            if supervisor is None:
+                logs[key] = []
+                continue
+            try:
+                logs[key] = list(supervisor.status().get('logs', []))
+            except Exception as exc:
+                logs[key] = [f'[gui] failed to read {key} logs: {exc}']
+        response.success = True
+        response.message = json.dumps(logs)
+        return response
 
     def _pendant_state(self) -> dict:
         """Whether a real driver is supervised and its pendant is connected."""

@@ -16,13 +16,16 @@ import traceback
 
 import dotenv
 import rclpy
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner.command_grounding import check_command_grounding
-from robo_reason_planner.debug_recorder import DebugRun
+from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
 
@@ -41,7 +44,18 @@ class LLMPlannerNode(Node):
 
         dotenv.load_dotenv()
 
-        self._service = self.create_service(PlanTask, '/plan_task', self._plan_task_callback)
+        # ReentrantCallbackGroup so /plan_task can call /gui/get_terminal_logs
+        # without deadlocking on the MultiThreadedExecutor (same requirement
+        # as vlm_planner_node/vlm_llm_planner_node).
+        self._cb_group = ReentrantCallbackGroup()
+
+        self._service = self.create_service(
+            PlanTask, '/plan_task', self._plan_task_callback,
+            callback_group=self._cb_group,
+        )
+        self._terminal_logs_client = self.create_client(
+            Trigger, '/gui/get_terminal_logs', callback_group=self._cb_group,
+        )
 
         use_mock = self.get_parameter('use_mock_llm').value
         label = (
@@ -71,6 +85,7 @@ class LLMPlannerNode(Node):
         if not grounded:
             response.success = False
             response.error_message = err
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=False, error=err)
             return response
 
@@ -84,6 +99,7 @@ class LLMPlannerNode(Node):
 
             response.success = True
             response.plan_json = json.dumps(plan_data)
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=True, response=plan_data)
 
         except Exception:
@@ -91,6 +107,7 @@ class LLMPlannerNode(Node):
             self.get_logger().error(f'[LLMPlannerNode] Planning error:\n{tb}')
             response.success = False
             response.error_message = tb
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=False, error=tb)
 
         return response
@@ -185,8 +202,10 @@ class LLMPlannerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = LLMPlannerNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     finally:
         node.destroy_node()
         rclpy.shutdown()

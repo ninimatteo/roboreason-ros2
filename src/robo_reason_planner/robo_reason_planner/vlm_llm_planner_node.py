@@ -35,11 +35,12 @@ import rclpy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
-from robo_reason_planner.debug_recorder import DebugRun
+from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 from robo_reason_reasoning.scene_grounder import SceneGrounder
 
@@ -99,6 +100,9 @@ class VLMLLMPlannerNode(Node):
         self._deproject_client = self.create_client(
             Deproject, '/camera/deproject', callback_group=self._cb_group,
         )
+        self._terminal_logs_client = self.create_client(
+            Trigger, '/gui/get_terminal_logs', callback_group=self._cb_group,
+        )
 
         self.get_logger().info(
             f"[VLMLLMPlannerNode] Ready — grounding: {self.get_parameter('vlm_model_name').value}, "
@@ -125,6 +129,7 @@ class VLMLLMPlannerNode(Node):
             plan_data = self._vlm_llm_plan(user_command, scene_json, run)
             response.success = True
             response.plan_json = json.dumps(plan_data)
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=True, response=plan_data)
             self.get_logger().info('[VLMLLMPlannerNode] Generated VLM+LLM plan.')
         except Exception:
@@ -132,6 +137,7 @@ class VLMLLMPlannerNode(Node):
             self.get_logger().error(f'[VLMLLMPlannerNode] Planning error:\n{tb}')
             response.success = False
             response.error_message = tb
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=False, error=tb)
 
         return response
@@ -291,7 +297,7 @@ class VLMLLMPlannerNode(Node):
             size = list(obj.size)
             position_z = top_z
             if table_surface_z is not None:
-                height = max(table_surface_z - top_z, min_height)
+                height = max(top_z - table_surface_z, min_height)
                 size[2] = height
                 position_z = top_z - min(fraction * height, max_descent)
             objects[key] = {

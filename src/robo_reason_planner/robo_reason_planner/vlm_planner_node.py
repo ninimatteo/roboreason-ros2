@@ -29,11 +29,12 @@ import rclpy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
-from robo_reason_planner.debug_recorder import DebugRun
+from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
 
@@ -83,6 +84,9 @@ class VLMPlannerNode(Node):
         self._deproject_client = self.create_client(
             Deproject, '/camera/deproject', callback_group=self._cb_group,
         )
+        self._terminal_logs_client = self.create_client(
+            Trigger, '/gui/get_terminal_logs', callback_group=self._cb_group,
+        )
 
         self.get_logger().info(
             f"[VLMPlannerNode] Ready — {self.get_parameter('reasoning_method').value}, "
@@ -105,6 +109,7 @@ class VLMPlannerNode(Node):
             plan_data = self._vlm_plan(user_command, request.scene_json, run)
             response.success = True
             response.plan_json = json.dumps(plan_data)
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=True, response=plan_data)
             self.get_logger().info('[VLMPlannerNode] Generated VLM plan.')
         except Exception:
@@ -112,6 +117,7 @@ class VLMPlannerNode(Node):
             self.get_logger().error(f'[VLMPlannerNode] Planning error:\n{tb}')
             response.success = False
             response.error_message = tb
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=False, error=tb)
 
         return response
@@ -345,7 +351,7 @@ class VLMPlannerNode(Node):
                 action = step.get('action_name')
                 if action == 'pick' and isinstance(step.get('target_position'), list):
                     top_z = step['target_position'][2]
-                    height = max(table_surface_z - top_z, min_height)
+                    height = max(top_z - table_surface_z, min_height)
                     step['object_height'] = height
                     descent = min(fraction * height, max_descent)
                     step['target_position'][2] = top_z - descent
