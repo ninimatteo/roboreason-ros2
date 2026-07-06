@@ -29,7 +29,7 @@
       "type": "cube",
       "color": "black",
       "position": [-0.2, -0.5, 0.03],
-      "size": [0.005, 0.005, 0.0045],
+      "size": [0.05, 0.05, 0.045],
       "state": "on_table",
       "graspable": true
     },
@@ -37,7 +37,7 @@
       "type": "exagon",
       "color": "black",
       "position": [-0.3, -0.6, 0.03],
-      "size": [0.005, 0.005, 0.0045],
+      "size": [0.05, 0.05, 0.045],
       "state": "on_table",
       "graspable": true
     },
@@ -45,7 +45,7 @@
       "type": "two part appearance: a cube body topped by a tall hollow square tube",
       "color": "black",
       "position": [0.0, -0.4, 0.03],
-      "size": [0.005, 0.012, 0.005],
+      "size": [0.05, 0.05, 0.045],
       "state": "on_table",
       "graspable": true
     },

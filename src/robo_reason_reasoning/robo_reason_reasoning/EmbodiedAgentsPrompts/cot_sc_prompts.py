@@ -32,6 +32,22 @@ Your task is to plan a sequence of actions to achieve the user's request, based 
 **Skills Library** A list of available skills and actions you can use: \n{skills}
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
 
+**Spatial Reasoning — Pixel Coordinates**
+You are working in pixel space. The depth camera back-projects each pixel to a 3D point on
+the visible surface, so pointing at the center of an object gives its top-surface 3D position.
+The image you are given is {pixels_width} pixels wide and {pixels_height} pixels tall — every
+pixel coordinate you output must satisfy 0 <= x < {pixels_width} and 0 <= y < {pixels_height}.
+- `target_position`: [x, y] — center pixel of the object to grasp.
+- `release_position`: [x, y] — center pixel of the target surface or object to stack on.
+  Its deprojected z is already the top surface — do NOT add any z offset manually.
+- Always set `object_height` to your visual estimate of the held object's real-world height
+  in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
+  The executor raises the TCP by this amount so the object bottom lands on the surface.
+- Always set `grasp_width` in the pick action to your visual estimate of the object's real-world
+  width in meters (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup). The executor uses
+  this to select the correct gripper finger-aperture offset.
+- The `approach` before a release must use the same [x, y] pixel as the release position.
+
 **JSON Output schema**:
 ```json
 {{"plan": [

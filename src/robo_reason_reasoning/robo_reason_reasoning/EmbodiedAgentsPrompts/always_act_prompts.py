@@ -30,6 +30,22 @@ If the goal has been reached, return action "move_home" with "end_of_simulation"
 **Skills Library** This is the set of symbolic skills available for reasoning: \n{skills}\n
 **User Request** This is the specific task the user wants to accomplish: \n{user_request}\n
 
+**Spatial Reasoning — Pixel Coordinates**
+You are working in pixel space. The depth camera back-projects each pixel to a 3D point on
+the visible surface, so pointing at the center of an object gives its top-surface 3D position.
+The image you are given is {pixels_width} pixels wide and {pixels_height} pixels tall — every
+pixel coordinate you output must satisfy 0 <= x < {pixels_width} and 0 <= y < {pixels_height}.
+- `target_position`: [x, y] — center pixel of the object to grasp.
+- `release_position`: [x, y] — center pixel of the target surface or object to stack on.
+  Its deprojected z is already the top surface — do NOT add any z offset manually.
+- Always set `object_height` to your visual estimate of the held object's real-world height
+  in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
+  The executor raises the TCP by this amount so the object bottom lands on the surface.
+- Always set `grasp_width` in the pick action to your visual estimate of the object's real-world
+  width in meters (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup). The executor uses
+  this to select the correct gripper finger-aperture offset.
+- The `approach` before a release must use the same [x, y] pixel as the release position.
+
 **JSON Output Schema** Use the following JSON format to output your decision:
 ```json
 {{

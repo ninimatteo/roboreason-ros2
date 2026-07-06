@@ -24,7 +24,7 @@ import threading
 import time
 
 import rclpy
-from rclpy.action import ActionClient, ActionServer
+from rclpy.action import ActionClient, ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -32,6 +32,7 @@ from rclpy.node import Node
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.grasp_geometry import tcp_offset_z_for_width
 from robo_reason_interfaces.action import ExecuteSkill
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
@@ -63,6 +64,12 @@ _GRIPPER_PIN = 0
 _IO_FUN_DIGITAL_OUT = 1  # SetIO fun=1 → standard digital output
 
 
+class SkillCancelled(Exception):
+    """Raised when an emergency-stop cancel request interrupts an in-progress
+    skill's motion (see _move_to_joints / _move_linear cancellation polling)."""
+    pass
+
+
 class UR5SkillExecutorNode(Node):
     """
     Real UR5cb executor with OnRobot RG2 gripper.
@@ -89,9 +96,9 @@ class UR5SkillExecutorNode(Node):
     # For horizontal approaches the rotation is computed dynamically from the
     # EE→object direction — no fixed quaternion needed.
 
-    # TCP offset (metres) — adjust to match your tool + gripper stack
-    # _TCP_OFFSET = (0.148, -0.128, 0.265)
-    _TCP_OFFSET = (0.0, 0.0, 0.16) #OnRobot Gripper
+    # TCP offset (metres) — configured in robo_reason_bringup/config.py
+    # (ROBOREASON_TCP_OFFSET_X/Y/Z env vars, or .env file to override).
+    _TCP_OFFSET = (settings.TCP_OFFSET_X, settings.TCP_OFFSET_Y, settings.TCP_OFFSET_Z)
 
     def __init__(self):
         super().__init__('ur5_skill_executor_node')
@@ -151,6 +158,7 @@ class UR5SkillExecutorNode(Node):
             ExecuteSkill,
             '/execute_skill',
             self._execute_skill_callback,
+            cancel_callback=self._handle_cancel_request,
             callback_group=self._cb_group,
         )
 
@@ -275,8 +283,14 @@ class UR5SkillExecutorNode(Node):
     # Joint trajectory
     # -------------------------------------------------------------------------
 
-    def _move_to_joints(self, joints: list, duration_sec: float = 3.0) -> bool:
-        """Send a joint trajectory goal and block until it completes."""
+    def _move_to_joints(self, joints: list, duration_sec: float = 3.0, goal_handle=None) -> bool:
+        """Send a joint trajectory goal and block until it completes.
+
+        Polls ``goal_handle.is_cancel_requested`` (when a goal_handle is
+        passed) so an emergency-stop cancel interrupts the wait instead of
+        only being noticed after this — potentially multi-second — motion
+        finishes on its own. Raises SkillCancelled if that happens.
+        """
         if not self._traj_client.wait_for_server(timeout_sec=5.0):
             self.get_logger().error('[UR5SkillExecutorNode] Trajectory action server not available.')
             return False
@@ -292,25 +306,43 @@ class UR5SkillExecutorNode(Node):
         goal.trajectory.joint_names = UR5_JOINT_NAMES
         goal.trajectory.points = [point]
 
+        return self._send_trajectory_and_wait(goal, duration_sec, goal_handle)
+
+    def _send_trajectory_and_wait(self, goal, duration_sec: float, goal_handle=None) -> bool:
+        """Send a FollowJointTrajectory goal, polling for cancellation while it runs."""
         done = threading.Event()
         result_holder = [None]
+        traj_goal_handle_holder = [None]
 
         def _done_cb(future):
             result_holder[0] = future.result()
             done.set()
 
-        future = self._traj_client.send_goal_async(goal)
-        future.add_done_callback(
-            lambda f: f.result().get_result_async().add_done_callback(_done_cb)
-        )
-        if not done.wait(timeout=duration_sec + 10.0):
-            self.get_logger().error('[UR5SkillExecutorNode] Trajectory goal timed out.')
-            return False
+        def _goal_response_cb(future):
+            gh = future.result()
+            traj_goal_handle_holder[0] = gh
+            if gh.accepted:
+                gh.get_result_async().add_done_callback(_done_cb)
+            else:
+                done.set()
+
+        self._traj_client.send_goal_async(goal).add_done_callback(_goal_response_cb)
+
+        deadline = time.monotonic() + duration_sec + 10.0
+        while not done.wait(timeout=0.1):
+            if goal_handle is not None and goal_handle.is_cancel_requested:
+                tgh = traj_goal_handle_holder[0]
+                if tgh is not None:
+                    tgh.cancel_goal_async()
+                raise SkillCancelled('motion cancelled by user')
+            if time.monotonic() > deadline:
+                self.get_logger().error('[UR5SkillExecutorNode] Trajectory goal timed out.')
+                return False
 
         return result_holder[0] is not None
 
     def _move_linear(self, target_xyz: list, R=None,
-                     duration_sec: float = 2.0, steps: int = 40) -> bool:
+                     duration_sec: float = 2.0, steps: int = 40, goal_handle=None) -> bool:
         """
         Move the EE in a straight Cartesian line to target_xyz, maintaining
         orientation R throughout.
@@ -400,22 +432,7 @@ class UR5SkillExecutorNode(Node):
         goal.trajectory.joint_names = UR5_JOINT_NAMES
         goal.trajectory.points = points
 
-        done = threading.Event()
-        result_holder = [None]
-
-        def _done_cb(future):
-            result_holder[0] = future.result()
-            done.set()
-
-        future = self._traj_client.send_goal_async(goal)
-        future.add_done_callback(
-            lambda f: f.result().get_result_async().add_done_callback(_done_cb)
-        )
-        if not done.wait(timeout=duration_sec + 10.0):
-            self.get_logger().error('[UR5SkillExecutorNode] Linear trajectory timed out.')
-            return False
-
-        return result_holder[0] is not None
+        return self._send_trajectory_and_wait(goal, duration_sec, goal_handle)
 
     # -------------------------------------------------------------------------
     # Gripper
@@ -451,6 +468,18 @@ class UR5SkillExecutorNode(Node):
     # Action server
     # -------------------------------------------------------------------------
 
+    def _handle_cancel_request(self, goal_handle):
+        """Accept every cancel request — used by the GUI's emergency stop.
+
+        Just returning ACCEPT here doesn't interrupt anything by itself; the
+        motion helpers (_move_to_joints / _move_linear) poll
+        goal_handle.is_cancel_requested while they wait and raise
+        SkillCancelled, which _execute_skill_callback turns into a proper
+        canceled result.
+        """
+        self.get_logger().warn('[UR5SkillExecutorNode] Cancel requested for in-progress skill.')
+        return CancelResponse.ACCEPT
+
     def _execute_skill_callback(self, goal_handle):
         skill_name = goal_handle.request.skill_name.lower()
         skill_args = json.loads(goal_handle.request.skill_args_json)
@@ -468,6 +497,12 @@ class UR5SkillExecutorNode(Node):
             goal_handle.succeed()
             result.success = True
             result.result_json = json.dumps({'skill': skill_name, 'status': 'ok'})
+
+        except SkillCancelled as e:
+            self.get_logger().warn(f'[UR5SkillExecutorNode] Skill {skill_name} cancelled: {e}')
+            goal_handle.canceled()
+            result.success = False
+            result.error_message = f'cancelled: {e}'
 
         except Exception as e:
             self.get_logger().error(f'[UR5SkillExecutorNode] Skill {skill_name} failed: {e}')
@@ -501,12 +536,25 @@ class UR5SkillExecutorNode(Node):
             feedback.status = f'Moving to approach position (dir={direction})'
             feedback.progress = 0.3
             goal_handle.publish_feedback(feedback)
-            if not self._move_to_joints(joints, duration_sec=3.0):
+            if not self._move_to_joints(joints, duration_sec=3.0, goal_handle=goal_handle):
                 raise RuntimeError('move_to failed during approach')
 
         elif skill_name == 'pick':
             target = args['target_position']
             force = float(args.get('force', 40.0))
+            # grasp_width: estimated object width (metres) — the RG2 fingers
+            # pivot/arc, so the flange-to-contact-point distance depends on
+            # how wide the fingers must open. Select the calibrated offset
+            # for this width and apply it to the IK tool transform before
+            # moving in, so target_position (the contact point) is reached
+            # accurately regardless of object size.
+            grasp_width = float(args.get('grasp_width', 0.0))
+            tcp_offset_z = tcp_offset_z_for_width(grasp_width if grasp_width > 0.0 else None)
+            self._robot_model.tool = SE3(settings.TCP_OFFSET_X, settings.TCP_OFFSET_Y, tcp_offset_z)
+            self.get_logger().info(
+                f'[UR5SkillExecutorNode] pick: grasp_width={grasp_width:.3f} m '
+                f'→ tcp_offset_z={tcp_offset_z:.3f} m'
+            )
             feedback.status = 'Opening gripper before grasp'
             feedback.progress = 0.1
             goal_handle.publish_feedback(feedback)
@@ -515,7 +563,7 @@ class UR5SkillExecutorNode(Node):
             feedback.progress = 0.3
             goal_handle.publish_feedback(feedback)
             # Linear Cartesian motion from hover to grasp — maintains orientation
-            if not self._move_linear(target, R=self._last_approach_R, duration_sec=3.0):
+            if not self._move_linear(target, R=self._last_approach_R, duration_sec=3.0, goal_handle=goal_handle):
                 raise RuntimeError('linear move failed during pick')
             feedback.status = 'Closing gripper'
             feedback.progress = 0.7
@@ -542,7 +590,7 @@ class UR5SkillExecutorNode(Node):
             feedback.status = 'Linear move to release position'
             feedback.progress = 0.2
             goal_handle.publish_feedback(feedback)
-            if not self._move_linear(release_pos, R=self._last_approach_R, duration_sec=3.0):
+            if not self._move_linear(release_pos, R=self._last_approach_R, duration_sec=3.0, goal_handle=goal_handle):
                 raise RuntimeError('linear move failed during release')
 
             # 2. Open gripper
@@ -551,6 +599,11 @@ class UR5SkillExecutorNode(Node):
             goal_handle.publish_feedback(feedback)
             if not self._gripper_open(force=open_force):
                 raise RuntimeError('gripper open failed')
+
+            # Object released — restore the default TCP offset (mid-open
+            # calibration) so subsequent moves (retract, next approach) use a
+            # known baseline until the next pick sets it from grasp_width.
+            self._robot_model.tool = SE3(*self._TCP_OFFSET)
 
             # 3. Retract linearly back to the approach hover position
             retract_target = self._last_approach_hover
@@ -563,7 +616,7 @@ class UR5SkillExecutorNode(Node):
                 feedback.status = 'Retracting to hover position'
                 feedback.progress = 0.7
                 goal_handle.publish_feedback(feedback)
-                if not self._move_linear(retract_target, R=self._last_approach_R, duration_sec=3.0):
+                if not self._move_linear(retract_target, R=self._last_approach_R, duration_sec=3.0, goal_handle=goal_handle):
                     raise RuntimeError('linear retract failed during release')
 
             # Clear approach state — next sequence starts fresh
@@ -574,7 +627,7 @@ class UR5SkillExecutorNode(Node):
             feedback.status = 'Moving to home'
             feedback.progress = 0.3
             goal_handle.publish_feedback(feedback)
-            if not self._move_to_joints(self.HOME_JOINTS, duration_sec=4.0):
+            if not self._move_to_joints(self.HOME_JOINTS, duration_sec=4.0, goal_handle=goal_handle):
                 raise RuntimeError('move_to home failed')
 
         elif skill_name == 'open_gripper':

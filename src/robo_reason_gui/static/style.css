@@ -159,6 +159,26 @@ main { padding: 24px; }
 }
 .icon-btn:hover { color: var(--fg); border-color: #555c70; }
 
+/* ---- prominent Mode selector (top-right of the Configuration card) ---- */
+.mode-select { gap: 6px; }
+.mode-select label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.mode-select select {
+  background: #16233d;
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .card {
   background: var(--card);
   border: 1px solid #2a2e37;
@@ -219,6 +239,19 @@ code { color: var(--accent); }
   gap: 6px;
 }
 .grid label.check input { width: auto; }
+
+/* ---- scene-grounding (VLM) fields, shown only in VLM_LLM mode ---- */
+.grounding-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #2a2e37;
+}
+.grounding-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
 
 .error { color: #e5484d; font-size: 13px; }
 .ok { color: #30a46c; font-size: 13px; }
@@ -311,6 +344,10 @@ label.check {
   cursor: pointer;
 }
 .chat-form button:disabled { opacity: 0.5; cursor: default; }
+.chat-form button.estop {
+  background: #e5484d;
+  flex: 0 0 auto;
+}
 
 #chat-history { display: flex; flex-direction: column; gap: 12px; }
 

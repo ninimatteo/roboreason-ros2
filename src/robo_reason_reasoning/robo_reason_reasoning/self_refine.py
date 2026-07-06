@@ -38,7 +38,9 @@ class SelfRefine(ReasoningMethod):
             'action_placeholder1': self.action_placeholder,
             'action_placeholder2': self.action_placeholder,
         }
-        if not self.use_vlm:
+        if self.use_vlm:
+            format_args['pixels_width'], format_args['pixels_height'] = self._image_pixel_dims(image)
+        else:
             format_args['environment_map'] = environment_map
 
         msg = initial_solution_prompt.format(**format_args)
@@ -85,7 +87,9 @@ class SelfRefine(ReasoningMethod):
             'action_placeholder1': self.action_placeholder,
             'action_placeholder2': self.action_placeholder,
         }
-        if not self.use_vlm:
+        if self.use_vlm:
+            format_args['pixels_width'], format_args['pixels_height'] = self._image_pixel_dims(image)
+        else:
             format_args['environment_map'] = environment_map
 
         msg = refinement_prompt.format(**format_args)
@@ -101,7 +105,7 @@ class SelfRefine(ReasoningMethod):
         if iteration >= self.max_iterations:
             return True
         try:
-            if json.loads(feedback).get('is_satisfactory', False):
+            if json.loads(self._strip_json_fence(feedback)).get('is_satisfactory', False):
                 return True
         except (json.JSONDecodeError, KeyError):
             pass
@@ -134,7 +138,7 @@ class SelfRefine(ReasoningMethod):
             self._verbose_print(f'Iteration {t+1} refined', {'solution': current})
 
         try:
-            return json.loads(current).get('plan', [])
+            return json.loads(self._strip_json_fence(current)).get('plan', [])
         except json.JSONDecodeError:
             return []
 

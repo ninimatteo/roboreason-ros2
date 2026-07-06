@@ -7,6 +7,7 @@ const probeTraj = document.getElementById('probe-traj');
 const probeJoints = document.getElementById('probe-joints');
 const probeIo = document.getElementById('probe-io');
 const probePendant = document.getElementById('probe-pendant');
+const calibLed = document.getElementById('calib-led');
 
 const cameraImg = document.getElementById('camera-img');
 const cameraPlaceholder = document.getElementById('camera-placeholder');
@@ -26,6 +27,13 @@ const selModel = document.getElementById('sel-model');
 const inpTemp = document.getElementById('inp-temp');
 const chkMockLlm = document.getElementById('chk-mock-llm');
 const optionsError = document.getElementById('options-error');
+
+// VLM_LLM-only scene-grounding model selectors (independent of the planning
+// provider/model above — see vlm_llm_planner_node's vlm_model_name param).
+const groundingFields = document.getElementById('grounding-fields');
+const selVlmProvider = document.getElementById('sel-vlm-provider');
+const selVlmModel = document.getElementById('sel-vlm-model');
+const inpVlmTemp = document.getElementById('inp-vlm-temp');
 
 const cfgApply = document.getElementById('cfg-apply');
 const cfgResult = document.getElementById('cfg-result');
@@ -50,6 +58,8 @@ const headerReconnect = document.getElementById('header-reconnect');
 
 const chkMockRobot = document.getElementById('chk-mock-robot');
 const chkMockCamera = document.getElementById('chk-mock-camera');
+const wrapMockCamera = document.getElementById('wrap-mock-camera');
+const wrapMockLlm = document.getElementById('wrap-mock-llm');
 const stackState = document.getElementById('stack-state');
 const stackInfo = document.getElementById('stack-info');
 const stackLogs = document.getElementById('stack-logs');
@@ -196,7 +206,12 @@ async function loadOptions() {
     llmProviderModels = data.providers || {};
     vlmProviderModels = data.vlm_providers || {};
 
-    if (data.temperature_default != null) inpTemp.value = data.temperature_default;
+    if (data.temperature_default != null) {
+      inpTemp.value = data.temperature_default;
+      inpVlmTemp.value = data.temperature_default;
+    }
+    fillSelect(selVlmProvider, Object.keys(vlmProviderModels));
+    fillSelect(selVlmModel, vlmProviderModels[selVlmProvider.value] || []);
     syncModelsByMode();  // populates providers + models for the initial mode
   } catch (err) {
     optionsError.hidden = false;
@@ -208,43 +223,74 @@ async function loadOptions() {
 selProvider.addEventListener('change', () => {
   fillSelect(selModel, currentProviderModels()[selProvider.value] || []);
 });
+selVlmProvider.addEventListener('change', () => {
+  fillSelect(selVlmModel, vlmProviderModels[selVlmProvider.value] || []);
+});
 
 // ---- live config (B2) ----
 function currentConfig() {
   // The backend expects model_name as "provider/model" (see ModelRegistry);
   // the dropdown keys are bare, so prefix them with the selected provider.
   const model = selModel.value ? `${selProvider.value}/${selModel.value}` : '';
-  return {
+  const config = {
     mode: selMode.value || 'LLM',
     reasoning_method: selReasoning.value,
     model_name: model,
     temperature: parseFloat(inpTemp.value),
     use_mock_llm: chkMockLlm.checked,
   };
+  if ((selMode.value || 'LLM').toUpperCase() === 'VLM_LLM') {
+    config.vlm_model_name = selVlmModel.value
+      ? `${selVlmProvider.value}/${selVlmModel.value}`
+      : '';
+    config.vlm_temperature = parseFloat(inpVlmTemp.value);
+  }
+  return config;
 }
 
 cfgApply.addEventListener('click', async () => {
   cfgApply.disabled = true;
   cfgResult.className = 'muted';
-  cfgResult.textContent = 'applying…';
+  // The stack only ever launches ONE planner node (per PLANNER_NODE_BY_MODE),
+  // so switching Mode to something other than what the stack was started with
+  // has no live target to patch — restart the stack instead of PATCHing.
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  const modeMismatch = stackRunning && (stackTarget?.mode || '').toUpperCase() !== mode;
   try {
-    const data = await postJSON('/api/config', currentConfig());
-    if (data.error) {
-      cfgResult.className = 'error';
-      cfgResult.textContent = data.error;
-      toast('Config: ' + data.error, 'error');
-    } else if (data.applied) {
-      cfgResult.className = 'ok';
-      cfgResult.textContent = `applied to ${data.target}`;
-      toast(`Config applied to ${data.target}`, 'success');
+    if (modeMismatch) {
+      cfgResult.textContent = 'mode changed — restarting stack…';
+      const data = await postJSON('/api/stack/restart', stackPayload());
+      if (data.error) {
+        cfgResult.className = 'error';
+        cfgResult.textContent = data.error;
+        toast('Stack: ' + data.error, 'error');
+      } else if (data.status) {
+        renderStack(data.status);
+        cfgResult.className = 'ok';
+        cfgResult.textContent = `stack restarted in ${mode} mode`;
+        toast(`Stack restarted in ${mode} mode`, 'success');
+        if (data.warning) toast('Stack: ' + data.warning, 'info', 6000);
+      }
     } else {
-      cfgResult.className = 'error';
-      const failed = Object.entries(data.results || {})
-        .filter(([, r]) => !r.successful)
-        .map(([k, r]) => `${k}: ${r.reason || 'rejected'}`)
-        .join('; ');
-      cfgResult.textContent = failed || 'some parameters were rejected';
-      toast('Config: ' + (failed || 'some parameters were rejected'), 'error');
+      cfgResult.textContent = 'applying…';
+      const data = await postJSON('/api/config', currentConfig());
+      if (data.error) {
+        cfgResult.className = 'error';
+        cfgResult.textContent = data.error;
+        toast('Config: ' + data.error, 'error');
+      } else if (data.applied) {
+        cfgResult.className = 'ok';
+        cfgResult.textContent = `applied to ${data.target}`;
+        toast(`Config applied to ${data.target}`, 'success');
+      } else {
+        cfgResult.className = 'error';
+        const failed = Object.entries(data.results || {})
+          .filter(([, r]) => !r.successful)
+          .map(([k, r]) => `${k}: ${r.reason || 'rejected'}`)
+          .join('; ');
+        cfgResult.textContent = failed || 'some parameters were rejected';
+        toast('Config: ' + (failed || 'some parameters were rejected'), 'error');
+      }
     }
   } catch (err) {
     cfgResult.className = 'error';
@@ -264,11 +310,20 @@ function stackPayload() {
   };
 }
 
-// The camera toggle and model lists both depend on the current mode.
+// The mock-camera and mock-LLM toggles (in the Stack card) only apply to
+// modes that actually use a camera / an LLM, so hide them otherwise.
 function syncCameraToggle() {
-  const vlm = (selMode.value || 'LLM').toUpperCase() === 'VLM';
-  chkMockCamera.disabled = !vlm;
-  chkMockCamera.parentElement.style.opacity = vlm ? '1' : '0.5';
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  const usesCamera = mode === 'VLM' || mode === 'VLM_LLM';
+  const usesLlm = mode === 'LLM';
+  wrapMockCamera.hidden = !usesCamera;
+  wrapMockLlm.hidden = !usesLlm;
+}
+
+// The grounding provider/model/temperature fields only apply to VLM_LLM
+// (independent scene-grounding model, see vlm_llm_planner_node).
+function syncGroundingVisibility() {
+  groundingFields.hidden = (selMode.value || 'LLM').toUpperCase() !== 'VLM_LLM';
 }
 
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
@@ -282,14 +337,38 @@ function syncModelsByMode() {
   if (providers.includes(prevProvider)) selProvider.value = prevProvider;
   fillSelect(selModel, map[selProvider.value] || []);
   syncCameraToggle();
+  syncGroundingVisibility();
 }
 selMode.addEventListener('change', syncModelsByMode);
+
+// Gate stack Start/Restart on real-robot readiness: in real-robot mode (mock
+// robot unchecked) the stack talks to controllers that only exist once the
+// GUI-owned UR driver is up AND the teach pendant has accepted the reverse
+// interface — starting the stack earlier just produces confusing planner/
+// executor timeouts. Mock-robot mode has no such dependency.
+let stackRunning = false;
+let stackTarget = null;  // status.target from the last /api/stack poll — used to
+                          // detect a mode mismatch between the GUI and the running stack.
+let robotReady = false;
+
+function updateStackStartGate() {
+  const needsRealRobot = !chkMockRobot.checked;
+  const blockedByDriver = needsRealRobot && !robotReady;
+  stackStart.disabled = stackRunning || blockedByDriver;
+  stackRestart.disabled = blockedByDriver;
+  stackStart.title = blockedByDriver
+    ? 'Start the UR driver and wait for it to connect (green LED) before starting the stack in real-robot mode.'
+    : '';
+}
+chkMockRobot.addEventListener('change', updateStackStartGate);
 
 function renderStack(status) {
   const running = !!status.running;
   stackState.textContent = running ? 'running' : 'stopped';
   stackState.className = 'badge ' + (running ? 'badge-on' : 'badge-off');
-  stackStart.disabled = running;
+  stackRunning = running;
+  stackTarget = status.target || null;
+  updateStackStartGate();
   stackStop.disabled = !running;
 
   if (status.target) {
@@ -297,7 +376,7 @@ function renderStack(status) {
     const parts = [
       t.mode,
       `robot:${t.mock_robot ? 'mock' : 'real'}`,
-      t.mode === 'VLM' ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
+      (t.mode === 'VLM' || t.mode === 'VLM_LLM') ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
       t.mock_llm ? 'llm:mock' : 'llm:real',
     ].filter(Boolean);
     stackInfo.textContent =
@@ -523,6 +602,19 @@ async function cameraServiceAction(url) {
 camSvcStart.addEventListener('click', () => cameraServiceAction('/api/camera/service/start'));
 camSvcStop.addEventListener('click', () => cameraServiceAction('/api/camera/service/stop'));
 
+document.getElementById('cam-recalibrate').addEventListener('click', async function () {
+  this.disabled = true;
+  try {
+    const data = await fetch('/api/camera/recalibrate', { method: 'POST' }).then(r => r.json());
+    toast(data.message || (data.ok ? 'Recalibration started' : (data.error || 'failed')),
+          data.ok ? 'info' : 'error');
+  } catch (err) {
+    toast('Recalibrate request failed: ' + err, 'error');
+  } finally {
+    this.disabled = false;
+  }
+});
+
 // ---- health (polled) ----
 async function pollHealth() {
   try {
@@ -532,6 +624,11 @@ async function pollHealth() {
 
     const robot = data.robot || { level: 'red', probes: {}, pendant: {} };
     robotLed.className = 'led led-' + robot.level;
+    // 'green' already means controllers up AND (not GUI-supervised OR pendant
+    // connected) — see bridge_node.py::_robot_status(). Reuse it to gate the
+    // stack Start button instead of re-deriving driver/pendant state here.
+    robotReady = robot.level === 'green';
+    updateStackStartGate();
     setDot(probeTraj, robot.probes.trajectory_server);
     setDot(probeJoints, robot.probes.joint_states);
     setDot(probeIo, robot.probes.gripper_io);
@@ -539,6 +636,12 @@ async function pollHealth() {
     // (red dot) until it connects, green once the reverse interface is up.
     const pendant = robot.pendant || {};
     setDot(probePendant, pendant.connected);
+
+    // Calibration LED: amber until the first status message arrives (camera
+    // node not up yet / never calibrated), green once locked, red if a
+    // recalibration reset it back to unlocked.
+    const calib = data.calibration || { calibrated: false, seen: false };
+    calibLed.className = 'led led-' + (!calib.seen ? 'amber' : (calib.calibrated ? 'green' : 'red'));
 
     bridgeNode.textContent = data.bridge_node || '—';
     nodeCount.textContent = data.node_count;
@@ -560,9 +663,27 @@ const chatInput = document.getElementById('chat-input');
 const chatSend = document.getElementById('chat-send');
 const chatHistory = document.getElementById('chat-history');
 const chatClear = document.getElementById('chat-clear');
+const chatEstop = document.getElementById('chat-estop');
 
 chatClear.addEventListener('click', () => {
   chatHistory.innerHTML = '';
+});
+
+chatEstop.addEventListener('click', async () => {
+  chatEstop.disabled = true;
+  try {
+    const data = await postJSON('/api/execute/cancel', {});
+    if (data.error || data.ok === false) {
+      toast('Emergency stop: ' + (data.error || data.message || 'failed'), 'error');
+    } else {
+      toast(data.message || 'Robot stopped and returned home', 'info');
+      setPlanState('cancelled', 'badge-off');
+    }
+  } catch (err) {
+    toast('Emergency stop request failed: ' + err, 'error');
+  }
+  // Left enabled=false here — sendCommand() re-enables it only while a new
+  // plan/execute cycle is actually in flight.
 });
 
 function el(tag, className, text) {
@@ -705,7 +826,10 @@ async function sendCommand(command) {
     ws.onerror = resolve; // proceed even if the log stream is unavailable
   });
 
-  // 4. Execute.
+  // 4. Execute. Enabled only for this window, since /cancel_execution is
+  // meaningless before a skill is in flight and the plan is done by the time
+  // execute() resolves either way.
+  chatEstop.disabled = false;
   let execData;
   try {
     execData = await postJSON('/api/execute', { plan_json: planData.plan_json });
@@ -718,6 +842,7 @@ async function sendCommand(command) {
     return;
   } finally {
     ws.close();
+    chatEstop.disabled = true;
   }
 
   status.remove();

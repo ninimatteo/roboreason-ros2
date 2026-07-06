@@ -16,6 +16,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PixelArray.msg"
   "srv/PlanTask.srv"
   "srv/ExecutePlan.srv"
+  "srv/CancelExecution.srv"
   "srv/GetImage.srv"
   "srv/Deproject.srv"
   "action/ExecuteSkill.action"

@@ -14,10 +14,13 @@ from control_msgs.action import FollowJointTrajectory
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from ur_msgs.srv import SetIO
 
-from robo_reason_interfaces.srv import ExecutePlan, GetImage, PlanTask
+from std_srvs.srv import Trigger
+
+from robo_reason_interfaces.msg import PixelArray
+from robo_reason_interfaces.srv import CancelExecution, ExecutePlan, GetImage, PlanTask
 
 # Topic the plan manager publishes per-step execution progress on.
 EXECUTION_LOG_TOPIC = '/execution_log'
@@ -29,7 +32,11 @@ EXECUTION_LOG_TOPIC = '/execution_log'
 EXECUTE_SKILL_STATUS_TOPIC = '/execute_skill/_action/status'
 
 # Planner node names per mode — targets for live parameter updates.
-PLANNER_NODE_BY_MODE = {'LLM': 'llm_planner_node', 'VLM': 'vlm_planner_node'}
+PLANNER_NODE_BY_MODE = {
+    'LLM': 'llm_planner_node',
+    'VLM': 'vlm_planner_node',
+    'VLM_LLM': 'vlm_llm_planner_node',
+}
 
 # use_mock_llm only exists on the LLM planner.
 SET_PARAM_TIMEOUT_S = 5.0
@@ -42,6 +49,15 @@ JOINT_STATES_TOPIC = '/joint_states'
 # Unified camera frame grab — exposed by both the mock and real camera nodes.
 CAMERA_GET_IMAGE_SERVICE = '/camera/get_image'
 CAMERA_TIMEOUT_S = 4.0
+
+# Debug pixel overlay — published by camera_services_node on every Deproject call.
+PIXEL_DEBUG_TOPIC = '/camera/debug_pixels'
+# ChArUco axis keypoints — 4 projected pixel coords (origin, X, Y, Z) at ~2 Hz.
+CHARUCO_AXIS_TOPIC = '/camera/charuco_axis'
+# Service to force ChArUco re-calibration without restarting the camera node.
+CAMERA_RECALIBRATE_SERVICE = '/camera/recalibrate'
+# Whether the camera→base_link transform is currently locked, published at ~2 Hz.
+CALIBRATION_STATUS_TOPIC = '/camera/calibration_status'
 
 # A /joint_states message older than this (seconds) is considered stale.
 JOINT_STATES_TIMEOUT_S = 2.0
@@ -93,9 +109,31 @@ class GuiBridgeNode(Node):
         # --- camera frame grab (request the latest RGB frame on demand) ---
         self._camera_client = self.create_client(GetImage, CAMERA_GET_IMAGE_SERVICE)
 
+        # --- debug pixel overlay (VLM target positions from Deproject calls) ---
+        self._latest_debug_pixels: list = []
+        self._debug_pixels_lock = threading.Lock()
+        self.create_subscription(PixelArray, PIXEL_DEBUG_TOPIC, self._on_debug_pixels, 10)
+
+        # --- ChArUco axis overlay (board coordinate frame, ~2 Hz) ---
+        self._latest_charuco_axis: list = []
+        self._charuco_axis_lock = threading.Lock()
+        self.create_subscription(PixelArray, CHARUCO_AXIS_TOPIC, self._on_charuco_axis, 10)
+
+        # --- ChArUco calibration-lock status (drives the GUI LED, ~2 Hz) ---
+        self._calibrated = False
+        self._calibration_seen = False
+        self._calibration_lock = threading.Lock()
+        self.create_subscription(
+            Bool, CALIBRATION_STATUS_TOPIC, self._on_calibration_status, 10
+        )
+
+        # --- ChArUco recalibration service client ---
+        self._recalibrate_client = self.create_client(Trigger, CAMERA_RECALIBRATE_SERVICE)
+
         # --- planning / execution ---
         self._plan_client = self.create_client(PlanTask, '/plan_task')
         self._exec_client = self.create_client(ExecutePlan, '/execute_plan')
+        self._cancel_client = self.create_client(CancelExecution, '/cancel_execution')
         self._command_lock = threading.Lock()
         self._scene_json = self._load_scene()
 
@@ -111,6 +149,17 @@ class GuiBridgeNode(Node):
         # --- live config (SetParameters on the planner) ---
         # One SetParameters client per target node, created lazily and cached.
         self._param_clients = {}
+
+        # --- terminal-log snapshots (camera/robot/stack subprocess output) ---
+        # The GUI-owned supervisors each keep an in-memory ring buffer of their
+        # subprocess's stdout/stderr; this service lets a planner node pull a
+        # snapshot into its own per-run debug folder (see debug_recorder.py).
+        # Populated via set_log_sources() once server_node.py constructs the
+        # supervisors, so it's None (-> empty logs) until then.
+        self._log_sources = {'stack': None, 'camera': None, 'robot': None}
+        self.create_service(
+            Trigger, '/gui/get_terminal_logs', self._handle_get_terminal_logs
+        )
 
         self.get_logger().info('[GuiBridgeNode] started')
 
@@ -168,6 +217,27 @@ class GuiBridgeNode(Node):
         self._pendant_connected = pendant_connected
         self._driver_active = driver_active
 
+    def set_log_sources(self, stack=None, camera=None, driver=None) -> None:
+        """Register the GUI-owned supervisors so /gui/get_terminal_logs can
+        snapshot their live subprocess-log ring buffers on request."""
+        self._log_sources = {'stack': stack, 'camera': camera, 'robot': driver}
+
+    def _handle_get_terminal_logs(self, _request, response):
+        """Snapshot camera/robot/stack subprocess logs for a planner's
+        per-run debug folder (see debug_recorder.DebugRun.save_terminal_logs)."""
+        logs = {}
+        for key, supervisor in self._log_sources.items():
+            if supervisor is None:
+                logs[key] = []
+                continue
+            try:
+                logs[key] = list(supervisor.status().get('logs', []))
+            except Exception as exc:
+                logs[key] = [f'[gui] failed to read {key} logs: {exc}']
+        response.success = True
+        response.message = json.dumps(logs)
+        return response
+
     def _pendant_state(self) -> dict:
         """Whether a real driver is supervised and its pendant is connected."""
         supervised = bool(self._driver_active and self._driver_active())
@@ -193,9 +263,45 @@ class GuiBridgeNode(Node):
         return {'level': level, 'probes': probes, 'pendant': pendant}
 
     # ------------------------------------------------------------------ camera
+    def _on_debug_pixels(self, msg: PixelArray) -> None:
+        if len(msg.u) != len(msg.v):
+            return
+        with self._debug_pixels_lock:
+            self._latest_debug_pixels = list(zip(msg.u, msg.v))
+
+    def _on_charuco_axis(self, msg: PixelArray) -> None:
+        if len(msg.u) != len(msg.v):
+            return
+        with self._charuco_axis_lock:
+            # 4 points = [origin, X-end, Y-end, Z-end]; 0 = board not visible.
+            self._latest_charuco_axis = list(zip(msg.u, msg.v))
+
+    def _on_calibration_status(self, msg: Bool) -> None:
+        with self._calibration_lock:
+            self._calibrated = bool(msg.data)
+            self._calibration_seen = True
+
+    def calibration_status(self) -> dict:
+        """Snapshot of ChArUco calibration lock state for the GUI LED.
+
+        ``seen`` is False until the first status message arrives (e.g. the
+        camera node isn't running yet) so the GUI can distinguish "not
+        calibrated" from "unknown".
+        """
+        with self._calibration_lock:
+            return {'calibrated': self._calibrated, 'seen': self._calibration_seen}
+
     def camera_available(self) -> bool:
         """True when a camera node is exposing /camera/get_image."""
         return self._camera_client.service_is_ready()
+
+    def recalibrate_camera(self) -> dict:
+        """Call /camera/recalibrate to force a fresh ChArUco calibration."""
+        try:
+            resp = self._call(self._recalibrate_client, Trigger.Request(), 5.0)
+            return {'ok': resp.success, 'message': resp.message}
+        except Exception as exc:
+            return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
 
     def grab_camera_jpeg(self):
         """Grab the latest frame via /camera/get_image; return JPEG bytes or None."""
@@ -208,12 +314,23 @@ class GuiBridgeNode(Node):
             return None
         if resp is None or not resp.success:
             return None
-        return self._image_to_jpeg(resp.image)
+        with self._debug_pixels_lock:
+            pixels = list(self._latest_debug_pixels)
+        with self._charuco_axis_lock:
+            charuco_axis = list(self._latest_charuco_axis)
+        return self._image_to_jpeg(resp.image, pixels, charuco_axis)
 
     @staticmethod
-    def _image_to_jpeg(img):
-        """Encode a sensor_msgs/Image to JPEG with Pillow (no numpy/cv2 here)."""
-        from PIL import Image as PILImage
+    def _image_to_jpeg(img, pixels=None, charuco_axis=None):
+        """Encode a sensor_msgs/Image to JPEG with Pillow (no numpy/cv2 here).
+
+        pixels       — list of (u, v) tuples: VLM target markers drawn as cyan
+                       bounding box + red crosshair + yellow index label.
+        charuco_axis — list of exactly 4 (u, v) tuples: [origin, X-end, Y-end,
+                       Z-end], drawn as white origin circle + R/G/B axis lines.
+                       Empty list means board not visible; skipped silently.
+        """
+        from PIL import Image as PILImage, ImageDraw
 
         enc = (img.encoding or '').lower()
         size = (img.width, img.height)
@@ -236,6 +353,51 @@ class GuiBridgeNode(Node):
                 return None
         except (ValueError, OSError):
             return None
+
+        if pixels or (charuco_axis and len(charuco_axis) == 4):
+            pil = pil.convert('RGB')
+            draw = ImageDraw.Draw(pil)
+            w, h = pil.size
+
+            # --- ChArUco coordinate axes ---
+            if charuco_axis and len(charuco_axis) == 4:
+                o  = (int(charuco_axis[0][0]), int(charuco_axis[0][1]))
+                xp = (int(charuco_axis[1][0]), int(charuco_axis[1][1]))
+                yp = (int(charuco_axis[2][0]), int(charuco_axis[2][1]))
+                zp = (int(charuco_axis[3][0]), int(charuco_axis[3][1]))
+                draw.line([o, xp], fill='red',   width=3)
+                draw.line([o, yp], fill='lime',  width=3)
+                draw.line([o, zp], fill='blue',  width=3)
+                draw.text(xp, 'X', fill='red')
+                draw.text(yp, 'Y', fill='lime')
+                draw.text(zp, 'Z', fill='blue')
+                # White filled origin circle with black border
+                r = 6
+                draw.ellipse(
+                    [(o[0] - r, o[1] - r), (o[0] + r, o[1] + r)],
+                    fill='white', outline='black', width=2,
+                )
+
+            # --- VLM target pixel markers ---
+            if pixels:
+                marker = 14
+                radius = marker // 2
+                for index, (u, v) in enumerate(pixels, start=1):
+                    u, v = int(u), int(v)
+                    if u < 0 or v < 0 or u >= w or v >= h:
+                        continue
+                    x0 = max(0, u - radius)
+                    y0 = max(0, v - radius)
+                    x1 = min(w - 1, u + radius)
+                    y1 = min(h - 1, v + radius)
+                    draw.rectangle([(x0, y0), (x1, y1)], outline='cyan', width=2)
+                    draw.line([(u - radius, v), (u + radius, v)], fill='red', width=2)
+                    draw.line([(u, v - radius), (u, v + radius)], fill='red', width=2)
+                    draw.text(
+                        (min(w - 10, x1 + 4), max(0, y0 - 14)),
+                        str(index), fill='yellow',
+                    )
+
         buf = io.BytesIO()
         pil.save(buf, format='JPEG', quality=80)
         return buf.getvalue()
@@ -287,6 +449,7 @@ class GuiBridgeNode(Node):
             'node_count': len(names),
             'discovered_nodes': sorted(names),
             'robot': self._robot_status(),
+            'calibration': self.calibration_status(),
         }
 
     # -------------------------------------------------------------- service IO
@@ -375,6 +538,19 @@ class GuiBridgeNode(Node):
             self._command_lock.release()
         return result
 
+    def cancel_execution(self) -> dict:
+        """Emergency-stop: cancel the in-flight skill, abort the rest of the
+        plan, and command the robot home via /cancel_execution.
+
+        Not gated behind _command_lock — this must be callable while
+        execute_command() is blocked waiting on /execute_plan.
+        """
+        try:
+            resp = self._call(self._cancel_client, CancelExecution.Request(), 20.0)
+            return {'ok': resp.success, 'message': resp.message}
+        except Exception as exc:
+            return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
+
     # ------------------------------------------------------------ live config
     @staticmethod
     def _to_param_value(value) -> ParameterValue:
@@ -412,7 +588,9 @@ class GuiBridgeNode(Node):
             return result
 
         # Build the parameter list from the fields the GUI sent. use_mock_llm
-        # is LLM-only; skip it for the VLM planner which never declares it.
+        # is LLM-only; skip it for the VLM/VLM_LLM planners which never declare
+        # it. vlm_model_name/vlm_temperature only exist on the VLM_LLM planner
+        # (independent scene-grounding model, see vlm_llm_planner_node).
         params = []
         if config.get('reasoning_method') is not None:
             params.append(('reasoning_method', str(config['reasoning_method'])))
@@ -422,6 +600,11 @@ class GuiBridgeNode(Node):
             params.append(('temperature', float(config['temperature'])))
         if mode == 'LLM' and config.get('use_mock_llm') is not None:
             params.append(('use_mock_llm', bool(config['use_mock_llm'])))
+        if mode == 'VLM_LLM':
+            if config.get('vlm_model_name') is not None:
+                params.append(('vlm_model_name', str(config['vlm_model_name'])))
+            if config.get('vlm_temperature') is not None:
+                params.append(('vlm_temperature', float(config['vlm_temperature'])))
 
         if not params:
             result['error'] = 'no parameters to set'

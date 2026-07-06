@@ -1,29 +1,31 @@
 """
-Launch file: vlm_dry_run.launch.py
+Launch file: vlm_llm_dry_run.launch.py
 
-Starts the full VLM pipeline without any real hardware:
+Starts the full VLM->LLM hybrid pipeline without any real hardware:
   - mock_camera_service_node  (serves PNG files, fakes deproject)
-  - vlm_planner_node          (VLM agent, connects to mock camera)
-  - plan_manager_node         (validates plan, no-ops skill calls in dry-run)
+  - vlm_llm_planner_node      (VLM scene-grounding call, then LLM planning)
+  - plan_manager_node         (mode=VLM_LLM — strict LLM guardrails, no-ops skill calls)
   - fake_skill_executor_node  (logs actions, no robot movement)
   - task_interface_node       (interactive CLI — optionally in a separate terminal)
 
 Preparation:
   1. Place at least one .png image in the images_dir folder
      (default: /root/ws/src/mock_frames)
-  2. Export your VLM API key, e.g.:
+  2. Export your VLM/LLM API key, e.g.:
        export GROQ_API_KEY=gsk_...
   3. Launch:
-       ros2 launch robo_reason_bringup vlm_dry_run.launch.py
+       ros2 launch robo_reason_bringup vlm_llm_dry_run.launch.py
 
 Two-terminal usage (recommended):
-  Terminal 1: ros2 launch robo_reason_bringup vlm_dry_run.launch.py
+  Terminal 1: ros2 launch robo_reason_bringup vlm_llm_dry_run.launch.py
   Terminal 2: ros2 run robo_reason_task_interface task_interface_node
 
 Parameters:
   reasoning_method        fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
-  model_name              groq/qwen3.6-27b | nebius/qwen3-2.5-70b | etc. (default: groq/qwen3.6-27b)
-  temperature             LLM temperature (default: 0.1)
+  model_name              LLM planning model (default: groq/qwen3.6-27b)
+  temperature             LLM planning temperature (default: 0.1)
+  vlm_model_name          Vision-capable model for scene grounding (default: groq/qwen3.6-27b)
+  vlm_temperature         Scene-grounding temperature (default: 0.1)
   images_dir              Path to folder with .png mock frames (default: /root/ws/src/mock_frames)
   include_task_interface  Launch the CLI node in this process (default: false)
 """
@@ -40,6 +42,8 @@ def generate_launch_description():
         DeclareLaunchArgument('reasoning_method', default_value='fhp'),
         DeclareLaunchArgument('model_name', default_value='groq/qwen3.6-27b'),
         DeclareLaunchArgument('temperature', default_value='0.1'),
+        DeclareLaunchArgument('vlm_model_name', default_value='groq/qwen3.6-27b'),
+        DeclareLaunchArgument('vlm_temperature', default_value='0.1'),
         DeclareLaunchArgument('images_dir', default_value='/root/ws/src/mock_frames'),
         DeclareLaunchArgument('include_task_interface', default_value='false'),
 
@@ -55,13 +59,15 @@ def generate_launch_description():
 
         Node(
             package='robo_reason_planner',
-            executable='vlm_planner_node',
-            name='vlm_planner_node',
+            executable='vlm_llm_planner_node',
+            name='vlm_llm_planner_node',
             output='screen',
             parameters=[{
                 'reasoning_method': LaunchConfiguration('reasoning_method'),
                 'model_name': LaunchConfiguration('model_name'),
                 'temperature': LaunchConfiguration('temperature'),
+                'vlm_model_name': LaunchConfiguration('vlm_model_name'),
+                'vlm_temperature': LaunchConfiguration('vlm_temperature'),
             }],
         ),
 
@@ -70,7 +76,7 @@ def generate_launch_description():
             executable='plan_manager_node',
             name='plan_manager_node',
             output='screen',
-            parameters=[{'mode': 'VLM'}],
+            parameters=[{'mode': 'VLM_LLM'}],
         ),
 
         Node(

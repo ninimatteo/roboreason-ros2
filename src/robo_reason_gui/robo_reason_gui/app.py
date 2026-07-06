@@ -24,6 +24,8 @@ class ConfigRequest(BaseModel):
     model_name: Optional[str] = None
     temperature: Optional[float] = None
     use_mock_llm: Optional[bool] = None
+    vlm_model_name: Optional[str] = None
+    vlm_temperature: Optional[float] = None
 
 
 class StackRequest(BaseModel):
@@ -34,6 +36,8 @@ class StackRequest(BaseModel):
     model_name: Optional[str] = None
     temperature: Optional[float] = None
     use_mock_llm: Optional[bool] = None
+    vlm_model_name: Optional[str] = None
+    vlm_temperature: Optional[float] = None
 
 
 class DriverRequest(BaseModel):
@@ -78,6 +82,13 @@ def create_app(bridge, supervisor, driver, camera=None):
     @app.post('/api/execute')
     def execute(req: ExecuteRequest):
         return bridge.execute_command(req.plan_json)
+
+    @app.post('/api/execute/cancel')
+    def execute_cancel():
+        # Emergency stop — cancels the in-flight skill, aborts the rest of the
+        # plan, and returns the robot home. Sync route -> runs in a threadpool
+        # so it isn't blocked behind a stuck /api/execute call on the same loop.
+        return bridge.cancel_execution()
 
     @app.post('/api/config')
     def config(req: ConfigRequest):
@@ -131,6 +142,10 @@ def create_app(bridge, supervisor, driver, camera=None):
     @app.post('/api/camera/service/stop')
     def camera_service_stop():
         return camera.stop() if camera else {'ok': True}
+
+    @app.post('/api/camera/recalibrate')
+    def camera_recalibrate():
+        return bridge.recalibrate_camera()
 
     @app.get('/api/camera/frame')
     def camera_frame():

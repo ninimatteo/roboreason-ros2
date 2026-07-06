@@ -6,6 +6,9 @@ Starts the full RoboReason stack for the real UR5 robot.
 Mode selection:
   mode=LLM (default) → llm_planner_node + ur5_skill_executor_node
   mode=VLM           → vlm_planner_node + camera_services_node + ur5_skill_executor_node
+  mode=VLM_LLM       → vlm_llm_planner_node + camera_services_node + ur5_skill_executor_node
+                        (VLM grounds a scene-description JSON from the camera,
+                         then the standard LLM pipeline plans against it)
 
 Prerequisites (before launching):
   1. Load ec_with_gripper.urp on the pendant and press Play
@@ -26,12 +29,14 @@ Single-terminal usage:
   ros2 launch robo_reason_bringup real_robot.launch.py include_task_interface:=true
 
 Parameters:
-  mode                    LLM (default) or VLM
+  mode                    LLM (default), VLM, or VLM_LLM
   robot_ip                UR5 robot IP (default: 192.168.2.60)
   use_mock_llm            Dry-run without API key, LLM mode only (default: false)
   reasoning_method        fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
-  model_name              groq/llama4-scout-17b | etc. (default: groq/llama4-scout-17b)
-  temperature             LLM/VLM temperature (default: 0.1)
+  model_name              groq/qwen3.6-27b | etc. (default: groq/qwen3.6-27b) — LLM planning model
+  temperature             LLM/VLM planning temperature (default: 0.1)
+  vlm_model_name          Vision-capable model used for VLM_LLM scene grounding (default: groq/qwen3.6-27b)
+  vlm_temperature         VLM_LLM scene-grounding temperature (default: 0.1)
   include_task_interface  Launch the CLI node in this process (default: false)
 
   home_joints is NOT a launch argument — edit it directly in the executor Node
@@ -48,17 +53,21 @@ from launch.conditions import IfCondition, LaunchConfigurationEquals
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('mode', default_value='LLM',
-                              description="Planner mode: 'LLM' (default) or 'VLM'"),
+                              description="Planner mode: 'LLM' (default), 'VLM', or 'VLM_LLM'"),
         DeclareLaunchArgument('robot_ip', default_value='192.168.2.60',
                               description='UR5 robot IP address'),
         DeclareLaunchArgument('use_mock_llm', default_value='false',
                               description='Use mock planner (no API key needed, LLM mode only)'),
         DeclareLaunchArgument('reasoning_method', default_value='fhp',
                               description='Reasoning method'),
-        DeclareLaunchArgument('model_name', default_value='groq/llama4-scout-17b',
+        DeclareLaunchArgument('model_name', default_value='groq/qwen3.6-27b',
                               description='LLM/VLM model name'),
         DeclareLaunchArgument('temperature', default_value='0.1',
                               description='Temperature (0.0 = deterministic)'),
+        DeclareLaunchArgument('vlm_model_name', default_value='groq/qwen3.6-27b',
+                              description='Vision-capable model for VLM_LLM scene grounding'),
+        DeclareLaunchArgument('vlm_temperature', default_value='0.1',
+                              description='VLM_LLM scene-grounding temperature'),
         DeclareLaunchArgument('include_task_interface', default_value='false',
                               description='Also launch the interactive CLI node in this process'),
 
@@ -88,6 +97,22 @@ def generate_launch_description():
                 'reasoning_method': LaunchConfiguration('reasoning_method'),
                 'model_name': LaunchConfiguration('model_name'),
                 'temperature': LaunchConfiguration('temperature'),
+            }],
+        ),
+
+        # VLM->LLM hybrid planner — launched when mode=VLM_LLM
+        Node(
+            package='robo_reason_planner',
+            executable='vlm_llm_planner_node',
+            name='vlm_llm_planner_node',
+            output='screen',
+            condition=LaunchConfigurationEquals('mode', 'VLM_LLM'),
+            parameters=[{
+                'reasoning_method': LaunchConfiguration('reasoning_method'),
+                'model_name': LaunchConfiguration('model_name'),
+                'temperature': LaunchConfiguration('temperature'),
+                'vlm_model_name': LaunchConfiguration('vlm_model_name'),
+                'vlm_temperature': LaunchConfiguration('vlm_temperature'),
             }],
         ),
 

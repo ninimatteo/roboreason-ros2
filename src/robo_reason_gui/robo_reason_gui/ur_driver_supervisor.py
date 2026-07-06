@@ -8,7 +8,10 @@ with a short backoff until the robot is ready (verified through the bridge's
 connectivity probes) or an attempt budget is exhausted.
 
 Readiness is decided by ``ready_check`` (the bridge's ``robot_ready``), not by
-log scraping — log markers are kept only as human-readable instrumentation in
+log scraping. ERROR_MARKERS lines are the one exception: they abort the
+current attempt immediately (instead of waiting out READY_TIMEOUT_S) since a
+launch that's already logged a failure isn't going to become ready by waiting
+longer. All other markers are kept only as human-readable instrumentation in
 the ring buffer and per-attempt history. Once connected, the supervisor watches
 for an unexpected process exit and reconnects automatically.
 
@@ -95,6 +98,11 @@ class UrDriverSupervisor:
         self._proc = None
         self._worker = None
         self._stop_event = threading.Event()
+        # Set by _pump_output as soon as an ERROR_MARKERS line appears for the
+        # current attempt, so _await_ready can abort immediately instead of
+        # waiting out the full READY_TIMEOUT_S on an attempt that has already
+        # announced it failed (e.g. "Failed to connect", "connection refused").
+        self._error_event = threading.Event()
         self._state = 'stopped'
         self._attempt = 0
         self._reverse_connected = False  # pendant seen on the reverse interface
@@ -250,6 +258,7 @@ class UrDriverSupervisor:
             if outcome == 'stopped':
                 break
             reason = {'exited': 'driver process exited before ready',
+                      'error': 'driver logged an error before connecting',
                       'timeout': f'robot not ready within {self.READY_TIMEOUT_S:.0f}s'}.get(outcome, outcome)
             self._record_attempt(attempt, outcome, started, reason)
             self._log(f'attempt {attempt} failed ({reason}, {duration:.1f}s)')
@@ -280,6 +289,7 @@ class UrDriverSupervisor:
         with self._lock:
             self._proc = proc
             self._reverse_connected = False  # fresh process: pendant not yet up
+        self._error_event.clear()
         threading.Thread(target=self._pump_output, args=(proc,), daemon=True).start()
         return proc
 
@@ -292,6 +302,7 @@ class UrDriverSupervisor:
                 tag = 'OK '
             elif any(m in line for m in ERROR_MARKERS):
                 tag = 'ERR '
+                self._error_event.set()
             if REVERSE_INTERFACE_MARKER in line:
                 self._reverse_connected = True
             elif REVERSE_DROPPED_MARKER in line:
@@ -299,7 +310,12 @@ class UrDriverSupervisor:
             self._logs.append({'t': time.strftime('%H:%M:%S'), 'line': f'{tag}{line}'})
 
     def _await_ready(self, proc) -> str:
-        """Wait for readiness. Returns ready|exited|timeout|stopped."""
+        """Wait for readiness. Returns ready|exited|error|timeout|stopped.
+
+        Bails out as soon as an ERROR_MARKERS line is seen instead of waiting
+        out the full READY_TIMEOUT_S — a launch that's already logged e.g.
+        "Failed to connect" isn't going to become ready by waiting longer.
+        """
         deadline = time.monotonic() + self.READY_TIMEOUT_S
         while time.monotonic() < deadline:
             if self._stop_event.is_set():
@@ -308,6 +324,8 @@ class UrDriverSupervisor:
                 return 'exited'
             if self._safe_ready():
                 return 'ready'
+            if self._error_event.is_set():
+                return 'error'
             time.sleep(self.READY_POLL_S)
         return 'timeout'
 

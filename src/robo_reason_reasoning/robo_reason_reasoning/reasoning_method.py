@@ -1,5 +1,6 @@
 """Abstract base class for all reasoning methods — ported from RoboReason-Lab."""
 import json
+import re
 from abc import ABC, abstractmethod
 
 from robo_reason_reasoning.FoundationClients.src.llm_client import LLMClient
@@ -28,10 +29,43 @@ class ReasoningMethod(ABC):
         getter = prompt_cls.get_vlm_prompts if self.use_vlm else prompt_cls.get_llm_prompts
         return getter()
 
+    def _image_pixel_dims(self, image) -> tuple:
+        """Return (width, height) of the image file, or (0, 0) if unavailable.
+
+        Used to fill the {pixels_width}/{pixels_height} placeholders in VLM
+        prompts so the model knows the valid pixel coordinate range for the
+        image it's reasoning about.
+        """
+        if not image:
+            return 0, 0
+        try:
+            from PIL import Image
+            with Image.open(image) as img:
+                return img.size
+        except Exception:
+            return 0, 0
+
+    _JSON_FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)\n?```$', re.DOTALL)
+
+    @classmethod
+    def _strip_json_fence(cls, text: str) -> str:
+        """Strip a ```json ... ``` / ``` ... ``` markdown code fence.
+
+        Some models wrap their answer in a fence even when JSON-only output
+        was requested, which makes a plain json.loads() fail. Applying this
+        before parsing keeps that a no-op for models that already return bare
+        JSON, while fixing the ones that don't.
+        """
+        if not isinstance(text, str):
+            return text
+        stripped = text.strip()
+        match = cls._JSON_FENCE_RE.match(stripped)
+        return match.group(1).strip() if match else stripped
+
     def _call_client(self, user_message: str, system_message: str, force_json: bool = False, image=None, **kwargs):
         if self.use_vlm:
             text_prompt = f"**System Message**:\n{system_message}\n\n**User Message**: \n{user_message}"
-            return self.client(text_prompt=text_prompt, image=image, force_json_response=force_json, **kwargs)
+            return self.client(text_prompt=text_prompt, image=image, force_json=force_json, **kwargs)
         else:
             return self.client(user_message=user_message, system_message=system_message, force_json=force_json, **kwargs)
 

@@ -16,9 +16,10 @@ from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String
 import json
 import threading
+import time
 
 from robo_reason_bringup.config import settings
-from robo_reason_interfaces.srv import ExecutePlan
+from robo_reason_interfaces.srv import ExecutePlan, CancelExecution
 from robo_reason_interfaces.action import ExecuteSkill
 from robo_reason_manager.world_state import WorldState
 from robo_reason_manager.plan_validator import PlanValidator
@@ -41,10 +42,27 @@ class PlanManagerNode(Node):
             callback_group=self._cb_group
         )
 
+        self._cancel_service = self.create_service(
+            CancelExecution, '/cancel_execution',
+            self._cancel_execution_callback,
+            callback_group=self._cb_group
+        )
+
         self._skill_client = ActionClient(
             self, ExecuteSkill, '/execute_skill',
             callback_group=self._cb_group
         )
+
+        # Set to the ExecuteSkill goal handle currently in flight (cleared once
+        # its result arrives), and checked by the emergency-stop cancel service
+        # below — this is what lets /cancel_execution interrupt a skill that's
+        # already mid-motion on the executor, not just goals not yet sent.
+        self._active_goal_handle = None
+        self._active_goal_lock = threading.Lock()
+        # Set for the duration of a cancel request; the plan loop polls this
+        # between steps so it stops sending further skills once a stop is
+        # requested, even if the in-flight skill's cancel hasn't resolved yet.
+        self._stop_requested = threading.Event()
 
         self._world_state_pub = self.create_publisher(String, '/world_state', 10)
         self._log_pub = self.create_publisher(String, '/execution_log', 10)
@@ -55,6 +73,10 @@ class PlanManagerNode(Node):
 
     def _execute_plan_callback(self, request, response):
         self.get_logger().info('[PlanManagerNode] Received execute_plan request.')
+
+        # Clear any leftover stop flag from a previous cancelled run so this
+        # fresh plan isn't blocked before it even starts.
+        self._stop_requested.clear()
 
         # Parse inputs
         try:
@@ -92,6 +114,12 @@ class PlanManagerNode(Node):
         report_lines = []
 
         for step in plan:
+            if self._stop_requested.is_set():
+                self.get_logger().warn('[PlanManagerNode] Execution cancelled by user; stopping remaining steps.')
+                response.success = False
+                response.error_message = 'Execution cancelled by user'
+                return response
+
             skill_name = step.get('action_name', '').lower()
             skill_args = extract_skill_args(step)
             step_idx = step.get('step', '?')
@@ -136,11 +164,18 @@ class PlanManagerNode(Node):
     # -------------------------------------------------------------------------
 
     def _send_skill_goal_sync(self, goal_msg, timeout_sec: float = 60.0):
-        """Send an ExecuteSkill goal and block until result is received."""
+        """Send an ExecuteSkill goal and block until result is received.
+
+        Tracks the accepted goal handle on self._active_goal_handle for the
+        duration of the goal so /cancel_execution can reach in and cancel a
+        skill that's already mid-motion, not just goals not yet sent.
+        """
         done_event = threading.Event()
         result_holder = [None]
 
         def on_result(future):
+            with self._active_goal_lock:
+                self._active_goal_handle = None
             result_holder[0] = future.result().result
             done_event.set()
 
@@ -153,6 +188,8 @@ class PlanManagerNode(Node):
                 result_holder[0] = _Rejected()
                 done_event.set()
             else:
+                with self._active_goal_lock:
+                    self._active_goal_handle = gh
                 gh.get_result_async().add_done_callback(on_result)
 
         self._skill_client.send_goal_async(goal_msg).add_done_callback(on_goal_response)
@@ -161,6 +198,53 @@ class PlanManagerNode(Node):
         if not completed:
             self.get_logger().error('[PlanManagerNode] Skill action timed out.')
         return result_holder[0]
+
+    # -------------------------------------------------------------------------
+
+    def _cancel_execution_callback(self, request, response):
+        """Emergency-stop: cancel the in-flight skill, stop the plan loop,
+        and command the robot back to its home position."""
+        self.get_logger().warn('[PlanManagerNode] Cancel execution requested.')
+
+        # Stop the per-step loop in _execute_plan_callback from sending any
+        # further skills, even if the in-flight one hasn't resolved yet.
+        self._stop_requested.set()
+
+        # Cancel whatever skill goal is currently in flight, if any.
+        with self._active_goal_lock:
+            active_gh = self._active_goal_handle
+
+        if active_gh is not None:
+            try:
+                active_gh.cancel_goal_async()
+            except Exception as e:
+                self.get_logger().error(f'[PlanManagerNode] Failed to cancel active goal: {e}')
+
+        # Give the executor a brief moment to actually stop moving before we
+        # command it home, so the home goal doesn't queue up behind the
+        # cancelled one on the same joint controller.
+        time.sleep(0.3)
+
+        # Command the robot back to its home position.
+        home_goal = ExecuteSkill.Goal()
+        home_goal.skill_name = 'move_home'
+        home_goal.skill_args_json = json.dumps({})
+
+        home_result = self._send_skill_goal_sync(home_goal, timeout_sec=15.0)
+
+        if home_result is None or not home_result.success:
+            err = home_result.error_message if home_result else 'Timeout or no result'
+            self.get_logger().error(f'[PlanManagerNode] Return-home after cancel FAILED: {err}')
+            response.success = False
+            response.message = f'Cancelled, but return-home failed: {err}'
+        else:
+            self.get_logger().info('[PlanManagerNode] Cancel + return-home completed.')
+            response.success = True
+            response.message = 'Execution cancelled and robot returned home.'
+
+        # Ready for a fresh command.
+        self._stop_requested.clear()
+        return response
 
 
 def main(args=None):

@@ -40,7 +40,9 @@ class CoTSC(ReasoningMethod):
             'action_placeholder1': self.action_placeholder,
             'action_placeholder2': self.action_placeholder,
         }
-        if not self.use_vlm:
+        if self.use_vlm:
+            format_args['pixels_width'], format_args['pixels_height'] = self._image_pixel_dims(image)
+        else:
             format_args['environment_map'] = environment_map
 
         msg = plan_prompt.format(**format_args)
@@ -51,7 +53,7 @@ class CoTSC(ReasoningMethod):
             image=image
         )
         try:
-            parsed = json.loads(resp)
+            parsed = json.loads(self._strip_json_fence(resp))
             # LLMs sometimes return the plan as a bare array instead of
             # {"plan": [...]}.  Accept both shapes.
             if isinstance(parsed, list):

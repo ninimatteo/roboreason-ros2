@@ -33,13 +33,51 @@ class Settings(BaseSettings):
     TEMPERATURE: float = 0.1
 
     # ── VLM planner ───────────────────────────────────────────────────────────
-    TMP_DIR: str = '/root/ws/src/vlm_frames'
+    TMP_DIR: str = 'src/vlm_frames'
+
+    # ── VLM+LLM hybrid planner (scene grounding call, independent of MODEL_NAME
+    # which is used for the subsequent LLM planning call) ─────────────────────
+    VLM_MODEL_NAME: str = 'groq/qwen3.6-27b'
+    VLM_TEMPERATURE: float = 0.1
+
+    # ── Depth-informed grasp geometry (VLM/VLM_LLM pipelines) ──────────────────
+    # Neither camera-grounded pipeline has a hand-calibrated EE contact height
+    # the way scene_mock.json does for LLM mode, so we derive one from real
+    # depth: object height = table_surface_z - deprojected_top_surface_z, and
+    # the pick contact point descends a fraction of that height below the top
+    # surface (mid-body grasp) instead of targeting the bare top surface.
+    PICK_GRASP_DEPTH_FRACTION: float = 0.5   # fraction of object height to descend for pick
+    MIN_OBJECT_HEIGHT_M: float = 0.02        # clamp for depth-computed object height
+
+    # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
+    DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'
+    # Container clock runs in UTC regardless of the operator's local time, so
+    # debug timestamps need an explicit IANA zone to match wall-clock reality.
+    DEBUG_TIMEZONE: str = 'Europe/Berlin'
 
     # ── Executor ──────────────────────────────────────────────────────────────
     ROBOT_IP: str = '192.168.2.60'
     HOME_JOINTS: List[float] = Field(
         default=[-1.9, -1.5708, -1.5708, -1.5708, 1.5708, 0.0]
     )
+    # TCP offset (metres) — tool + gripper stack, e.g. OnRobot RG2 on UR5cb.
+    # Set ROBOREASON_TCP_OFFSET_X/Y/Z env vars (or .env) to override without rebuild.
+    TCP_OFFSET_X: float = 0.0
+    TCP_OFFSET_Y: float = 0.0
+    # The RG2 fingers pivot/arc, so the true flange-to-contact-point distance
+    # varies with finger aperture (i.e. with object width). Calibrated values:
+    # fully open ~0.175 m, mid-open ~0.207 m, fully closed ~0.213 m. Until
+    # width-based interpolation picks the right one per object, default to the
+    # mid-open calibration (closest to how the previous 0.16 default was set).
+    # The width->offset calibration table + interpolation function live in
+    # grasp_geometry.py (derived logic, not a plain setting).
+    TCP_OFFSET_Z: float = 0.207
+    # Length of the rigid clamp/mount body below the flange (metres) — unlike
+    # the fingers, this part doesn't pivot around the object, so a pick that
+    # needs to descend more than (TCP_OFFSET_Z - TCP_CLAMP_CLEARANCE_M) below
+    # an object's top surface will crash the clamp into the object on the way
+    # down. Used to cap pick-target descent depth for tall objects.
+    TCP_CLAMP_CLEARANCE_M: float = 0.15
 
     # ── Camera topics / services ──────────────────────────────────────────────
     COLOR_TOPIC: str = '/camera/color/image_raw'
@@ -48,12 +86,27 @@ class Settings(BaseSettings):
     GET_IMAGE_SERVICE: str = '/camera/get_image'
     DEPROJECT_SERVICE: str = '/camera/deproject'
     PIXEL_DEBUG_TOPIC: str = '/camera/debug_pixels'
+    CHARUCO_AXIS_TOPIC: str = '/camera/charuco_axis'
+    CALIBRATION_STATUS_TOPIC: str = '/camera/calibration_status'
 
     # ── Depth filtering ───────────────────────────────────────────────────────
     WINDOW_SIZE: int = 7
     MIN_DEPTH_M: float = 0.15
     MAX_DEPTH_M: float = 3.0
     Z_OFFSET_M: float = 0.01   # lift deprojected points above table surface
+
+    # ── Local plane-centroid experiment (Deproject pixel refinement) ─────────
+    # Opt-in, fail-open experiment addressing VLM clicks landing on a random
+    # point of the object (often an edge/side facet, not the centre): take a
+    # local window of raw depth around the clicked pixel, keep only the points
+    # near the window's highest base-frame z (the object's local top
+    # horizontal plane), and re-target the (x, y) centroid + z of that plane
+    # instead of trusting the raw click. Falls back to the existing raw
+    # single-pixel lookup whenever too few points survive the threshold.
+    LOCAL_PLANE_CENTROID_ENABLED: bool = True
+    LOCAL_PLANE_CENTROID_RADIUS_PX: int = 25
+    LOCAL_PLANE_CENTROID_Z_TOL_M: float = 0.01
+    LOCAL_PLANE_CENTROID_MIN_POINTS: int = 8
 
     # ── ChArUco calibration board ─────────────────────────────────────────────
     CHARUCO_ENABLED: bool = True

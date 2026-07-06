@@ -8,7 +8,7 @@ Replace with ur5_skill_executor_node for real robot operation.
 
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionServer
+from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 import json
@@ -29,10 +29,15 @@ class FakeSkillExecutorNode(Node):
             ExecuteSkill,
             '/execute_skill',
             self._execute_skill_callback,
+            cancel_callback=self._handle_cancel_request,
             callback_group=self._cb_group,
         )
 
         self.get_logger().info('[FakeSkillExecutorNode] Ready — dry-run mode.')
+
+    def _handle_cancel_request(self, goal_handle):
+        self.get_logger().warn('[FakeSkillExecutorNode] Cancel requested for in-progress (fake) skill.')
+        return CancelResponse.ACCEPT
 
     def _execute_skill_callback(self, goal_handle):
         skill_name = goal_handle.request.skill_name
@@ -43,16 +48,30 @@ class FakeSkillExecutorNode(Node):
         feedback = ExecuteSkill.Feedback()
         result = ExecuteSkill.Result()
 
-        # Progress 0.30
+        # Progress 0.30 — simulated motion, split into short sleeps so an
+        # emergency-stop cancel is noticed within ~0.1s instead of only after
+        # the whole (fake) skill finishes.
         feedback.status = f'Executing {skill_name}...'
         feedback.progress = 0.30
         goal_handle.publish_feedback(feedback)
-        time.sleep(0.3)
+        for _ in range(3):
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                result.success = False
+                result.error_message = 'cancelled: fake motion cancelled by user'
+                return result
+            time.sleep(0.1)
 
         # Progress 0.70
         feedback.progress = 0.70
         goal_handle.publish_feedback(feedback)
-        time.sleep(0.3)
+        for _ in range(3):
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                result.success = False
+                result.error_message = 'cancelled: fake motion cancelled by user'
+                return result
+            time.sleep(0.1)
 
         # Progress 1.00
         feedback.status = 'Done'
