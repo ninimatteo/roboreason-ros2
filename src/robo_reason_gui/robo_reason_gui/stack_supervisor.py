@@ -18,6 +18,8 @@ import threading
 import time
 from collections import deque
 
+from robo_reason_bringup.config import settings
+
 # Node executables (and the launch file itself) that gui_stack.launch.py spawns.
 # The GUI is the sole owner of the stack (B1), so before launching we sweep for
 # any of these left over from a previous gui_node that died without stop() —
@@ -45,23 +47,24 @@ def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict
         f'use_mock_llm:={use_mock_llm}',
         f"mock_robot:={'true' if mock_robot else 'false'}",
         f"mock_camera:={'true' if mock_camera else 'false'}",
-        f"reasoning_method:={config.get('reasoning_method', 'fhp')}",
-        f"model_name:={config.get('model_name', 'groq/qwen3.6-27b')}",
-        f"temperature:={config.get('temperature', 0.1)}",
+        f"reasoning_method:={config.get('reasoning_method', settings.REASONING_METHOD)}",
+        f"model_name:={config.get('model_name', settings.MODEL_NAME)}",
+        f"temperature:={config.get('temperature', settings.TEMPERATURE)}",
         # Only used by the VLM_LLM planner's scene-grounding call; harmless
         # (declared-but-unused launch arg) in LLM/VLM mode.
-        f"vlm_model_name:={config.get('vlm_model_name', 'groq/qwen3.6-27b')}",
-        f"vlm_temperature:={config.get('vlm_temperature', 0.1)}",
+        f"vlm_model_name:={config.get('vlm_model_name', settings.VLM_MODEL_NAME)}",
+        f"vlm_temperature:={config.get('vlm_temperature', settings.VLM_TEMPERATURE)}",
     ]
 
 
 class StackSupervisor:
     """Start/stop/restart the ROS2 stack as a child process group."""
 
-    LOG_CAPACITY = 400
-    STOP_GRACE_S = 8.0
-    GRAPH_CLEAR_TIMEOUT_S = 6.0   # wait for orphan executors to leave the graph
-    GRAPH_POLL_S = 0.3
+    LOG_CAPACITY = settings.STACK_LOG_CAPACITY
+    STOP_GRACE_S = settings.STACK_STOP_GRACE_S
+    GRAPH_CLEAR_TIMEOUT_S = settings.STACK_GRAPH_CLEAR_TIMEOUT_S   # wait for orphan executors to leave the graph
+    GRAPH_POLL_S = settings.STACK_GRAPH_POLL_S
+    FORCE_KILL_GRACE_S = settings.PROCESS_FORCE_KILL_GRACE_S
 
     def __init__(self, logger=None, executor_count=None):
         self._logger = logger
@@ -171,10 +174,10 @@ class StackSupervisor:
         if not self._wait_exit(proc, self.STOP_GRACE_S):
             self._log('stack did not exit on SIGINT, escalating to SIGTERM')
             self._signal_group(pgid, signal.SIGTERM)
-            if not self._wait_exit(proc, 3.0):
+            if not self._wait_exit(proc, self.FORCE_KILL_GRACE_S):
                 self._log('stack still alive, sending SIGKILL')
                 self._signal_group(pgid, signal.SIGKILL)
-                self._wait_exit(proc, 3.0)
+                self._wait_exit(proc, self.FORCE_KILL_GRACE_S)
 
         # The launch ran in its own session, so every node inherits this pgid;
         # confirm the whole group is gone rather than just the launch process.

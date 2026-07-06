@@ -6,6 +6,7 @@ from rclpy.executors import MultiThreadedExecutor
 import uvicorn
 from ament_index_python.packages import get_package_share_directory
 
+from robo_reason_bringup.config import settings
 from robo_reason_gui.app import create_app
 from robo_reason_gui.bridge_node import GuiBridgeNode
 from robo_reason_gui.camera_service_supervisor import CameraServiceSupervisor
@@ -13,9 +14,10 @@ from robo_reason_gui.stack_supervisor import StackSupervisor
 from robo_reason_gui.ur_driver_supervisor import UrDriverSupervisor
 
 # Bind to 0.0.0.0 so the server is reachable from the host. With the
-# container's --network host mode, http://localhost:8080 on the host hits this.
-HOST = '0.0.0.0'
-PORT = 8080
+# container's --network host mode, http://localhost:GUI_PORT on the host
+# hits this.
+HOST = settings.GUI_HOST
+PORT = settings.GUI_PORT
 
 
 def main(args=None):

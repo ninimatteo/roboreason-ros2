@@ -25,6 +25,8 @@ import threading
 import time
 from collections import deque
 
+from robo_reason_bringup.config import settings
+
 # Child processes spawned by ur_control.launch.py that don't die when the
 # launch process group is signalled (each node runs in its own session).
 # These are swept by name in _reap_stale() to guarantee a clean state before
@@ -39,8 +41,8 @@ _DRIVER_PROCESS_PATTERNS = (
 )
 
 # Defaults for the lab UR5cb; overridable per start()/reconnect() request.
-DEFAULT_ROBOT_IP = '192.168.2.60'
-DEFAULT_REVERSE_IP = '192.168.2.80'
+DEFAULT_ROBOT_IP = settings.ROBOT_IP
+DEFAULT_REVERSE_IP = settings.REVERSE_IP
 
 # Substrings scanned in driver stdout purely for operator-facing log context.
 SUCCESS_MARKERS = (
@@ -80,13 +82,14 @@ def _driver_command(robot_ip: str, reverse_ip: str) -> list:
 class UrDriverSupervisor:
     """Launch and babysit the real UR driver, retrying through flaky startups."""
 
-    LOG_CAPACITY = 600
-    HISTORY_CAPACITY = 30
-    MAX_ATTEMPTS = 10
-    READY_TIMEOUT_S = 30.0   # per-attempt wait for the robot to come up
-    BACKOFF_S = 2.0          # pause between failed attempts
-    READY_POLL_S = 0.5
-    STOP_GRACE_S = 8.0
+    LOG_CAPACITY = settings.UR_DRIVER_LOG_CAPACITY
+    HISTORY_CAPACITY = settings.UR_DRIVER_HISTORY_CAPACITY
+    MAX_ATTEMPTS = settings.UR_DRIVER_MAX_ATTEMPTS
+    READY_TIMEOUT_S = settings.UR_DRIVER_READY_TIMEOUT_S   # per-attempt wait for the robot to come up
+    BACKOFF_S = settings.UR_DRIVER_BACKOFF_S               # pause between failed attempts
+    READY_POLL_S = settings.UR_DRIVER_READY_POLL_S
+    STOP_GRACE_S = settings.UR_DRIVER_STOP_GRACE_S
+    FORCE_KILL_GRACE_S = settings.PROCESS_FORCE_KILL_GRACE_S
 
     # State machine: stopped -> connecting -> connected ; failed on giving up.
     def __init__(self, ready_check, logger=None):
@@ -198,7 +201,7 @@ class UrDriverSupervisor:
         self._terminate_current()
         worker = self._worker
         if worker is not None and worker is not threading.current_thread():
-            worker.join(timeout=self.STOP_GRACE_S + 6.0)
+            worker.join(timeout=self.STOP_GRACE_S + 2 * self.FORCE_KILL_GRACE_S)
         with self._lock:
             self._worker = None
             self._proc = None
@@ -380,9 +383,9 @@ class UrDriverSupervisor:
         self._signal_group(pgid, signal.SIGINT)
         if not self._wait_exit(proc, self.STOP_GRACE_S):
             self._signal_group(pgid, signal.SIGTERM)
-            if not self._wait_exit(proc, 3.0):
+            if not self._wait_exit(proc, self.FORCE_KILL_GRACE_S):
                 self._signal_group(pgid, signal.SIGKILL)
-                self._wait_exit(proc, 3.0)
+                self._wait_exit(proc, self.FORCE_KILL_GRACE_S)
 
     @staticmethod
     def _signal_group(pgid: int, sig):

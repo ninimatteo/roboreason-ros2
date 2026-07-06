@@ -19,52 +19,50 @@ from ur_msgs.srv import SetIO
 
 from std_srvs.srv import Trigger
 
+from robo_reason_bringup.config import settings
 from robo_reason_interfaces.msg import PixelArray
 from robo_reason_interfaces.srv import CancelExecution, ExecutePlan, GetImage, PlanTask
 
 # Topic the plan manager publishes per-step execution progress on.
-EXECUTION_LOG_TOPIC = '/execution_log'
+EXECUTION_LOG_TOPIC = settings.EXECUTION_LOG_TOPIC
 
 # The /execute_skill action server publishes this status topic exactly once per
 # server, so its publisher count == number of skill-executor servers. >1 means a
 # duplicate executor is on the graph (e.g. an orphan from a previous stack),
 # which makes every skill run twice and corrupts shared robot state.
-EXECUTE_SKILL_STATUS_TOPIC = '/execute_skill/_action/status'
+EXECUTE_SKILL_STATUS_TOPIC = settings.EXECUTE_SKILL_STATUS_TOPIC
 
 # Planner node names per mode — targets for live parameter updates.
-PLANNER_NODE_BY_MODE = {
-    'LLM': 'llm_planner_node',
-    'VLM': 'vlm_planner_node',
-    'VLM_LLM': 'vlm_llm_planner_node',
-}
+PLANNER_NODE_BY_MODE = settings.PLANNER_NODE_BY_MODE
 
 # use_mock_llm only exists on the LLM planner.
-SET_PARAM_TIMEOUT_S = 5.0
+SET_PARAM_TIMEOUT_S = settings.SET_PARAM_TIMEOUT_S
 
 # Endpoints that indicate the UR5cb / gripper are reachable.
-TRAJ_ACTION = '/scaled_joint_trajectory_controller/follow_joint_trajectory'
-GRIPPER_IO_SERVICE = '/io_and_status_controller/set_io'
-JOINT_STATES_TOPIC = '/joint_states'
+TRAJ_ACTION = settings.TRAJ_ACTION
+GRIPPER_IO_SERVICE = settings.GRIPPER_IO_SERVICE
+JOINT_STATES_TOPIC = settings.JOINT_STATES_TOPIC
 
 # Unified camera frame grab — exposed by both the mock and real camera nodes.
-CAMERA_GET_IMAGE_SERVICE = '/camera/get_image'
-CAMERA_TIMEOUT_S = 4.0
+CAMERA_GET_IMAGE_SERVICE = settings.GET_IMAGE_SERVICE
+CAMERA_TIMEOUT_S = settings.CAMERA_TIMEOUT_S
 
 # Debug pixel overlay — published by camera_services_node on every Deproject call.
-PIXEL_DEBUG_TOPIC = '/camera/debug_pixels'
+PIXEL_DEBUG_TOPIC = settings.PIXEL_DEBUG_TOPIC
 # ChArUco axis keypoints — 4 projected pixel coords (origin, X, Y, Z) at ~2 Hz.
-CHARUCO_AXIS_TOPIC = '/camera/charuco_axis'
+CHARUCO_AXIS_TOPIC = settings.CHARUCO_AXIS_TOPIC
 # Service to force ChArUco re-calibration without restarting the camera node.
-CAMERA_RECALIBRATE_SERVICE = '/camera/recalibrate'
+CAMERA_RECALIBRATE_SERVICE = settings.RECALIBRATE_SERVICE
 # Whether the camera→base_link transform is currently locked, published at ~2 Hz.
-CALIBRATION_STATUS_TOPIC = '/camera/calibration_status'
+CALIBRATION_STATUS_TOPIC = settings.CALIBRATION_STATUS_TOPIC
 
 # A /joint_states message older than this (seconds) is considered stale.
-JOINT_STATES_TIMEOUT_S = 2.0
+JOINT_STATES_TIMEOUT_S = settings.JOINT_STATES_TIMEOUT_S
 
 # Service-call budgets (planning may involve a slow LLM/VLM round-trip).
-PLAN_TIMEOUT_S = 180.0
-EXECUTE_TIMEOUT_S = 300.0
+PLAN_TIMEOUT_S = settings.PLAN_TIMEOUT_S
+EXECUTE_TIMEOUT_S = settings.EXECUTE_TIMEOUT_S
+CANCEL_TIMEOUT_S = settings.CANCEL_TIMEOUT_S
 
 
 class GuiBridgeNode(Node):
@@ -546,7 +544,7 @@ class GuiBridgeNode(Node):
         execute_command() is blocked waiting on /execute_plan.
         """
         try:
-            resp = self._call(self._cancel_client, CancelExecution.Request(), 20.0)
+            resp = self._call(self._cancel_client, CancelExecution.Request(), CANCEL_TIMEOUT_S)
             return {'ok': resp.success, 'message': resp.message}
         except Exception as exc:
             return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}

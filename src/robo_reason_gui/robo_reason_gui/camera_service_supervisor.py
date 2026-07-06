@@ -15,12 +15,15 @@ import threading
 import time
 from collections import deque
 
+from robo_reason_bringup.config import settings
+
 
 class CameraServiceSupervisor:
     """Supervise the Orbbec camera script as a child process."""
 
-    LOG_CAPACITY = 300
-    STOP_GRACE_S = 6.0
+    LOG_CAPACITY = settings.CAMERA_SERVICE_LOG_CAPACITY
+    STOP_GRACE_S = settings.CAMERA_SERVICE_STOP_GRACE_S
+    FORCE_KILL_GRACE_S = settings.PROCESS_FORCE_KILL_GRACE_S
 
     def __init__(self, script_path: str, ready_check=None, logger=None):
         """
@@ -85,9 +88,9 @@ class CameraServiceSupervisor:
                 self._signal_group(pgid, signal.SIGINT)
                 if not self._wait_exit(proc, self.STOP_GRACE_S):
                     self._signal_group(pgid, signal.SIGTERM)
-                    if not self._wait_exit(proc, 3.0):
+                    if not self._wait_exit(proc, self.FORCE_KILL_GRACE_S):
                         self._signal_group(pgid, signal.SIGKILL)
-                        self._wait_exit(proc, 3.0)
+                        self._wait_exit(proc, self.FORCE_KILL_GRACE_S)
         with self._lock:
             self._proc = None
         return {'ok': True, 'status': self.status()}
