@@ -93,7 +93,7 @@ class FHP(ReasoningMethod):
             self._verbose_print('Generated plan', self.task_plan)
 
         if self.task_plan:
-            action = UR5Action(**self.task_plan[0])
+            action = self._build_action(self.task_plan[0])
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 

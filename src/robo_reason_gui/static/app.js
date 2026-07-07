@@ -35,6 +35,11 @@ const selVlmProvider = document.getElementById('sel-vlm-provider');
 const selVlmModel = document.getElementById('sel-vlm-model');
 const inpVlmTemp = document.getElementById('inp-vlm-temp');
 
+// VLM-only pixel-grounding format toggle (point click vs bounding box —
+// see vlm_planner_node's grounding_mode param / VLM_GROUNDING_MODE setting).
+const pixelGroundingFields = document.getElementById('pixel-grounding-fields');
+const selGroundingMode = document.getElementById('sel-grounding-mode');
+
 const cfgApply = document.getElementById('cfg-apply');
 const cfgResult = document.getElementById('cfg-result');
 
@@ -245,6 +250,9 @@ function currentConfig() {
       : '';
     config.vlm_temperature = parseFloat(inpVlmTemp.value);
   }
+  if ((selMode.value || 'LLM').toUpperCase() === 'VLM') {
+    config.grounding_mode = selGroundingMode.value;
+  }
   return config;
 }
 
@@ -326,6 +334,12 @@ function syncGroundingVisibility() {
   groundingFields.hidden = (selMode.value || 'LLM').toUpperCase() !== 'VLM_LLM';
 }
 
+// The pixel-grounding mode (point/bbox) toggle only applies to VLM (the
+// direct pixel-click pipeline, see vlm_planner_node).
+function syncPixelGroundingVisibility() {
+  pixelGroundingFields.hidden = (selMode.value || 'LLM').toUpperCase() !== 'VLM';
+}
+
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
 // different model subsets), then also sync the camera toggle.
 function syncModelsByMode() {
@@ -338,6 +352,7 @@ function syncModelsByMode() {
   fillSelect(selModel, map[selProvider.value] || []);
   syncCameraToggle();
   syncGroundingVisibility();
+  syncPixelGroundingVisibility();
 }
 selMode.addEventListener('change', syncModelsByMode);
 

@@ -54,6 +54,9 @@ def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict
         # (declared-but-unused launch arg) in LLM/VLM mode.
         f"vlm_model_name:={config.get('vlm_model_name', settings.VLM_MODEL_NAME)}",
         f"vlm_temperature:={config.get('vlm_temperature', settings.VLM_TEMPERATURE)}",
+        # Only used by the VLM planner's direct pixel pipeline; harmless
+        # (declared-but-unused launch arg) in LLM/VLM_LLM mode.
+        f"grounding_mode:={config.get('grounding_mode', settings.VLM_GROUNDING_MODE)}",
     ]
 
 

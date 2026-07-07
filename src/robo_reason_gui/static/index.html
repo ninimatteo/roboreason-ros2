@@ -93,6 +93,14 @@
           <input id="inp-temp" type="number" step="0.1" min="0" max="2" />
         </label>
       </div>
+      <div id="pixel-grounding-fields" class="grid" hidden>
+        <label>Pixel grounding (VLM)
+          <select id="sel-grounding-mode">
+            <option value="point">Point (single [x, y] click)</option>
+            <option value="bbox">Bounding box ([x_min, y_min, x_max, y_max])</option>
+          </select>
+        </label>
+      </div>
       <div id="grounding-fields" class="grounding-section" hidden>
         <h3 class="grounding-title">Scene grounding <span class="hint">(VLM — detects objects before LLM planning)</span></h3>
         <div class="grid">

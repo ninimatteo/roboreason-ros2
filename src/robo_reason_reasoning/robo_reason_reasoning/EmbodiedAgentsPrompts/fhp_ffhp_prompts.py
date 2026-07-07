@@ -11,6 +11,7 @@ _LLM_TASK_PLANNING_PROMPT = """
 Your task is to analyze the current state of the environment and the user's request to generate a feasible action plan that is a list of actions in a JSON format.
 
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
+**Current Predicates** The current predicates that define the relationships among objects in the environment: \n{current_predicates}
 **Current Environment Configuration**: \n{current_env_config}
 **Skills Library** A list of available skills and actions you can use: \n{skills}
 
@@ -34,6 +35,7 @@ Penalty for selecting actions not in the skills library.
 Penalty for invalid parameters for the selected action (e.g. using object names not present in the environment description).
 Penalty for not using the current environment description to define action parameters.
 Penalty for proposing infeasible actions based on current state.
+Penalty for proposing infeasible actions based on current state predicates.
 Penalty for computing release_position without accounting for the target object height when stacking.
 
 **Score Assignment**
@@ -56,10 +58,11 @@ Output Format (JSON)
 }}
 """
 
-_VLM_TASK_PLANNING_PROMPT = """
+_VLM_TASK_PLANNING_PROMPT_POINT = """
 Your task is to analyze the image of the environment and the user's request to generate a feasible action plan that is a list of actions in a JSON format.
 
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
+**Current Predicates** The current predicates that define the relationships among objects in the environment: \n{current_predicates}
 **Current Environment Configuration**: Infer from image
 **Skills Library** A list of available skills and actions you can use: \n{skills}
 
@@ -110,6 +113,65 @@ Output Format (JSON)
 }}
 """
 
+_VLM_TASK_PLANNING_PROMPT_BBOX = """
+Your task is to analyze the image of the environment and the user's request to generate a feasible action plan that is a list of actions in a JSON format.
+
+**User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
+**Current Predicates** The current predicates that define the relationships among objects in the environment: \n{current_predicates}
+**Current Environment Configuration**: Infer from image
+**Skills Library** A list of available skills and actions you can use: \n{skills}
+
+**Policy for Action Selection**
+Select actions strictly from the skills library.
+Identify objects and their positions directly from the image.
+Ensure the output strictly follows the provided JSON structured format.
+
+**Spatial Reasoning — Pixel Bounding Boxes**
+You are working in pixel space. The depth camera back-projects the center of a bounding box to a
+3D point on the visible surface, so a tight box around an object gives its top-surface 3D position
+plus its real-world footprint. The image you are given is {pixels_width} pixels wide and
+{pixels_height} pixels tall — every pixel coordinate you output must satisfy
+0 <= x < {pixels_width} and 0 <= y < {pixels_height}.
+- `target_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  object to grasp. Do not include background or neighboring objects inside the box.
+- `release_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  target surface or object to stack on. Its deprojected center z is already the top surface —
+  do NOT add any z offset manually.
+- Always set `object_height` to your visual estimate of the held object's real-world height
+  in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
+  The executor raises the TCP by this amount so the object bottom lands on the surface.
+- Always set `grasp_width` to your visual estimate of the object's real-world width in meters as a
+  fallback (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup) — the executor prefers
+  deriving the width from your bounding box directly, but still needs this field populated.
+- The `approach` before a release must use the same [x_min, y_min, x_max, y_max] box as the
+  release position.
+
+**Penalty Policy for Misalignment**
+Penalty for selecting actions not in the skills library.
+Penalty for bounding boxes that are not tight around the visible object (too loose or clipped).
+Penalty for proposing infeasible actions based on the visible scene.
+Penalty for setting object_height to 0.0 when stacking objects.
+
+**Score Assignment**
+You have to assign an action_score between 0.0 and 1.0 to each action, representing its relevance with respect to the overall actions you can take and feasibility based on current state.
+
+**Output Requirements**
+Your output must be a structured list of relevant actions following the provided JSON format. The answer must provide just a single JSON structure. Do not insert comments, hidden characters or other stuff that may compromise Structured Output.
+Output Format (JSON)
+
+{{
+  "plan": [
+    {{
+      {action_placeholder1}
+    }},
+    ...,
+    {{
+      {action_placeholder2}
+    }}
+  ]
+}}
+"""
+
 
 class FHP_FFHP_Prompts:
 
@@ -119,6 +181,8 @@ class FHP_FFHP_Prompts:
         return _SYSTEM_MESSAGE, _LLM_TASK_PLANNING_PROMPT
 
     @staticmethod
-    def get_vlm_prompts() -> tuple:
+    def get_vlm_prompts(grounding_mode: str = 'point') -> tuple:
         """Return (system_message, task_planning_prompt) for VLM mode."""
-        return _SYSTEM_MESSAGE, _VLM_TASK_PLANNING_PROMPT
+        prompt = (_VLM_TASK_PLANNING_PROMPT_BBOX if grounding_mode == 'bbox'
+                  else _VLM_TASK_PLANNING_PROMPT_POINT)
+        return _SYSTEM_MESSAGE, prompt

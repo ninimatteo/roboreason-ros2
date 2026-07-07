@@ -52,7 +52,7 @@ class StepAction(ReasoningMethod):
 
         output = dict(json.loads(self._strip_json_fence(raw)))
         action_dict = output.get('action', {'action_name': 'move_home'})
-        action = UR5Action(**action_dict)
+        action = self._build_action(action_dict)
         eos = output.get('end_of_simulation', False)
 
         self.task_plan.append(action)

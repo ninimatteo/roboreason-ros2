@@ -298,8 +298,17 @@ class VLMLLMPlannerNode(Node):
             position_z = top_z
             if table_surface_z is not None:
                 height = max(top_z - table_surface_z, min_height)
-                size[2] = height
-                position_z = top_z - min(fraction * height, max_descent)
+                descent = min(fraction * height, max_descent)
+                # size[2] here becomes the LLM's `object_height` on the
+                # paired release action verbatim (fhp_ffhp_prompts.py: "set
+                # object_height to size[2] of the held object"), which the
+                # executor adds to the release z. Since the grasp is
+                # mid-body/clamp-capped (`descent` below the top, not at the
+                # top), only `height - descent` of the object hangs below
+                # the TCP — passing the full height overshoots the release
+                # height by `descent`.
+                size[2] = height - descent
+                position_z = top_z - descent
             objects[key] = {
                 'type': obj.type,
                 'color': obj.color,

@@ -112,6 +112,9 @@ class TreeOfThought(ReasoningMethod):
         tree.create_node("Tree of Thoughts", "0-0")
         db = {}
         best_ids = ['none']
+        # (score, chain) of the best-scoring idle/move_home candidate seen so
+        # far across all iterations, if any.
+        best_terminal = None
 
         for iteration in range(self.t):
             for idx, parent_id in enumerate(best_ids):
@@ -151,15 +154,40 @@ class TreeOfThought(ReasoningMethod):
                     evaluated.append((tid, score))
 
             evaluated.sort(key=lambda x: x[1], reverse=True)
-            best_ids = [e[0] for e in evaluated[:self.b]]
 
-            # Early exit if EoS action found
-            for tid in best_ids:
-                if isinstance(db[tid], dict) and db[tid].get('action_name', '').lower() in ('idle', 'move_home'):
-                    chain = self._retrieve_chain(tid, tree, db)
-                    return chain[:-1], tree
+            # Split this iteration's candidates into live (non-terminal)
+            # branches to keep expanding and idle/move_home candidates that
+            # represent a *complete* plan. Only a terminal candidate's own
+            # branch is finished — other, still-live beam candidates must
+            # keep being explored for the remaining iteration budget rather
+            # than the whole search bailing out because one candidate looked
+            # done (the previous bug: any single idle/move_home candidate in
+            # the top-b beam ended the search immediately, discarding live
+            # sibling branches and unused iteration budget).
+            non_terminal = []
+            terminal = []
+            for tid, score in evaluated:
+                thought = db[tid]
+                if isinstance(thought, dict) and thought.get('action_name', '').lower() in ('idle', 'move_home'):
+                    terminal.append((tid, score))
+                else:
+                    non_terminal.append((tid, score))
 
+            if terminal:
+                tid, score = terminal[0]
+                if best_terminal is None or score > best_terminal[0]:
+                    best_terminal = (score, self._retrieve_chain(tid, tree, db)[:-1])
+
+            if not non_terminal:
+                # Nothing left to expand — the search has genuinely run out
+                # of live branches, regardless of remaining budget.
+                break
+
+            best_ids = [e[0] for e in non_terminal[:self.b]]
             self._verbose_print(f'Iteration {iteration+1} best', {'best_ids': best_ids})
+
+        if best_terminal is not None:
+            return best_terminal[1], tree
 
         chain = self._retrieve_chain(best_ids[0], tree, db)
         return chain, tree
@@ -181,7 +209,7 @@ class TreeOfThought(ReasoningMethod):
             self._verbose_print('ToT final plan', {'plan': self.task_plan})
 
         if self.task_plan:
-            action = UR5Action(**self.task_plan[0])
+            action = self._build_action(self.task_plan[0])
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 

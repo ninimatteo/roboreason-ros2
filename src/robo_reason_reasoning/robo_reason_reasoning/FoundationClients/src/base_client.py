@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import List, Dict, Union, Optional, Any
 from abc import ABC, abstractmethod
 
@@ -26,6 +27,18 @@ try:
     from google.genai import types  # type: ignore[reportMissingImports]
 except ImportError:
     genai = None
+
+# REQUEST_TIMEOUT_S lives in robo_reason_bringup's pydantic-settings config so
+# it's tunable the same way as every other timeout in the stack (env var /
+# .env, see config.py). This is a cross-package import that only resolves
+# inside the ROS2 workspace; the FoundationClients example scripts can also
+# be run standalone (see example_of_usage_*.py), so fall back to the same
+# 60.0 s default when robo_reason_bringup isn't importable.
+try:
+    from robo_reason_bringup.config import settings as _bringup_settings
+    _DEFAULT_REQUEST_TIMEOUT_S = _bringup_settings.REQUEST_TIMEOUT_S
+except ImportError:
+    _DEFAULT_REQUEST_TIMEOUT_S = 60.0
 
 load_dotenv()
 
@@ -113,30 +126,44 @@ class BaseFoundationClient(ABC):
         self.model_name = ModelRegistry.get_model_id(self.provider, self.raw_model_name)
         
         self.temperature = model_parameters.get("temperature", 0.7)
-        self.max_tokens = model_parameters.get("max_tokens", 1024)
+        self.max_tokens = model_parameters.get("max_tokens", 8192)
         self.top_p = model_parameters.get("top_p", 1.0)
         self.stream = model_parameters.get("stream", False)
         
         self.api_key = model_parameters.get("api_key", os.getenv(f"{self.provider.upper()}_API_KEY"))
         self.base_url = model_parameters.get("base_url", os.getenv(f"{self.provider.upper()}_BASE_URL"))
-        
+        # Per-request HTTP timeout (seconds). The provider SDKs default to very
+        # long timeouts (e.g. 600s for the OpenAI SDK, used by both the openai
+        # and nebius branches below), which is longer than any of our own
+        # service-call budgets (see PLAN_TIMEOUT_S in config.py). Without this,
+        # a single slow/stuck provider response can silently absorb the whole
+        # planning budget — and reasoning methods that make several sequential
+        # calls per plan (e.g. CoT-SC's k=5) multiply that exposure. Bounding
+        # it here makes a stuck call fail fast with a catchable error instead.
+        self.request_timeout_s = model_parameters.get("timeout", _DEFAULT_REQUEST_TIMEOUT_S)
+
         self.client = self._initialize_client()
         self.usage_metrics = None
+        # Guards the read-modify-write on usage_metrics below. CoT-SC now
+        # fires k concurrent calls from a ThreadPoolExecutor, each of which
+        # ends in _update_metrics(); without this lock, the pd.concat
+        # read-modify-write race could silently drop a sample.
+        self._metrics_lock = threading.Lock()
 
     def _initialize_client(self):
         if self.provider == "groq":
             if not Groq: raise ImportError("Groq SDK not installed.")
-            return Groq(api_key=self.api_key)
+            return Groq(api_key=self.api_key, timeout=self.request_timeout_s)
         elif self.provider == "openai":
             if not OpenAI: raise ImportError("OpenAI SDK not installed.")
-            return OpenAI(api_key=self.api_key)
+            return OpenAI(api_key=self.api_key, timeout=self.request_timeout_s)
         elif self.provider == "nebius":
             if not OpenAI: raise ImportError("OpenAI SDK not installed.")
             base_url = self.base_url or "https://api.tokenfactory.nebius.com/v1/"
-            return OpenAI(api_key=self.api_key, base_url=base_url)
+            return OpenAI(api_key=self.api_key, base_url=base_url, timeout=self.request_timeout_s)
         elif self.provider == "anthropic":
             if not Anthropic: raise ImportError("Anthropic SDK not installed.")
-            return Anthropic(api_key=self.api_key)
+            return Anthropic(api_key=self.api_key, timeout=self.request_timeout_s)
         elif self.provider == "gemini":
             if not genai: raise ImportError("Google GenAI SDK not installed.")
             # Initialize Client directly
@@ -156,11 +183,12 @@ class BaseFoundationClient(ABC):
         }
         if search_provider:
              new_metric["search_provider"] = search_provider
-             
-        if self.usage_metrics is None:
-            self.usage_metrics = pd.DataFrame([new_metric])
-        else:
-            self.usage_metrics = pd.concat([self.usage_metrics, pd.DataFrame([new_metric])], ignore_index=True)
+
+        with self._metrics_lock:
+            if self.usage_metrics is None:
+                self.usage_metrics = pd.DataFrame([new_metric])
+            else:
+                self.usage_metrics = pd.concat([self.usage_metrics, pd.DataFrame([new_metric])], ignore_index=True)
 
     def get_total_usage(self) -> Dict[str, int]:
         if self.usage_metrics is None:

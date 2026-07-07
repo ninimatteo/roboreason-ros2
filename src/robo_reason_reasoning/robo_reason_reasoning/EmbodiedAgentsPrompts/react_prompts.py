@@ -44,7 +44,7 @@ Think step by step.
 This is the list of past actions you took: \n{actions_memory}
 """
 
-_VLM_REACT_PROMPT = """Your task is to generate a sequence of actions based on the user request and what you see in the image.
+_VLM_REACT_PROMPT_POINT = """Your task is to generate a sequence of actions based on the user request and what you see in the image.
 
 You have to make a decision on the next step to take based on the information below:
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
@@ -87,6 +87,53 @@ Think step by step.
 This is the list of past actions you took: \n{actions_memory}
 """
 
+_VLM_REACT_PROMPT_BBOX = """Your task is to generate a sequence of actions based on the user request and what you see in the image.
+
+You have to make a decision on the next step to take based on the information below:
+**User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
+**Current Environment Configuration** Infer from image
+**Skills Library** A list of available skills and actions you can use: \n{skills}
+**Reasoning** Your thoughts from the last reasoning step you took: \n{last_reasoning_step}
+
+As a ReAct agent, you are expected to decide whether to take a reasoning step or an action based on what you see in the image and the user request.
+You are asked either to take a reasoning step or to take an action according to the skills you have.
+
+**Spatial Reasoning — Pixel Bounding Boxes**
+You are working in pixel space. The depth camera back-projects the center of a bounding box to a
+3D point on the visible surface, so a tight box around an object gives its top-surface 3D position
+plus its real-world footprint. The image you are given is {pixels_width} pixels wide and
+{pixels_height} pixels tall — every pixel coordinate you output must satisfy
+0 <= x < {pixels_width} and 0 <= y < {pixels_height}.
+- `target_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  object to grasp. Do not include background or neighboring objects inside the box.
+- `release_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  target surface or object to stack on. Its deprojected center z is already the top surface —
+  do NOT add any z offset manually.
+- Always set `object_height` to your visual estimate of the held object's real-world height
+  in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
+  The executor raises the TCP by this amount so the object bottom lands on the surface.
+- Always set `grasp_width` to your visual estimate of the object's real-world width in meters as a
+  fallback (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup) — the executor prefers
+  deriving the width from your bounding box directly, but still needs this field populated.
+- The `approach` before a release must use the same [x_min, y_min, x_max, y_max] box as the
+  release position.
+
+**Output Requirements** adapt the output according to the following JSON format:
+
+```json
+{{
+  "react_decision": "<either 'reasoning' or 'action'>",
+  "action": <null or a JSON object with the following structure if you decide to act>,
+    {{
+    {action_placeholder}
+    }}
+  "reasoning": "<Null or your reasoning content if you decide to reason>",
+  "end_of_simulation": "<bool: True or False, if you decide the goal has been reached>"
+}}
+Think step by step.
+This is the list of past actions you took: \n{actions_memory}
+"""
+
 
 class ReActPrompts:
 
@@ -96,6 +143,7 @@ class ReActPrompts:
         return _SYSTEM_MESSAGE, _LLM_REACT_PROMPT
 
     @staticmethod
-    def get_vlm_prompts() -> tuple:
+    def get_vlm_prompts(grounding_mode: str = 'point') -> tuple:
         """Return (system_message, react_prompt) for VLM mode."""
-        return _SYSTEM_MESSAGE, _VLM_REACT_PROMPT
+        prompt = _VLM_REACT_PROMPT_BBOX if grounding_mode == 'bbox' else _VLM_REACT_PROMPT_POINT
+        return _SYSTEM_MESSAGE, prompt

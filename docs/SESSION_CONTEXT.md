@@ -1,6 +1,6 @@
 # Session Context — RoboReason ROS2 VLM Pipeline
 
-**Last updated:** 2026-07-01
+**Last updated:** 2026-07-07
 
 ---
 
@@ -484,3 +484,153 @@ prompt/schema complexity but manifesting differently per provider:
 - Working tree on `feature/gui` currently has 19 modified files + 1 new file
   (`CancelExecution.srv`) uncommitted, covering all of Session 3's changes —
   awaiting the operator's own commit.
+
+---
+
+### Session 4 — VLM→LLM Hybrid, Grasp-Width TCP Offset, Grounding Fixes, Bbox Grounding (in progress)
+
+Commits `799dd2b` → `8389578` on `main`; current work is on branch
+`feature/vlm-bbox-grounding` (uncommitted).
+
+#### 1. VLM→LLM hybrid pipeline (`799dd2b`)
+
+New `mode=VLM_LLM`: a VLM grounding call detects objects/targets as pixel
+centers via a new scene-grounding prompt (`scene_description_prompts.py`),
+deprojects them to world `[x, y, z]`, assembles a **generated** scene JSON
+(`scene_mock.json` itself is never touched), then hands off to the standard
+LLM planning pipeline. New `vlm_llm_planner_node.py` + `scene_grounder.py` +
+`vlm_llm_dry_run.launch.py`. Grounding model/temperature and planning
+model/temperature are wired independently through `config.py`,
+`real_robot.launch.py`, and the GUI (`options.py`, `bridge_node.py`,
+`stack_supervisor.py`, `app.js`/`index.html`).
+
+Also fixed a project-wide **VLM pixel-coordinate convention bug**:
+Qwen-family VLMs ignore the requested `[h, w]` (row, col) order and always
+emit their native `[x, y]` (col, row) convention, causing a systematic
+axis-swap between the detected scene and the real one. Standardized every
+reasoning-method prompt (fhp/ffhp, tot, self_refine, react, always_act,
+cot_sc), `skills.py`, `extraction_classes.py`, and both
+`vlm_planner_node.py`/`vlm_llm_planner_node.py`'s deproject/debug-draw code
+to consistently use `[x, y]`.
+
+#### 2. Width-aware TCP offset + release-height fix (`6acc31e`)
+
+- Added `grasp_width` to the `UR5Action` schema, `skills.py` docs, and every
+  reasoning-method prompt so every planning mode reports/copies the object's
+  estimated width into pick actions.
+- Added a `TCP_OFFSET_Z_CALIBRATION` table + `tcp_offset_z_for_width()`
+  piecewise-linear interpolation (moved to `grasp_geometry.py` in `49eada6`,
+  see below). `ur5_skill_executor_node` now sets `self._robot_model.tool`
+  per-pick from the interpolated finger-aperture offset and resets to the
+  default after release — the RG2 fingers pivot, so flange-to-contact
+  distance varies with object width.
+- Capped pick descent depth at `(TCP_OFFSET_Z - TCP_CLAMP_CLEARANCE_M)` in
+  `vlm_planner_node.py`/`vlm_llm_planner_node.py` so tall objects are gripped
+  nearer their top instead of crashing the rigid TCP clamp into them.
+- Fixed **double-counted release height** in the VLM_LLM hybrid pipeline:
+  target `position.z` was already the real depth-measured top surface, but
+  the LLM's stacking formula (`position.z + size[2]`) then added the VLM's
+  blind, non-depth-grounded `size[2]` guess on top of it. Now derives target
+  height from depth instead (`surface_z - top_z`) and resets `position.z`
+  back to a base reference so `position.z + size[2]` reconstructs the true
+  top surface instead of double-counting it. See
+  [`docs/GRASP_GEOMETRY_PIPELINE.md`](GRASP_GEOMETRY_PIPELINE.md) for the
+  full geometry writeup.
+
+#### 3. Local-plane centroid correction, terminal-log capture, driver fast-fail (`49eada6`, merged via `59de4fe`)
+
+- `camera_services_node.py`: added local-plane-centroid VLM-click correction
+  to reduce grounding error near object edges.
+- Fixed a `table_surface_z`/`top_z` sign inversion in object-height
+  computation (`vlm_planner_node.py`, `vlm_llm_planner_node.py`).
+- Moved `TCP_OFFSET_Z_CALIBRATION`/`tcp_offset_z_for_width()` out of
+  `config.py` into a new `grasp_geometry.py` module.
+- New `/gui/get_terminal_logs` service so each planner's per-run debug
+  folder captures the camera/robot/stack subprocess logs for that run
+  (`debug_recorder.py`, `bridge_node.py`, `server_node.py`); wired into all
+  three planner nodes (`llm_planner_node.py` upgraded to
+  `MultiThreadedExecutor`/`ReentrantCallbackGroup` to support it safely).
+- `ur_driver_supervisor` now aborts and retries immediately on an `[ERROR]`
+  log marker instead of always waiting the full 30s readiness timeout.
+
+#### 4. Settings consolidation (`8389578`)
+
+Moved scattered per-class setting variables (GUI supervisors, server node)
+into `config.py` as the single `pydantic-settings` source of truth.
+
+#### 5. Bbox grounding mode (uncommitted, `feature/vlm-bbox-grounding`)
+
+Added a `grounding_mode` toggle (`point` vs `bbox`) for VLM pixel grounding:
+- All 6 reasoning-method VLM prompt variants gained a bbox-output template
+  (`[x_min, y_min, x_max, y_max]` instead of a single `[x, y]` click).
+- `vlm_planner_node.py`: new `grounding_mode` ROS param threaded into
+  `EmbodiedAgent`; `_save_debug_frame` draws bbox rectangles; `_deproject_plan`
+  handles bbox-center deproject + derives `grasp_width` from box width.
+- Full GUI wiring: `app.py` (`StackRequest.grounding_mode`),
+  `stack_supervisor.py` (launch arg forwarding), `index.html`/`app.js`
+  (pixel-grounding dropdown, shown only in VLM/VLM_LLM mode).
+
+#### 6. CoT-SC timeout root-cause fix (uncommitted, same branch)
+
+Investigated an intermittent `cot_sc` timeout (plan generated in the debug
+folder but never executed). Root cause: (a) no provider client in
+`FoundationClients` had ever had an explicit HTTP request timeout configured
+(SDK defaults up to 600s, exceeding the app's 300s `PLAN_TIMEOUT_S`), and (b)
+`cot_sc.py` ran its `k=5` independent plan samples **sequentially**, giving
+it 5x the exposure to any single slow/stuck call vs. single-call methods
+like `fhp`. Fixes: added a bounded `timeout` (default 60s) to every provider
+client constructor in `base_client.py`; parallelized `CoT-SC`'s `k` samples
+via `ThreadPoolExecutor`; added a `threading.Lock` around
+`BaseFoundationClient._update_metrics()` since it's now hit concurrently by
+`k` threads. Follow-up (2026-07-07): the bounded timeout was initially
+hardcoded to 60s inside `base_client.py`; moved to a proper setting,
+`Settings.REQUEST_TIMEOUT_S` in `config.py` (default `60.0`, tunable via
+`ROBOREASON_REQUEST_TIMEOUT_S` env var / `.env`, same mechanism as
+`PLAN_TIMEOUT_S`). `base_client.py` imports `robo_reason_bringup.config` for
+this default (falling back to a hardcoded `60.0` only if that package isn't
+importable, so the standalone `FoundationClients` example scripts still run
+outside the ROS workspace); an explicit `timeout=` in `model_parameters`
+still overrides it per-call. The user has since raised it to `120.0` for
+`nebius/nvidia-nemotron-120b`'s legitimately longer per-call latency.
+
+#### 7. Release-height fix — mid-body grasp / release-lift mismatch (uncommitted, same branch, 2026-07-06)
+
+Root cause of the reported "robot releases objects ~3cm (or more) too high"
+symptom, found by inspecting the pick/release geometry (see
+`docs/GRASP_GEOMETRY_PIPELINE.md`). **Not** a table-calibration issue —
+`board_in_base_z` and `scene_mock.json`'s `surface_z` already agreed
+(`-0.03 m`). The actual bug:
+
+- On `pick`, the gripper descends **mid-body** — `descent = min(0.5 × height,
+  max_descent)` — not to the object's top surface.
+- But the paired `release` step's `object_height` (the amount the executor
+  lifts the TCP by, in `ur5_skill_executor_node.py`) was set to the **full**
+  object height, implicitly assuming the object was grasped right at its top.
+- Net effect: release height overshoots by `descent` (≈ half the object's
+  height for typical uncapped objects — a 6cm object → ~3cm error, matching
+  the report; taller/clamp-capped objects get worse).
+
+Fix: both `vlm_planner_node.py` (`_deproject_plan`) and
+`vlm_llm_planner_node.py` (`_build_generated_scene`) now carry
+`height - descent` (the true distance from grasp contact point to object
+bottom) as the release lift amount, instead of the full `height`. Target
+stacking math (`position.z + size[2]`) and pick contact-height/grasp-width
+logic are unchanged — this only touches the held-object release-lift value.
+Not yet tested on hardware.
+
+---
+
+## Known Open Issues (updated 2026-07-07)
+
+- Release-height fix (Session 4 §7) has not yet been verified on real
+  hardware — next session should test pick→release on objects of a few
+  different heights and confirm the object lands flush on the table/target
+  instead of hovering ~3cm above it.
+- The plane-induced-homography → depth-based top-down (point-cloud)
+  rectification rewrite (see `docs/GRASP_GEOMETRY_PIPELINE.md`-adjacent
+  planning) has not been started; no `topdown_utils.py`/`homography_utils.py`
+  exists in the tree yet.
+- `feature/vlm-bbox-grounding` branch (bbox grounding mode, cot_sc timeout
+  fix, `REQUEST_TIMEOUT_S` setting, release-height fix — Session 4 §5-7) is
+  fully uncommitted; awaiting the operator's own commit before starting a
+  new session.

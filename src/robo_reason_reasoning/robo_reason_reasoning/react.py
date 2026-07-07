@@ -60,7 +60,7 @@ class React(ReasoningMethod):
             action = UR5Action(action_name='wait', time=0.0)
             eos = output.get('end_of_simulation', False)
         elif decision == 'action':
-            action = UR5Action(**output.get('action', {'action_name': 'move_home'}))
+            action = self._build_action(output.get('action', {'action_name': 'move_home'}))
             eos = output.get('end_of_simulation', False)
         else:
             action = UR5Action(action_name='move_home')

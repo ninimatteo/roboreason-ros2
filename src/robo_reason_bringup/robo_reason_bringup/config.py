@@ -31,9 +31,24 @@ class Settings(BaseSettings):
     REASONING_METHOD: str = 'cot_sc'
     MODEL_NAME: str = 'nebius/nvidia-nemotron-120b'
     TEMPERATURE: float = 0.1
+    # Per-request HTTP timeout (seconds) for every FoundationClient provider
+    # call (Groq/OpenAI/Nebius/Anthropic — see base_client.py). Bounds a
+    # single stuck LLM/VLM call so it fails fast with a catchable error
+    # instead of silently absorbing the whole PLAN_TIMEOUT_S budget. Large
+    # models (e.g. nebius/nvidia-nemotron-120b) can legitimately take longer
+    # than the default per call — raise this if you see APITimeoutError on
+    # requests that are just slow, not stuck.
+    REQUEST_TIMEOUT_S: float = 120.0
 
     # ── VLM planner ───────────────────────────────────────────────────────────
     TMP_DIR: str = 'src/vlm_frames'
+    # 'point'  — VLM emits a single [x, y] pixel click per target (validated on
+    #            hardware; default, unchanged behavior).
+    # 'bbox'   — VLM emits a [x_min, y_min, x_max, y_max] pixel box per target;
+    #            the box center is deprojected for (x, y, z) and the box's
+    #            pixel width/height are converted to a real-world grasp_width
+    #            instead of relying on the VLM's blind numeric guess.
+    VLM_GROUNDING_MODE: str = 'point'
 
     # ── VLM+LLM hybrid planner (scene grounding call, independent of MODEL_NAME
     # which is used for the subsequent LLM planning call) ─────────────────────

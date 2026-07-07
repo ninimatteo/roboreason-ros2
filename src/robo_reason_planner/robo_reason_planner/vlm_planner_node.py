@@ -15,6 +15,8 @@ ROS2 parameters:
   model_name        (str,   default 'groq/llama4-scout-17b')
   temperature       (float, default 0.1)
   tmp_dir           (str,   default '/root/ws/src/vlm_frames') — where to save captured frames
+  grounding_mode    (str,   default 'point')                  — 'point' ([x, y] click) or 'bbox'
+                                                                  ([x_min, y_min, x_max, y_max] box)
 """
 
 import copy
@@ -57,6 +59,7 @@ class VLMPlannerNode(Node):
         self.declare_parameter('model_name', settings.MODEL_NAME)
         self.declare_parameter('temperature', settings.TEMPERATURE)
         self.declare_parameter('tmp_dir', settings.TMP_DIR)
+        self.declare_parameter('grounding_mode', settings.VLM_GROUNDING_MODE)
 
         dotenv.load_dotenv()
 
@@ -103,6 +106,7 @@ class VLMPlannerNode(Node):
             'reasoning_method': self.get_parameter('reasoning_method').value,
             'model_name': self.get_parameter('model_name').value,
             'temperature': self.get_parameter('temperature').value,
+            'grounding_mode': self.get_parameter('grounding_mode').value,
         })
 
         try:
@@ -142,6 +146,7 @@ class VLMPlannerNode(Node):
         reasoning_method = self.get_parameter('reasoning_method').value
         model_name = self.get_parameter('model_name').value
         temperature = self.get_parameter('temperature').value
+        grounding_mode = self.get_parameter('grounding_mode').value
 
         agent = EmbodiedAgent(
             reasoning_mode=reasoning_method,
@@ -150,6 +155,7 @@ class VLMPlannerNode(Node):
                 'temperature': temperature,
             },
             client_type='vlm',
+            grounding_mode=grounding_mode,
         )
 
         pixel_steps = run_plan_loop(agent, {
@@ -207,8 +213,10 @@ class VLMPlannerNode(Node):
     def _save_debug_frame(self, source_path: str, pixel_steps: list, task_dir: Path) -> 'Path | None':
         """Overlay VLM pixel predictions on the raw saved frame and write debug.png.
 
-        Pixel fields are [x, y] (col, row) — the VLM's native grounding
-        convention. We read them directly as (u=x, v=y) for drawing.
+        Pixel fields are either a [x, y] (col, row) point — the VLM's native
+        point-grounding convention — or a [x_min, y_min, x_max, y_max] pixel
+        bounding box (bbox grounding mode). We read points directly as
+        (u=x, v=y); boxes are drawn as a rectangle plus a center marker.
 
         Out-of-bounds predictions (e.g. a row/col outside the actual frame
         size — a real failure mode we've seen from the VLM) are clamped to
@@ -217,14 +225,17 @@ class VLMPlannerNode(Node):
         the debug image rather than just producing a deproject error later.
         """
         PIXEL_FIELDS = ('target_position', 'release_position')
-        pixels = []
+        entries = []  # ('point', u, v) or ('box', x0, y0, x1, y1)
         for step in pixel_steps:
             for field in PIXEL_FIELDS:
                 val = step.get(field)
                 if isinstance(val, (list, tuple)) and len(val) == 2:
                     x, y = val
-                    pixels.append((int(x), int(y)))  # (u, v) = (x, y)
-        if not pixels:
+                    entries.append(('point', int(x), int(y)))  # (u, v) = (x, y)
+                elif isinstance(val, (list, tuple)) and len(val) == 4:
+                    x_min, y_min, x_max, y_max = val
+                    entries.append(('box', int(x_min), int(y_min), int(x_max), int(y_max)))
+        if not entries:
             return None
         frame = self._cv2.imread(source_path)
         if frame is None:
@@ -232,25 +243,47 @@ class VLMPlannerNode(Node):
         height, width = frame.shape[:2]
         marker_size = 14
         radius = marker_size // 2
-        for index, (u, v) in enumerate(pixels, start=1):
-            out_of_bounds = u < 0 or v < 0 or u >= width or v >= height
-            cu = min(max(u, 0), width - 1)
-            cv = min(max(v, 0), height - 1)
-            color = (255, 0, 255) if out_of_bounds else (0, 255, 255)
-            x0 = max(0, cu - radius)
-            y0 = max(0, cv - radius)
-            x1 = min(width - 1, cu + radius)
-            y1 = min(height - 1, cv + radius)
-            self._cv2.rectangle(frame, (x0, y0), (x1, y1), color, 2)
-            self._cv2.drawMarker(
-                frame, (cu, cv), (0, 0, 255),
-                markerType=self._cv2.MARKER_CROSS,
-                markerSize=max(marker_size, 10), thickness=2,
-            )
+        for index, entry in enumerate(entries, start=1):
+            kind = entry[0]
+            if kind == 'point':
+                _, u, v = entry
+                out_of_bounds = u < 0 or v < 0 or u >= width or v >= height
+                cu = min(max(u, 0), width - 1)
+                cv = min(max(v, 0), height - 1)
+                color = (255, 0, 255) if out_of_bounds else (0, 255, 255)
+                x0 = max(0, cu - radius)
+                y0 = max(0, cv - radius)
+                x1 = min(width - 1, cu + radius)
+                y1 = min(height - 1, cv + radius)
+                self._cv2.rectangle(frame, (x0, y0), (x1, y1), color, 2)
+                self._cv2.drawMarker(
+                    frame, (cu, cv), (0, 0, 255),
+                    markerType=self._cv2.MARKER_CROSS,
+                    markerSize=max(marker_size, 10), thickness=2,
+                )
+                label_anchor = (min(width - 1, x1 + 4), max(12, y0 - 4))
+            else:
+                _, bx0, by0, bx1, by2 = entry
+                out_of_bounds = (
+                    bx0 < 0 or by0 < 0 or bx1 >= width or by2 >= height
+                    or bx0 >= bx1 or by0 >= by2
+                )
+                x0 = min(max(bx0, 0), width - 1)
+                y0 = min(max(by0, 0), height - 1)
+                x1 = min(max(bx1, 0), width - 1)
+                y1 = min(max(by2, 0), height - 1)
+                color = (255, 0, 255) if out_of_bounds else (0, 255, 255)
+                self._cv2.rectangle(frame, (x0, y0), (x1, y1), color, 2)
+                cu, cv = (x0 + x1) // 2, (y0 + y1) // 2
+                self._cv2.drawMarker(
+                    frame, (cu, cv), (0, 0, 255),
+                    markerType=self._cv2.MARKER_CROSS,
+                    markerSize=max(marker_size, 10), thickness=2,
+                )
+                label_anchor = (min(width - 1, x1 + 4), max(12, y0 - 4))
             label = f'{index}!' if out_of_bounds else str(index)
             self._cv2.putText(
-                frame, label,
-                (min(width - 1, x1 + 4), max(12, y0 - 4)),
+                frame, label, label_anchor,
                 self._cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1,
                 self._cv2.LINE_AA,
             )
@@ -285,16 +318,21 @@ class VLMPlannerNode(Node):
             return None
 
     def _deproject_plan(self, pixel_steps: list, table_surface_z: 'float | None') -> list:
-        """Replace pixel [x, y] fields with deprojected [x, y, z] world coords,
-        then depth-compensate pick/release z for the gripper's grasp geometry.
+        """Replace pixel fields with deprojected [x, y, z] world coords, then
+        depth-compensate pick/release z for the gripper's grasp geometry.
 
-        The VLM outputs pixel coordinates as [x, y] (its native grounding
-        convention) where:
-          x = column index (x-axis, left→right) → camera u
-          y = row index (y-axis, top→bottom)    → camera v
+        The VLM outputs pixel coordinates in one of two grounding modes
+        (see settings.VLM_GROUNDING_MODE):
+          - 'point': [x, y] — a single center pixel per field.
+          - 'bbox' : [x_min, y_min, x_max, y_max] — a pixel bounding box.
+        In both cases x = column index → camera u, y = row index → camera v.
 
-        Collects all pixel-coordinate fields, issues a single batched Deproject
-        call, then substitutes the results back in place.
+        Collects all pixel-coordinate fields (deprojecting a bbox's center
+        pixel), issues a single batched Deproject call, then substitutes the
+        results back in place. For a pick step's bounding box, two extra
+        points (the box's left-edge and right-edge midpoints) are deprojected
+        in the same batch and their real-world (base-frame) distance replaces
+        the VLM's blind grasp_width guess with a vision-grounded estimate.
 
         Depth compensation (only when table_surface_z is known): a pick's
         target_position.z from deprojection is the object's raw TOP SURFACE
@@ -312,19 +350,40 @@ class VLMPlannerNode(Node):
         """
         PIXEL_FIELDS = ('target_position', 'release_position')
 
-        pending = []
+        req_u, req_v = [], []
+
+        def _add_pixel(u, v) -> int:
+            req_u.append(int(u))
+            req_v.append(int(v))
+            return len(req_u) - 1
+
+        # (step_idx, field, center_batch_idx, width_batch_idx_pair_or_None)
+        entries = []
         for i, step in enumerate(pixel_steps):
             for field in PIXEL_FIELDS:
                 val = step.get(field)
-                if isinstance(val, (list, tuple)) and len(val) == 2:
-                    pending.append((i, field, val))
+                if not isinstance(val, (list, tuple)):
+                    continue
+                if len(val) == 2:
+                    center_idx = _add_pixel(val[0], val[1])
+                    entries.append((i, field, center_idx, None))
+                elif len(val) == 4:
+                    x_min, y_min, x_max, y_max = val
+                    cx, cy = (x_min + x_max) / 2.0, (y_min + y_max) / 2.0
+                    center_idx = _add_pixel(cx, cy)
+                    width_pair = None
+                    if field == 'target_position' and step.get('action_name') == 'pick':
+                        left_idx = _add_pixel(x_min, cy)
+                        right_idx = _add_pixel(x_max, cy)
+                        width_pair = (left_idx, right_idx)
+                    entries.append((i, field, center_idx, width_pair))
 
-        if not pending:
+        if not entries:
             return pixel_steps
 
         req = Deproject.Request()
-        req.u = [int(p[2][0]) for p in pending]   # x (column) → u
-        req.v = [int(p[2][1]) for p in pending]   # y (row)    → v
+        req.u = req_u
+        req.v = req_v
 
         if not self._deproject_client.wait_for_service(timeout_sec=5.0):
             raise RuntimeError('/camera/deproject service not available (timeout 5 s)')
@@ -335,9 +394,18 @@ class VLMPlannerNode(Node):
             raise RuntimeError(f'Deproject failed: {dep.error_message}')
 
         plan_steps = copy.deepcopy(pixel_steps)
-        for k, (i, field, _) in enumerate(pending):
-            pt = dep.points[k]
+        for i, field, center_idx, width_pair in entries:
+            pt = dep.points[center_idx]
             plan_steps[i][field] = [pt.x, pt.y, pt.z]
+            if width_pair is not None:
+                left_idx, right_idx = width_pair
+                lp, rp = dep.points[left_idx], dep.points[right_idx]
+                real_width = ((lp.x - rp.x) ** 2 + (lp.y - rp.y) ** 2) ** 0.5
+                plan_steps[i]['grasp_width'] = real_width
+                self.get_logger().info(
+                    f'[VLMPlannerNode] pick: bbox-derived grasp_width={real_width:.3f} m '
+                    f'(overriding VLM estimate)'
+                )
 
         if table_surface_z is not None:
             fraction = settings.PICK_GRASP_DEPTH_FRACTION
@@ -346,7 +414,7 @@ class VLMPlannerNode(Node):
             # surface without the rigid TCP clamp (not the pivoting fingers)
             # crashing into it on the way down — see TCP_CLAMP_CLEARANCE_M.
             max_descent = max(settings.TCP_OFFSET_Z - settings.TCP_CLAMP_CLEARANCE_M, 0.0)
-            held_object_height = None
+            held_release_lift = None
             for step in plan_steps:
                 action = step.get('action_name')
                 if action == 'pick' and isinstance(step.get('target_position'), list):
@@ -355,14 +423,22 @@ class VLMPlannerNode(Node):
                     step['object_height'] = height
                     descent = min(fraction * height, max_descent)
                     step['target_position'][2] = top_z - descent
-                    held_object_height = height
+                    # The executor's release step lifts the TCP by
+                    # object_height, assuming the object was grasped right at
+                    # its top. But this is a mid-body (or clamp-capped) grasp
+                    # — the contact point sits `descent` below the top, so
+                    # only `height - descent` of the object hangs below the
+                    # TCP. Passing the full height overshoots the release
+                    # height by `descent` (previously ~half the object's
+                    # height for typical uncapped objects).
+                    held_release_lift = height - descent
                     self.get_logger().info(
                         f'[VLMPlannerNode] pick: depth-computed object_height={height:.3f} m, '
                         f'target z {top_z:.3f} -> {step["target_position"][2]:.3f}'
                     )
-                elif action == 'release' and held_object_height is not None:
-                    step['object_height'] = held_object_height
-                    held_object_height = None
+                elif action == 'release' and held_release_lift is not None:
+                    step['object_height'] = held_release_lift
+                    held_release_lift = None
 
         return plan_steps
 
