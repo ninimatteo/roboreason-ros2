@@ -20,7 +20,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetImage.srv"
   "srv/Deproject.srv"
   "action/ExecuteSkill.action"
-  DEPENDENCIES action_msgs sensor_msgs geometry_msgs
+  DEPENDENCIES action_msgs sensor_msgs geometry_msgs std_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

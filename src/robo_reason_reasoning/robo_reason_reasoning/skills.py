@@ -6,7 +6,7 @@ approach/pick/release primitives defined in the KickOff meeting.
 
 
 class UR5Skills:
-    """Skills available to the UR5cb robot arm with Robotiq 2F gripper."""
+    """Skills available to the UR5cb robot arm with OnRobot RG2 gripper."""
 
     skills = """
     Skills:

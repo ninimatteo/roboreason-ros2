@@ -1,4 +1,4 @@
-import os, base64, base64
+import os, base64
 from io import BytesIO
 from typing import Any, Dict, Optional, Type, Union
 from PIL import Image, ImageDraw

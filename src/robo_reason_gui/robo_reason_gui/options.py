@@ -36,6 +36,12 @@ VLM_ONLY_MODELS: dict = {
     'groq':   ['qwen3.6-27b'],
     'nebius': ['qwen3-2.5-70b'],
 }
+
+# Models present in ModelRegistry that are NOT chat-capable (e.g. embeddings).
+# Excluded from both LLM and VLM dropdowns.
+NON_CHAT_MODELS: dict = {
+    'nebius': ['qwen3-embedding-8b'],
+}
 # -----------------------------------------------------------------------------
 
 
@@ -53,8 +59,9 @@ def get_options() -> dict:
         for name in GUI_PROVIDERS:
             all_models = sorted(registry[name].keys())
             vlm_only = set(VLM_ONLY_MODELS.get(name, []))
-            # LLM mode: all models except those reserved for VLM.
-            llm_providers[name] = [m for m in all_models if m not in vlm_only]
+            excluded = set(NON_CHAT_MODELS.get(name, []))
+            # LLM mode: all models except those reserved for VLM or non-chat.
+            llm_providers[name] = [m for m in all_models if m not in vlm_only and m not in excluded]
             # VLM mode: only the explicitly listed vision-capable models.
             vlm_providers[name] = [m for m in VLM_ONLY_MODELS.get(name, [])
                                    if m in registry[name]]

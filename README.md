@@ -120,7 +120,7 @@ roboreason-ros2/
 
 ```bash
 pip install pydantic pydantic-settings python-dotenv
-pip install groq openai anthropic google-generativeai
+pip install groq openai anthropic google-genai
 pip install roboticstoolbox-python spatialmath-python  # real robot only
 ```
 
