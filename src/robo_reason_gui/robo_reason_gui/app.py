@@ -170,7 +170,13 @@ def create_app(bridge, supervisor, driver, camera=None):
         queue = bridge.add_log_subscriber()
         try:
             while True:
-                line = await queue.get()
+                try:
+                    line = await asyncio.wait_for(queue.get(), timeout=20.0)
+                except asyncio.TimeoutError:
+                    # Keepalive: send_json raises WebSocketDisconnect on stale clients,
+                    # clearing the subscriber queue that would otherwise leak indefinitely.
+                    await ws.send_json({'ping': True})
+                    continue
                 await ws.send_json({'log': line})
         except WebSocketDisconnect:
             pass

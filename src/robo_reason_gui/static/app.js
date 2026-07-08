@@ -518,6 +518,8 @@ function renderDriver(status) {
   const busy = state === 'connecting';
   driverStart.disabled = busy || state === 'connected';
   driverStop.disabled = state === 'stopped';
+  driverReconnect.disabled = busy;
+  headerReconnect.disabled = busy;
 
   // Reflect resolved IPs (defaults included) without clobbering an active edit.
   const p = status.params || {};
@@ -685,7 +687,6 @@ async function pollHealth() {
     });
   } catch (err) {
     robotLed.className = 'led led-red';
-    robotLed.className = 'led led-red';
   }
 }
 
@@ -805,7 +806,7 @@ function setStepState(li, state) {
 // A log line looks like "[Step 2] pick -> OK" — mark that step done.
 function applyLogLine(stepEls, line) {
   const m = line.match(/\[Step\s+(\S+?)\]/);
-  if (m) setStepState(stepEls[m[1]], 'done');
+  if (m && line.includes('-> OK')) setStepState(stepEls[m[1]], 'done');
 }
 
 async function sendCommand(command) {

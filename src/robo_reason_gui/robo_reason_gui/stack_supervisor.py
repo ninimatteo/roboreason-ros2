@@ -27,13 +27,13 @@ from robo_reason_bringup.config import settings
 # every skill run twice (duplicate-node race → corrupt robot state).
 _STACK_PROCESS_PATTERNS = (
     'gui_stack.launch.py',
-    'llm_planner_node',
-    'vlm_planner_node',
-    'vlm_llm_planner_node',
-    'plan_manager_node',
-    'fake_skill_executor_node',
-    'ur5_skill_executor_node',
-    'mock_camera_service_node',
+    'lib/robo_reason_planner/llm_planner_node',
+    'lib/robo_reason_planner/vlm_planner_node',
+    'lib/robo_reason_planner/vlm_llm_planner_node',
+    'lib/robo_reason_manager/plan_manager_node',
+    'lib/robo_reason_executor/fake_skill_executor_node',
+    'lib/robo_reason_executor/ur5_skill_executor_node',
+    'lib/vlm_camera_service/mock_camera_service_node',
 )
 
 
@@ -173,7 +173,12 @@ class StackSupervisor:
                 self._proc = None
                 return {'ok': True, 'status': self.status()}
             proc = self._proc
-            pgid = os.getpgid(proc.pid)
+            try:
+                pgid = os.getpgid(proc.pid)
+            except ProcessLookupError:
+                self._proc = None
+                self._pgid = None
+                return {'ok': True, 'status': self.status()}
             self._log('stopping stack (SIGINT)…')
             # SIGINT mimics Ctrl-C so ros2 launch shuts its nodes down cleanly.
             self._signal_group(pgid, signal.SIGINT)
