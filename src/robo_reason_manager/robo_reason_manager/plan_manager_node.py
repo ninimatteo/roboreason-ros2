@@ -63,6 +63,10 @@ class PlanManagerNode(Node):
         # between steps so it stops sending further skills once a stop is
         # requested, even if the in-flight skill's cancel hasn't resolved yet.
         self._stop_requested = threading.Event()
+        # Prevents two concurrent /execute_plan calls from racing on
+        # _active_goal_handle and from the second call clearing _stop_requested
+        # mid-cancel of the first.
+        self._plan_lock = threading.Lock()
 
         self._world_state_pub = self.create_publisher(String, '/world_state', 10)
         self._log_pub = self.create_publisher(String, '/execution_log', 10)
@@ -72,6 +76,16 @@ class PlanManagerNode(Node):
     # -------------------------------------------------------------------------
 
     def _execute_plan_callback(self, request, response):
+        if not self._plan_lock.acquire(blocking=False):
+            response.success = False
+            response.error_message = 'A plan is already executing.'
+            return response
+        try:
+            return self._execute_plan_locked(request, response)
+        finally:
+            self._plan_lock.release()
+
+    def _execute_plan_locked(self, request, response):
         self.get_logger().info('[PlanManagerNode] Received execute_plan request.')
 
         # Clear any leftover stop flag from a previous cancelled run so this
@@ -132,7 +146,12 @@ class PlanManagerNode(Node):
             goal.skill_name = skill_name
             goal.skill_args_json = json.dumps(skill_args)
 
-            result = self._send_skill_goal_sync(goal)
+            # Derive per-skill timeout so a wait(time=N) step doesn't false-fail.
+            timeout_sec = 60.0
+            if skill_name == 'wait':
+                timeout_sec = float(skill_args.get('time', 0)) + 10.0
+
+            result = self._send_skill_goal_sync(goal, timeout_sec=timeout_sec)
 
             if result is None or not result.success:
                 err = result.error_message if result else 'Timeout or no result'
@@ -176,11 +195,25 @@ class PlanManagerNode(Node):
         def on_result(future):
             with self._active_goal_lock:
                 self._active_goal_handle = None
-            result_holder[0] = future.result().result
+            try:
+                result_holder[0] = future.result().result
+            except Exception as exc:
+                class _Error:
+                    success = False
+                    error_message = f'result retrieval failed: {exc}'
+                result_holder[0] = _Error()
             done_event.set()
 
         def on_goal_response(future):
-            gh = future.result()
+            try:
+                gh = future.result()
+            except Exception as exc:
+                class _Error:
+                    success = False
+                    error_message = f'goal send failed: {exc}'
+                result_holder[0] = _Error()
+                done_event.set()
+                return
             if not gh.accepted:
                 class _Rejected:
                     success = False
@@ -196,7 +229,15 @@ class PlanManagerNode(Node):
         completed = done_event.wait(timeout=timeout_sec)
 
         if not completed:
-            self.get_logger().error('[PlanManagerNode] Skill action timed out.')
+            self.get_logger().error('[PlanManagerNode] Skill action timed out — cancelling goal.')
+            with self._active_goal_lock:
+                gh = self._active_goal_handle
+                self._active_goal_handle = None
+            if gh is not None:
+                try:
+                    gh.cancel_goal_async()
+                except Exception:
+                    pass
         return result_holder[0]
 
     # -------------------------------------------------------------------------
@@ -242,8 +283,6 @@ class PlanManagerNode(Node):
             response.success = True
             response.message = 'Execution cancelled and robot returned home.'
 
-        # Ready for a fresh command.
-        self._stop_requested.clear()
         return response
 
 
