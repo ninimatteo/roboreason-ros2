@@ -88,7 +88,7 @@ class TreeOfThought(ReasoningMethod):
         score = 0
         data = self._parse_json_response(resp, context='_evaluate_thought')
         for key in ('user_request_consistency', 'environment_feasibility', 'embodiment_feasibility'):
-            score += self._scores_map.get(data.get(key, '').strip().lower(), 0)
+            score += self._scores_map.get(str(data.get(key, '')).strip().lower(), 0)
         return score
 
     def _retrieve_chain(self, thought_id: str, tree: Tree, db: dict) -> list:
@@ -131,7 +131,7 @@ class TreeOfThought(ReasoningMethod):
                     previous_thought=chain,
                     num_actions=self.k,
                     image=image
-                )
+                )[:self.k]
                 for i, thought in enumerate(new_thoughts):
                     tid = f'{iteration+1}-{self.k * idx + i + 1}'
                     db[tid] = thought
@@ -188,6 +188,8 @@ class TreeOfThought(ReasoningMethod):
         if best_terminal is not None:
             return best_terminal[1], tree
 
+        if not best_ids:
+            raise RuntimeError('ToT: model returned no candidate actions — cannot build a plan.')
         chain = self._retrieve_chain(best_ids[0], tree, db)
         return chain, tree
 

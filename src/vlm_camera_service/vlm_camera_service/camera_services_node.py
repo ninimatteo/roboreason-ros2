@@ -470,12 +470,13 @@ class CameraServicesNode(Node):
         never stopped), silently leaking timers and letting a stale in-flight
         callback race the fresh calibration attempt.
         """
-        if self._calib_timer is not None:
-            self._calib_timer.cancel()
         self._T_base_camera = None
         self._charuco_calibrated = False
         self._calib_hits = []
-        self._calib_timer = self.create_timer(0.5, self._try_calibrate)
+        if self._calib_timer is not None:
+            self._calib_timer.reset()
+        else:
+            self._calib_timer = self.create_timer(0.5, self._try_calibrate)
         self.get_logger().info(
             f'[CameraServicesNode] Calibration reset — '
             f'need {_CALIB_REQUIRED_HITS} consistent hits to lock'
@@ -604,8 +605,8 @@ class CameraServicesNode(Node):
             return
 
         pts = np.round(projected.reshape(-1, 2)).astype(np.int32).tolist()
-        msg.u = [p[0] for p in pts]
-        msg.v = [p[1] for p in pts]
+        msg.u = [max(0, p[0]) for p in pts]
+        msg.v = [max(0, p[1]) for p in pts]
         self._charuco_axis_pub.publish(msg)
 
     def _camera_frame_id(self) -> str:

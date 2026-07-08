@@ -27,13 +27,6 @@ class TaskInterfaceNode(Node):
         self._plan_client = self.create_client(PlanTask, '/plan_task')
         self._exec_client = self.create_client(ExecutePlan, '/execute_plan')
 
-        # Prepare for interactive input in a separate thread to avoid blocking the ROS spin loop
-        self._input_thread = threading.Thread(
-            target=self._interactive_loop, daemon=True
-        )
-        self._input_thread.start()
-
-        # Load scene from package share
         pkg_share = get_package_share_directory('robo_reason_task_interface')
         scene_path = os.path.join(pkg_share, 'config', 'scene_mock.json')
         with open(scene_path, 'r') as f:
@@ -43,6 +36,12 @@ class TaskInterfaceNode(Node):
         self._plan_client.wait_for_service()
         self._exec_client.wait_for_service()
         self.get_logger().info('[TaskInterfaceNode] Services ready.')
+
+        # Start input thread last so self._scene_json is always set before first command.
+        self._input_thread = threading.Thread(
+            target=self._interactive_loop, daemon=True
+        )
+        self._input_thread.start()
 
     def _interactive_loop(self):
         while True:
@@ -58,7 +57,8 @@ class TaskInterfaceNode(Node):
 
             if user_command.lower() in ('quit', 'exit', 'q'):
                 print('Exiting.')
-                break
+                rclpy.shutdown()
+                return
             if not user_command:
                 continue
 
@@ -69,12 +69,17 @@ class TaskInterfaceNode(Node):
             plan_req.scene_json = self._scene_json
 
             plan_future = self._plan_client.call_async(plan_req)
-            # rclpy.spin_until_future_complete(self, plan_future)  - old
-            # Wait safely for the future to finish without spinning the node again
-            while not plan_future.done():
+            deadline = time.time() + 120.0
+            while not plan_future.done() and time.time() < deadline:
                 time.sleep(0.1)
-
-            plan_resp = plan_future.result()
+            if not plan_future.done():
+                print('[ERROR] Planning timed out after 120 s')
+                continue
+            try:
+                plan_resp = plan_future.result()
+            except Exception as exc:
+                print(f'[ERROR] Planning call failed: {exc}')
+                continue
 
             if not plan_resp.success:
                 print(f'[ERROR] Planning failed: {plan_resp.error_message}')
@@ -95,9 +100,17 @@ class TaskInterfaceNode(Node):
             exec_req.scene_json = self._scene_json
 
             exec_future = self._exec_client.call_async(exec_req)
-            while not exec_future.done():
+            deadline = time.time() + 300.0
+            while not exec_future.done() and time.time() < deadline:
                 time.sleep(0.1)
-            exec_resp = exec_future.result()
+            if not exec_future.done():
+                print('[ERROR] Execution timed out after 300 s')
+                continue
+            try:
+                exec_resp = exec_future.result()
+            except Exception as exc:
+                print(f'[ERROR] Execution call failed: {exc}')
+                continue
 
             if exec_resp.success:
                 print(f'\n[Report]\n{exec_resp.report}')

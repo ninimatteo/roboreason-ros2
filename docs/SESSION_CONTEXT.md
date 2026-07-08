@@ -1,6 +1,6 @@
 # Session Context — RoboReason ROS2 VLM Pipeline
 
-**Last updated:** 2026-07-07
+**Last updated:** 2026-07-08
 
 ---
 
@@ -618,9 +618,53 @@ stacking math (`position.z + size[2]`) and pick contact-height/grasp-width
 logic are unchanged — this only touches the held-object release-lift value.
 Not yet tested on hardware.
 
+#### 8. Reasoning-method robustness fixes + `VLM_REASONING_EFFORT` (uncommitted, same branch, 2026-07-08)
+
+Triaged three issues reported from live hardware testing:
+
+- **cot_sc `TypeError` crash**: a sampled plan action came back as a
+  non-dict (e.g. `[3]`) and `UR5Action(**action_dict)` blew up with an
+  unhandled `TypeError` instead of a catchable planning error.
+  `reasoning_method.py`'s `_build_action()` now guards with
+  `isinstance(action_dict, dict)` and raises `ActionParsingError` (with the
+  offending value in the message) for both the non-dict case and
+  `pydantic.ValidationError`. Regression test:
+  `test_cot_sc_crashes_on_non_dict_action_in_plan`.
+- **Unclosed `<think>` block → `ResponseParsingError`, no retry**: when a
+  reasoning VLM/LLM exhausts `max_tokens` mid-`<think>` (never emits
+  `</think>` or any JSON), the old `_THINK_BLOCK_RE` (which only matches
+  *closed* blocks) left the raw dump untouched, so `_is_blank_response()`
+  saw it as non-blank and the retry-once-with-higher-budget path never
+  fired. Fixed by adding `_UNCLOSED_THINK_BLOCK_RE = re.compile(r'<think>.*',
+  re.DOTALL)`, applied in `_strip_think_blocks()` right after the closed-block
+  regex, so a trailing unclosed `<think>` is truncated to empty too and
+  `_is_blank_response()` now correctly triggers the existing retry-once path
+  with no changes needed to `_call_client()`'s retry trigger itself. Tests:
+  `test_is_blank_response_covers_unclosed_think_block`,
+  `test_call_client_retries_once_on_unclosed_think_block`.
+- **Groq vs. Nebius VLM grounding precision**: confirmed identical raw image
+  bytes/prompt text sent to both providers — the precision gap is model
+  capability, not an input bug. `groq/qwen3.6-27b` visibly does imprecise
+  percentage-estimation arithmetic inside its `<think>` block instead of
+  grounding directly, unlike Nebius's purpose-built Qwen2.5-VL-72B-Instruct.
+  Mitigation: added `Settings.VLM_REASONING_EFFORT` (default `''` = omitted,
+  no behavior change) forwarding Groq's `reasoning_effort` request param
+  (e.g. `'none'` disables the `<think>` CoT entirely) end-to-end —
+  `config.py` → `reasoning_effort` ROS param on `vlm_planner_node.py` /
+  `vlm_llm_planner_node.py` → conditionally added to `client_parameters` /
+  `grounding_client_parameters` (only when non-empty) →
+  `gui_stack.launch.py` launch arg → `stack_supervisor.py`'s
+  `_launch_command()` → GUI `ConfigRequest`/`StackRequest` (`app.py`) →
+  `bridge_node.py`'s `set_planner_config()` (VLM + VLM_LLM modes only) →
+  new "Reasoning effort (VLM, Groq/Qwen3)" dropdown in `index.html`/`app.js`
+  (Default/None/Low/Medium/High, visible only in VLM/VLM_LLM mode). Not yet
+  A/B tested on hardware against the current Groq grounding behavior.
+
+Full reasoning test suite: 45/45 passing after these changes.
+
 ---
 
-## Known Open Issues (updated 2026-07-07)
+## Known Open Issues (updated 2026-07-08)
 
 - Release-height fix (Session 4 §7) has not yet been verified on real
   hardware — next session should test pick→release on objects of a few
@@ -630,7 +674,17 @@ Not yet tested on hardware.
   rectification rewrite (see `docs/GRASP_GEOMETRY_PIPELINE.md`-adjacent
   planning) has not been started; no `topdown_utils.py`/`homography_utils.py`
   exists in the tree yet.
+- `VLM_REASONING_EFFORT='none'` mitigation (Session 4 §8) has not yet been
+  A/B tested on hardware against Groq's default grounding precision — next
+  session should try it against the same scene/prompt that showed the
+  "shifted point" symptom and compare.
 - `feature/vlm-bbox-grounding` branch (bbox grounding mode, cot_sc timeout
-  fix, `REQUEST_TIMEOUT_S` setting, release-height fix — Session 4 §5-7) is
-  fully uncommitted; awaiting the operator's own commit before starting a
-  new session.
+  fix, `REQUEST_TIMEOUT_S` setting, release-height fix, reasoning-method
+  robustness fixes, `VLM_REASONING_EFFORT` — Session 4 §5-8) has 21 modified
+  files `git add`-staged but **not committed** — the operator intends to
+  review/commit this themselves. Two unrelated untracked files also exist
+  (`docs/council-report-20260707-124140.html`,
+  `docs/council-transcript-20260707-124140.md`, artifacts from an unrelated
+  `/llm-council` invocation) and are not part of this staged set. Next
+  session should start from this staged-but-uncommitted state — do not
+  assume it has been committed.

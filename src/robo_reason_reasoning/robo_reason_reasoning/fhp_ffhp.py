@@ -72,7 +72,10 @@ class FHP(ReasoningMethod):
             force_json=True, 
             image=image
         )
-        return self._parse_json_response(raw, context='plan_task')['plan']
+        parsed = self._parse_json_response(raw, context='plan_task')
+        if isinstance(parsed, list):
+            return parsed
+        return parsed['plan']
 
     def __call__(self, force_replan: bool = False, **kwargs):
         assert 'user_request' in kwargs
