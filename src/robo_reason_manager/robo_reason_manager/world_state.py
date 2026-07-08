@@ -1,7 +1,6 @@
 """World state tracker for the virtual scene."""
 import json
 import copy
-import math
 
 
 class WorldState:
@@ -18,17 +17,8 @@ class WorldState:
         new_ws.state = copy.deepcopy(self.state)
         return new_ws
 
-    def to_dict(self) -> dict:
-        return copy.deepcopy(self.state)
-
     def to_json(self) -> str:
         return json.dumps(self.state, indent=2)
-
-    def get_object(self, object_id: str) -> dict:
-        return self.state.get('objects', {}).get(object_id)
-
-    def get_target(self, target_id: str) -> dict:
-        return self.state.get('targets', {}).get(target_id)
 
     def robot_holding(self):
         """Return the id of the held object, or None."""
@@ -46,23 +36,6 @@ class WorldState:
         return (min(x_lim) <= x <= max(x_lim) and
                 min(y_lim) <= y <= max(y_lim) and
                 min(z_lim) <= z <= max(z_lim))
-
-    def find_object_near(self, position: list, tolerance: float = 0.08, xy_only: bool = False) -> str:
-        """Return the id of the object closest to position (within tolerance), or None."""
-        best_id = None
-        best_dist = float('inf')
-        for obj_id, obj in self.state.get('objects', {}).items():
-            obj_pos = obj.get('position')
-            if obj_pos is None:
-                continue
-            if xy_only:
-                dist = math.sqrt((position[0] - obj_pos[0]) ** 2 + (position[1] - obj_pos[1]) ** 2)
-            else:
-                dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(position, obj_pos)))
-            if dist < tolerance and dist < best_dist:
-                best_dist = dist
-                best_id = obj_id
-        return best_id
 
     def apply_skill_result(self, skill_name: str, args: dict):
         """Update world state after a skill executes successfully."""
