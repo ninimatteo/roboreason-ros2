@@ -24,6 +24,7 @@ ROS2 parameters:
 
 import copy
 import json
+import shutil
 import time
 import traceback
 import uuid
@@ -182,6 +183,7 @@ class VLMPlannerNode(Node):
         debug_path = self._save_debug_frame(image_paths[0], pixel_steps, task_dir)
         if debug_path is not None:
             run.save_debug_image(str(debug_path))
+        shutil.rmtree(task_dir, ignore_errors=True)
 
         # 4. Batch-deproject pixel coords → world [x, y, z], then depth-compensate
         #    pick/release z using the table surface height from scene_json (if any).

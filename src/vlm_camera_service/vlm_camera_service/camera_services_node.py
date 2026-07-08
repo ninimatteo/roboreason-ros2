@@ -231,6 +231,8 @@ class CameraServicesNode(Node):
                 "waiting for camera inputs: " + ", ".join(missing)
             )
 
+    _MAX_FRAME_AGE_NS = 5_000_000_000  # 5 s; frames older than this are treated as stale
+
     def _handle_get_image(
         self, _request: GetImage.Request, response: GetImage.Response
     ) -> GetImage.Response:
@@ -238,6 +240,19 @@ class CameraServicesNode(Node):
             response.success = False
             response.frame_id = ""
             response.error_message = "RGB image not received yet"
+            return response
+
+        age_ns = (
+            self.get_clock().now()
+            - rclpy.time.Time.from_msg(self._latest_color.header.stamp)
+        ).nanoseconds
+        if age_ns > self._MAX_FRAME_AGE_NS:
+            response.success = False
+            response.frame_id = ""
+            response.error_message = (
+                f"Camera frame is stale ({age_ns / 1e9:.1f} s old) — "
+                "check that the Orbbec driver is still publishing."
+            )
             return response
 
         image = self._latest_color
@@ -359,12 +374,12 @@ class CameraServicesNode(Node):
             response.frame_id = "base_link"
         else:
             self.get_logger().warn(
-                "No camera→base_link transform yet — returning camera-frame points. "
+                "No camera→base_link transform yet — refusing Deproject request. "
                 "Make sure the ArUco board is visible and board_in_base_* params are set."
             )
-            response.success = True
-            response.points = points
-            response.frame_id = self._camera_frame_id()
+            response.success = False
+            response.error_message = "Camera not calibrated — no base_link transform available."
+            response.points = []
 
         response.error_message = ""
         self.get_logger().info(

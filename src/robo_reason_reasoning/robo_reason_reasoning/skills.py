@@ -115,6 +115,50 @@ class UR5Skills:
     "time": 0.0
     """
 
+    vlm_skills_bbox = """
+    Skills:
+    - approach: [target_position: list[float], offset: float, approach_direction: str]
+      Move the end-effector to a safe hovering position near the target before grasping or releasing.
+      - target_position: [x_min, y_min, x_max, y_max] — tightest pixel bounding box around the target object or surface
+
+    - pick: [target_position: list[float], grasp_width: float, grasp_axis: str, come_back: bool]
+      Move the end-effector to the object and close the gripper to grasp it.
+      - target_position: [x_min, y_min, x_max, y_max] — tightest pixel bounding box around the object to grasp
+      - grasp_width: visual estimate of the object's real-world width in meters (fallback; executor also derives from box)
+      - grasp_axis: final approach axis: 'z' (top-down), 'x', 'y'
+      - come_back: if true, return to the pre-grasp approach position after picking
+
+    - release: [release_position: list[float], object_height: float, come_back: bool]
+      Move the end-effector to release_position and open the gripper.
+      - release_position: [x_min, y_min, x_max, y_max] — tightest pixel bounding box around the target surface
+      - object_height: estimated real-world height of the held object in meters
+      - come_back: if true, return to previous position after releasing
+
+    - move_home: []
+      Move the robot arm to its home configuration. No parameters needed.
+
+    - wait: [time: float]
+      Pause execution for the given duration in seconds.
+
+    Parameter notes:
+    - All positions are bounding boxes [x_min, y_min, x_max, y_max] in pixel coordinates
+    - Draw the tightest box that contains only the target — do not include background or neighbouring objects
+    - Standard pick-and-place sequence: approach → pick → approach(target_zone) → release → move_home
+    """
+
+    vlm_action_example_placeholder_bbox = """
+    "action_name": "<approach | pick | release | move_home | wait>",
+    "target_position": [x_min, y_min, x_max, y_max],
+    "release_position": [x_min, y_min, x_max, y_max],
+    "object_height": 0.0,
+    "grasp_width": 0.0,
+    "offset": 0.1,
+    "approach_direction": "<z | x | y>",
+    "grasp_axis": "<z | x | y>",
+    "come_back": true,
+    "time": 0.0
+    """
+
     eos_example_placeholder = """
     "action_name": "move_home"
     """
@@ -136,6 +180,11 @@ class UR5Skills:
         return UR5Skills.eos_example_placeholder.strip()
 
     @staticmethod
-    def get_embodiment_data(use_vlm: bool = False) -> tuple:
+    def get_embodiment_data(use_vlm: bool = False, grounding_mode: str = 'point') -> tuple:
         """Return (skills_str, action_placeholder_str) for use in reasoning methods."""
+        if use_vlm and grounding_mode == 'bbox':
+            return (
+                UR5Skills.vlm_skills_bbox.strip(),
+                UR5Skills.vlm_action_example_placeholder_bbox.strip(),
+            )
         return UR5Skills.get_skills(use_vlm), UR5Skills.get_action_example(use_vlm)

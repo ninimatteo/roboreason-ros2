@@ -29,6 +29,7 @@ ROS2 parameters:
 import copy
 import json
 import re
+import shutil
 import time
 import traceback
 import uuid
@@ -190,6 +191,7 @@ class VLMLLMPlannerNode(Node):
         debug_path = self._save_debug_frame(image_path, detected, task_dir)
         if debug_path is not None:
             run.save_debug_image(str(debug_path))
+        shutil.rmtree(task_dir, ignore_errors=True)
 
         # 3. Batch-deproject pixel centers → world [x, y, z] and assemble the
         #    generated scene JSON (workspace/robot copied unmodified from

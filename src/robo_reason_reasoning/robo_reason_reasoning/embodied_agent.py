@@ -52,7 +52,8 @@ class EmbodiedAgent:
 
         self.predicates = Predicates.get_all_predicates()
         self.skills, self.action_placeholder = UR5Skills.get_embodiment_data(
-            use_vlm=(self.client_type == 'vlm')
+            use_vlm=(self.client_type == 'vlm'),
+            grounding_mode=self.grounding_mode,
         )
         self.eos_placeholder = UR5Skills.get_eos_example()
 

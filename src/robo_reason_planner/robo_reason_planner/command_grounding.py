@@ -16,19 +16,12 @@ def check_command_grounding(user_command: str, scene_json: str):
     objects = scene.get('objects', {})
     targets = scene.get('targets', {})
 
-    # Collect colors and names from the scene
+    # Collect colors from the scene
     scene_colors = set()
-    scene_names = set()
     for obj_id, obj in objects.items():
-        scene_names.add(obj_id.lower())
         color = obj.get('color', '')
         if color:
             scene_colors.add(color.lower())
-    for tgt_id, tgt in targets.items():
-        scene_names.add(tgt_id.lower())
-        label = tgt.get('label', '')
-        if label:
-            scene_names.add(label.lower())
 
     cmd_lower = user_command.lower()
 
