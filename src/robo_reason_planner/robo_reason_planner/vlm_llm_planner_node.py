@@ -19,6 +19,10 @@ ROS2 parameters:
   temperature       (float, default settings.TEMPERATURE)      — LLM planning temperature
   vlm_model_name    (str,   default settings.VLM_MODEL_NAME)   — vision-capable model for scene grounding
   vlm_temperature   (float, default settings.VLM_TEMPERATURE)  — scene-grounding temperature
+  reasoning_effort  (str,   default settings.VLM_REASONING_EFFORT) — Groq-only Qwen3 <think>
+                                                                  control for the scene-grounding
+                                                                  call (e.g. 'none'); empty string
+                                                                  omits the param entirely
   tmp_dir           (str,   default settings.TMP_DIR)          — where to save frames + generated scene JSON
 """
 
@@ -72,6 +76,7 @@ class VLMLLMPlannerNode(Node):
         self.declare_parameter('temperature', settings.TEMPERATURE)
         self.declare_parameter('vlm_model_name', settings.VLM_MODEL_NAME)
         self.declare_parameter('vlm_temperature', settings.VLM_TEMPERATURE)
+        self.declare_parameter('reasoning_effort', settings.VLM_REASONING_EFFORT)
         self.declare_parameter('tmp_dir', settings.TMP_DIR)
 
         dotenv.load_dotenv()
@@ -123,6 +128,7 @@ class VLMLLMPlannerNode(Node):
             'temperature': self.get_parameter('temperature').value,
             'vlm_model_name': self.get_parameter('vlm_model_name').value,
             'vlm_temperature': self.get_parameter('vlm_temperature').value,
+            'reasoning_effort': self.get_parameter('reasoning_effort').value,
         })
 
         try:
@@ -160,10 +166,15 @@ class VLMLLMPlannerNode(Node):
         # 2. VLM scene-grounding call — detect objects/targets as pixel centers.
         vlm_model_name = self.get_parameter('vlm_model_name').value
         vlm_temperature = self.get_parameter('vlm_temperature').value
-        grounder = SceneGrounder(client_parameters={
+        reasoning_effort = self.get_parameter('reasoning_effort').value
+        grounding_client_parameters = {
             'model_name': vlm_model_name,
             'temperature': vlm_temperature,
-        })
+        }
+        if reasoning_effort:
+            # Omitted unless explicitly set — see VLM_REASONING_EFFORT in config.py.
+            grounding_client_parameters['reasoning_effort'] = reasoning_effort
+        grounder = SceneGrounder(client_parameters=grounding_client_parameters)
         detected = grounder.ground_scene(image_path)
         self.get_logger().info(
             f'[VLMLLMPlannerNode] Detected {len(detected.objects)} object(s), '

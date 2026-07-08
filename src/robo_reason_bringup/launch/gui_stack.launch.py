@@ -41,6 +41,7 @@ def generate_launch_description():
     vlm_model_name = LaunchConfiguration('vlm_model_name')
     vlm_temperature = LaunchConfiguration('vlm_temperature')
     grounding_mode = LaunchConfiguration('grounding_mode')
+    reasoning_effort = LaunchConfiguration('reasoning_effort')
     robot_ip = LaunchConfiguration('robot_ip')
     images_dir = LaunchConfiguration('images_dir')
 
@@ -70,6 +71,7 @@ def generate_launch_description():
         DeclareLaunchArgument('vlm_model_name', default_value='groq/qwen3.6-27b'),
         DeclareLaunchArgument('vlm_temperature', default_value='0.1'),
         DeclareLaunchArgument('grounding_mode', default_value='point'),
+        DeclareLaunchArgument('reasoning_effort', default_value=''),
         DeclareLaunchArgument('robot_ip', default_value='192.168.2.60'),
         DeclareLaunchArgument('images_dir', default_value='/root/ws/src/mock_frames'),
 
@@ -98,6 +100,7 @@ def generate_launch_description():
                 'model_name': model_name,
                 'temperature': temperature,
                 'grounding_mode': grounding_mode,
+                'reasoning_effort': reasoning_effort,
             }],
         ),
         Node(
@@ -112,6 +115,7 @@ def generate_launch_description():
                 'temperature': temperature,
                 'vlm_model_name': vlm_model_name,
                 'vlm_temperature': vlm_temperature,
+                'reasoning_effort': reasoning_effort,
             }],
         ),
 

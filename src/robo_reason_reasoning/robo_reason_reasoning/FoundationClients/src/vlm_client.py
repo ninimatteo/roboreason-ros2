@@ -95,6 +95,16 @@ class VLMClient(BaseFoundationClient):
         temperature = kwargs.get("temperature", self.temperature)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         top_p = kwargs.get("top_p", self.top_p)
+        # Qwen3-family reasoning control: "none" disables <think> chain-of-
+        # thought tokens entirely for clean, direct structured output;
+        # "hidden" keeps reasoning internal-only. Omitted (default) uses the
+        # model's own default behavior — no change unless explicitly opted
+        # into via client_parameters={'reasoning_effort': ...} or a per-call
+        # kwarg. This is the source-side fix for a reasoning-heavy model
+        # exhausting max_tokens on <think> before emitting JSON (see
+        # ReasoningMethod._is_blank_response's retry-once, which is the
+        # defensive fallback for when this isn't set).
+        reasoning_effort = kwargs.get("reasoning_effort", self.model_parameters.get("reasoning_effort"))
 
         base64_image = self._encode_image(image)
 
@@ -139,6 +149,8 @@ class VLMClient(BaseFoundationClient):
             }
         # Note: Groq VLMs (e.g. qwen 3.6) don't support response_format json_object.
         # JSON output is enforced via the prompt instead.
+        if reasoning_effort is not None:
+            params["reasoning_effort"] = reasoning_effort
 
         response = self.client.chat.completions.create(**params)
         if hasattr(response, 'usage'):

@@ -591,6 +591,8 @@ class GuiBridgeNode(Node):
         # (independent scene-grounding model, see vlm_llm_planner_node).
         # grounding_mode ('point'/'bbox') only exists on the VLM planner —
         # vlm_planner_node's direct pixel-click/bbox pipeline.
+        # reasoning_effort exists on both the VLM planner and the VLM_LLM
+        # scene-grounding call — see VLM_REASONING_EFFORT in config.py.
         params = []
         if config.get('reasoning_method') is not None:
             params.append(('reasoning_method', str(config['reasoning_method'])))
@@ -607,6 +609,8 @@ class GuiBridgeNode(Node):
                 params.append(('vlm_temperature', float(config['vlm_temperature'])))
         if mode == 'VLM' and config.get('grounding_mode') is not None:
             params.append(('grounding_mode', str(config['grounding_mode'])))
+        if mode in ('VLM', 'VLM_LLM') and config.get('reasoning_effort') is not None:
+            params.append(('reasoning_effort', str(config['reasoning_effort'])))
 
         if not params:
             result['error'] = 'no parameters to set'

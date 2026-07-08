@@ -11,6 +11,10 @@ Regression tests here assert current, fixed behavior:
 - A malformed LLM action field (e.g. a mashed-together number like
   '-0.50.03') now raises a clear ActionParsingError instead of a bare,
   hard-to-place pydantic.ValidationError.
+- An empty LLM/VLM response (e.g. a reasoning-heavy model exhausting its
+  max_tokens budget on internal chain-of-thought before emitting the final
+  JSON) now raises a clear ResponseParsingError instead of a bare
+  json.JSONDecodeError('Expecting value: line 1 column 1 (char 0)').
 - ToT's early-exit bug is fixed: the search keeps expanding live
   (non-terminal) beam candidates for the full iteration budget instead of
   bailing out the instant any single top-beam candidate looks like
@@ -28,7 +32,7 @@ from robo_reason_reasoning.cot_sc import CoTSC
 from robo_reason_reasoning.always_act import StepAction
 from robo_reason_reasoning.self_refine import SelfRefine
 from robo_reason_reasoning.tot import TreeOfThought
-from robo_reason_reasoning.reasoning_method import ActionParsingError
+from robo_reason_reasoning.reasoning_method import ActionParsingError, ResponseParsingError
 
 from conftest import (
     plan_response,
@@ -100,6 +104,25 @@ def test_fhp_task_planning_prompt_includes_predicted_predicates(scripted_client,
     assert "Contact(red_cube, table)" in plan_call_kwargs["user_message"]
 
 
+@pytest.mark.parametrize("grounding_mode", ["point", "bbox"])
+def test_fhp_predicates_step_works_in_vlm_mode(scripted_client, base_kwargs, grounding_mode):
+    """Regression for the real-world crash: PredicatesPrompts.get_vlm_prompts()
+    didn't accept grounding_mode, but ReasoningMethod._select_prompts() always
+    passes it, so predict_predicates() (called before plan_task() in FHP)
+    raised TypeError for every VLM-mode fhp/ffhp run, regardless of
+    grounding_mode.
+    """
+    scripted_client([
+        "no relevant predicates",
+        plan_response(EXPECTED_PLAN),
+    ])
+    vlm_kwargs = dict(base_kwargs)
+    vlm_kwargs["client_type"] = "vlm"
+    agent = FHP(reasoning_mode="fhp", predicates="", grounding_mode=grounding_mode, **vlm_kwargs)
+    result = agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON, image="fake.jpg")
+    assert result.action.action_name == EXPECTED_PLAN[0]["action_name"]
+
+
 def test_fhp_crashes_on_malformed_llm_field(scripted_client, base_kwargs):
     """Malformed LLM field at fhp_ffhp.py:96 now raises ActionParsingError."""
     scripted_client([
@@ -108,6 +131,27 @@ def test_fhp_crashes_on_malformed_llm_field(scripted_client, base_kwargs):
     ])
     agent = FHP(reasoning_mode="fhp", predicates="", **base_kwargs)
     with pytest.raises(ActionParsingError):
+        agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+
+
+def test_fhp_raises_clear_error_on_empty_llm_response(scripted_client, base_kwargs):
+    """Regression for the real-world crash: plan_task() raised a bare
+    json.decoder.JSONDecodeError('Expecting value: line 1 column 1 (char 0)')
+    when the LLM/VLM returned an empty string — which happens when a
+    reasoning-heavy model (e.g. Groq's qwen3.6) exhausts its max_tokens
+    budget on internal chain-of-thought before ever emitting the final JSON
+    plan. Now retries once with a larger max_tokens budget (see
+    test_call_client_retries_once_on_blank_force_json_response), and only
+    raises a diagnosable ResponseParsingError if that retry is also blank —
+    hence two empty scripted responses here, not one.
+    """
+    scripted_client([
+        "no relevant predicates",
+        "",
+        "",
+    ])
+    agent = FHP(reasoning_mode="fhp", predicates="", **base_kwargs)
+    with pytest.raises(ResponseParsingError):
         agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
 
 
@@ -156,6 +200,18 @@ def test_react_crashes_on_malformed_llm_field(scripted_client, base_kwargs):
         agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
 
 
+def test_react_raises_clear_error_on_empty_llm_response(scripted_client, base_kwargs):
+    """react_step()'s json.loads() at react.py:55 now raises a diagnosable
+    ResponseParsingError instead of a bare JSONDecodeError on an empty
+    (max_tokens-exhausted) LLM response — only once the retry-once-with-
+    higher-budget path (see _call_client) also comes back blank.
+    """
+    scripted_client(["", ""])
+    agent = React(**base_kwargs)
+    with pytest.raises(ResponseParsingError):
+        agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+
+
 # ---------------------------------------------------------------------------
 # always_act
 # ---------------------------------------------------------------------------
@@ -177,6 +233,18 @@ def test_always_act_crashes_on_malformed_llm_field(scripted_client, base_kwargs)
     ])
     agent = StepAction(**base_kwargs)
     with pytest.raises(ActionParsingError):
+        agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+
+
+def test_always_act_raises_clear_error_on_empty_llm_response(scripted_client, base_kwargs):
+    """step_action()'s json.loads() at always_act.py:53 now raises a
+    diagnosable ResponseParsingError instead of a bare JSONDecodeError on an
+    empty (max_tokens-exhausted) LLM response — only once the retry-once-
+    with-higher-budget path (see _call_client) also comes back blank.
+    """
+    scripted_client(["", ""])
+    agent = StepAction(**base_kwargs)
+    with pytest.raises(ResponseParsingError):
         agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
 
 
@@ -212,6 +280,25 @@ def test_cot_sc_crashes_on_malformed_llm_field(scripted_client, base_kwargs):
     """
     k = 2
     scripted_client([plan_response([MALFORMED_ACTION]) for _ in range(k)])
+    agent = CoTSC(k=k, **base_kwargs)
+    with pytest.raises(ActionParsingError):
+        agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+
+
+def test_cot_sc_crashes_on_non_dict_action_in_plan(scripted_client, base_kwargs):
+    """Reproduces a real live-hardware crash: the VLM's own "plan" JSON array
+    contained a raw int as one of its entries (not a well-formed action
+    dict). select_consistent_plan() picks a raw per-sample plan directly, so
+    that stray int reaches _build_action(self.task_plan[0]) at cot_sc.py's
+    dispense site. Previously this raised a bare, hard-to-place
+    `TypeError: UR5Action() argument after ** must be a mapping, not int`
+    from `UR5Action(**action_dict)`'s `**` unpacking (not a
+    pydantic.ValidationError, so the old except clause didn't catch it).
+    _build_action's isinstance(action_dict, dict) guard now raises a clear
+    ActionParsingError instead.
+    """
+    k = 2
+    scripted_client([plan_response([3]) for _ in range(k)])
     agent = CoTSC(k=k, **base_kwargs)
     with pytest.raises(ActionParsingError):
         agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
@@ -326,3 +413,145 @@ def test_tot_crashes_on_malformed_llm_field(scripted_client, base_kwargs):
     agent = TreeOfThought(k=1, b=1, t=1, **base_kwargs)
     with pytest.raises(ActionParsingError):
         agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+
+
+def test_tot_raises_clear_error_on_empty_generate_response(scripted_client, base_kwargs):
+    """_generate_action_thought()'s json.loads() at tot.py:69 now raises a
+    diagnosable ResponseParsingError instead of a bare JSONDecodeError on an
+    empty (max_tokens-exhausted) LLM response — only once the retry-once-
+    with-higher-budget path (see _call_client) also comes back blank.
+    """
+    scripted_client(["", ""])
+    agent = TreeOfThought(k=1, b=1, t=1, **base_kwargs)
+    with pytest.raises(ResponseParsingError):
+        agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+
+
+def test_tot_raises_clear_error_on_empty_evaluate_response(scripted_client, base_kwargs):
+    """_evaluate_thought()'s json.loads() at tot.py:90 now raises a
+    diagnosable ResponseParsingError instead of a bare JSONDecodeError on an
+    empty (max_tokens-exhausted) LLM response — only once the retry-once-
+    with-higher-budget path (see _call_client) also comes back blank.
+    """
+    scripted_client([
+        _tot_thought_response(EXPECTED_PLAN[0]),
+        "",
+        "",
+    ])
+    agent = TreeOfThought(k=1, b=1, t=1, **base_kwargs)
+    with pytest.raises(ResponseParsingError):
+        agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+
+
+# ---------------------------------------------------------------------------
+# reasoning_method: retry-once-with-higher-budget / robust JSON extraction
+# ---------------------------------------------------------------------------
+
+def test_call_client_retries_once_on_blank_force_json_response(scripted_client, base_kwargs):
+    """A blank force_json response (max_tokens exhausted on <think> reasoning
+    before any JSON was emitted) is retried once, automatically, with a
+    doubled max_tokens budget — recovering the plan instead of failing the
+    whole reasoning method on a single transient empty response.
+    """
+    client = scripted_client([
+        "no relevant predicates",       # predict_predicates() — non-blank, no retry
+        "",                              # plan_task() first attempt — blank, triggers retry
+        plan_response(EXPECTED_PLAN),    # plan_task() retry — recovers
+    ])
+    agent = FHP(reasoning_mode="fhp", predicates="", **base_kwargs)
+
+    result = agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+    assert result.action.action_name == EXPECTED_PLAN[0]["action_name"]
+    assert len(client.calls) == 3
+    # The retried call asked for a larger max_tokens budget than the base
+    # client default (8192, ScriptedClient has no max_tokens attr so the
+    # fallback default applies).
+    assert client.calls[-1]["max_tokens"] == 16384
+
+
+def test_call_client_does_not_retry_a_well_formed_response(scripted_client, base_kwargs):
+    """No retry fires when the first response already parses — the retry
+    path must be a no-op in the common/happy case.
+    """
+    scripted_client([
+        "no relevant predicates",
+        plan_response(EXPECTED_PLAN),
+    ])
+    agent = FHP(reasoning_mode="fhp", predicates="", **base_kwargs)
+    agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+    assert len(agent.client.calls) == 2
+
+
+def test_extract_json_strips_think_blocks_and_leading_prose(scripted_client, base_kwargs):
+    """_extract_json (ported from a colleague's more battle-tested VLMClient)
+    recovers a well-formed plan even when the model wraps it in a Qwen3-style
+    <think>...</think> block and/or leading prose — cases the previous bare
+    fence-strip + json.loads couldn't handle.
+    """
+    contaminated = (
+        "<think>let me plan this out step by step...</think>"
+        "Here is the plan:\n" + plan_response(EXPECTED_PLAN)
+    )
+    scripted_client([
+        "no relevant predicates",
+        contaminated,
+    ])
+    agent = FHP(reasoning_mode="fhp", predicates="", **base_kwargs)
+    result = agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+    assert result.action.action_name == EXPECTED_PLAN[0]["action_name"]
+
+
+def test_is_blank_response_treats_pure_think_block_as_blank():
+    """A response that is entirely a <think> block (nothing left after
+    stripping it) is treated as blank — the exact failure mode observed in
+    the real groq/qwen3.6-27b JSONDecodeError crash.
+    """
+    from robo_reason_reasoning.reasoning_method import ReasoningMethod
+
+    assert ReasoningMethod._is_blank_response("<think>only reasoning, no answer</think>") is True
+    assert ReasoningMethod._is_blank_response("") is True
+    assert ReasoningMethod._is_blank_response(None) is True
+    assert ReasoningMethod._is_blank_response('<think>reasoning</think>{"plan": []}') is False
+
+
+def test_is_blank_response_covers_unclosed_think_block():
+    """An *unclosed* <think> block (max_tokens ran out mid-reasoning, before
+    the model ever closed the tag or emitted JSON) is the exact real-world
+    shape of the fhp/groq/qwen3.6-27b truncation bug ("Pick the blue
+    cube..."). _strip_think_blocks' original regex required a closing tag,
+    so this huge raw dump used to look non-blank and skip the retry path
+    entirely; _UNCLOSED_THINK_BLOCK_RE now truncates it to empty too.
+    """
+    from robo_reason_reasoning.reasoning_method import ReasoningMethod
+
+    unclosed_think_dump = (
+        "\n<think>\nLet me find the pixel coordinates. x is roughly 40% "
+        "from left -> 512. Continuing to reason about the box position "
+        "without ever closing the think tag or emitting JSON..."
+    )
+    assert ReasoningMethod._is_blank_response(unclosed_think_dump) is True
+    # Sanity: well-formed JSON (with or without a closed think block) is
+    # still correctly treated as non-blank.
+    assert ReasoningMethod._is_blank_response(plan_response(EXPECTED_PLAN)) is False
+    assert ReasoningMethod._is_blank_response(
+        '<think>reasoning</think>' + plan_response(EXPECTED_PLAN)
+    ) is False
+
+
+def test_call_client_retries_once_on_unclosed_think_block(scripted_client, base_kwargs):
+    """End-to-end: an unclosed-<think>-block first attempt (no JSON anywhere,
+    tag never closed) now triggers the same retry-once-with-higher-budget
+    path as a plain blank response, recovering the plan on the second try —
+    this is the scenario from the user's real "before the last fixes" crash.
+    """
+    unclosed_think_dump = "<think>\nreasoning about pixel coords, x -> 512, never closes..."
+    client = scripted_client([
+        "no relevant predicates",
+        unclosed_think_dump,
+        plan_response(EXPECTED_PLAN),
+    ])
+    agent = FHP(reasoning_mode="fhp", predicates="", **base_kwargs)
+    result = agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
+    assert result.action.action_name == EXPECTED_PLAN[0]["action_name"]
+    assert len(client.calls) == 3
+    assert client.calls[-1]["max_tokens"] == 16384

@@ -17,6 +17,9 @@ ROS2 parameters:
   tmp_dir           (str,   default '/root/ws/src/vlm_frames') — where to save captured frames
   grounding_mode    (str,   default 'point')                  — 'point' ([x, y] click) or 'bbox'
                                                                   ([x_min, y_min, x_max, y_max] box)
+  reasoning_effort  (str,   default settings.VLM_REASONING_EFFORT) — Groq-only Qwen3 <think>
+                                                                  control (e.g. 'none'); empty
+                                                                  string omits the param entirely
 """
 
 import copy
@@ -60,6 +63,7 @@ class VLMPlannerNode(Node):
         self.declare_parameter('temperature', settings.TEMPERATURE)
         self.declare_parameter('tmp_dir', settings.TMP_DIR)
         self.declare_parameter('grounding_mode', settings.VLM_GROUNDING_MODE)
+        self.declare_parameter('reasoning_effort', settings.VLM_REASONING_EFFORT)
 
         dotenv.load_dotenv()
 
@@ -107,6 +111,7 @@ class VLMPlannerNode(Node):
             'model_name': self.get_parameter('model_name').value,
             'temperature': self.get_parameter('temperature').value,
             'grounding_mode': self.get_parameter('grounding_mode').value,
+            'reasoning_effort': self.get_parameter('reasoning_effort').value,
         })
 
         try:
@@ -147,13 +152,21 @@ class VLMPlannerNode(Node):
         model_name = self.get_parameter('model_name').value
         temperature = self.get_parameter('temperature').value
         grounding_mode = self.get_parameter('grounding_mode').value
+        reasoning_effort = self.get_parameter('reasoning_effort').value
+
+        client_parameters = {
+            'model_name': model_name,
+            'temperature': temperature,
+        }
+        if reasoning_effort:
+            # Omitted (not just empty-string) unless explicitly set, so the
+            # model's own default behavior is unchanged by default — see
+            # VLM_REASONING_EFFORT in config.py.
+            client_parameters['reasoning_effort'] = reasoning_effort
 
         agent = EmbodiedAgent(
             reasoning_mode=reasoning_method,
-            client_parameters={
-                'model_name': model_name,
-                'temperature': temperature,
-            },
+            client_parameters=client_parameters,
             client_type='vlm',
             grounding_mode=grounding_mode,
         )

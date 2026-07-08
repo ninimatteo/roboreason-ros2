@@ -54,13 +54,13 @@ class CoTSC(ReasoningMethod):
             image=image
         )
         try:
-            parsed = json.loads(self._strip_json_fence(resp))
+            parsed = json.loads(self._extract_json(resp))
             # LLMs sometimes return the plan as a bare array instead of
             # {"plan": [...]}.  Accept both shapes.
             if isinstance(parsed, list):
                 return parsed
             return parsed.get('plan', [])
-        except (json.JSONDecodeError, AttributeError):
+        except (ValueError, json.JSONDecodeError, AttributeError):
             return []
 
     def aggregate_plans(self, plans: list) -> list:

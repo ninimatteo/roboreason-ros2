@@ -1,5 +1,4 @@
 """Always-Act (StepAction) reasoning method — adapted for UR5 from RoboReason-Lab."""
-import json
 from collections import namedtuple
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
@@ -50,7 +49,7 @@ class StepAction(ReasoningMethod):
             image=image
         )
 
-        output = dict(json.loads(self._strip_json_fence(raw)))
+        output = dict(self._parse_json_response(raw, context='step_action'))
         action_dict = output.get('action', {'action_name': 'move_home'})
         action = self._build_action(action_dict)
         eos = output.get('end_of_simulation', False)

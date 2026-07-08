@@ -181,6 +181,12 @@ class PredicatesPrompts:
         return _LLM_PREDICATES_PROMPT, _LLM_GOAL_PREDICATES_PROMPT
 
     @staticmethod
-    def get_vlm_prompts() -> tuple:
-        """Return (predicates_prompt, goal_predicates_prompt) for VLM mode."""
+    def get_vlm_prompts(grounding_mode: str = 'point') -> tuple:
+        """Return (predicates_prompt, goal_predicates_prompt) for VLM mode.
+
+        grounding_mode is accepted (and ignored) for interface parity with
+        the other EmbodiedAgentsPrompts classes — _select_prompts() always
+        passes it — since predicate prompts describe object relationships,
+        not pixel coordinates, so there's no point/bbox variant to select.
+        """
         return _VLM_PREDICATES_PROMPT, _VLM_GOAL_PREDICATES_PROMPT

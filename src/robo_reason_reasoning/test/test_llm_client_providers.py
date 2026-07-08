@@ -104,6 +104,26 @@ def test_usage_metrics_are_recorded_after_a_call(make_client):
     assert usage["total_tokens"] == 15
 
 
+def test_groq_passes_through_reasoning_effort_when_set(make_client):
+    """reasoning_effort (e.g. 'none' to disable Qwen3's <think> chain-of-
+    thought tokens) is opt-in: omitted by default (no behavior change), but
+    forwarded to the Groq API verbatim when passed via client_parameters or
+    a per-call kwarg. Ported from a colleague's VLMClient — the source-side
+    fix for a reasoning-heavy model exhausting max_tokens on <think> before
+    emitting JSON (see ReasoningMethod's retry-once, the defensive fallback
+    for when this isn't set).
+    """
+    client, completions = make_client("groq", "openai-oss-120b")
+    client(user_message="hi", system_message="sys", reasoning_effort="none")
+    assert completions.last_kwargs["reasoning_effort"] == "none"
+
+
+def test_groq_omits_reasoning_effort_by_default(make_client):
+    client, completions = make_client("groq", "openai-oss-120b")
+    client(user_message="hi", system_message="sys")
+    assert "reasoning_effort" not in completions.last_kwargs
+
+
 def test_unknown_provider_raises_value_error(monkeypatch):
     with pytest.raises(ValueError):
         LLMClient(model_name="not-a-real-provider/some-model")

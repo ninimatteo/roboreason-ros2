@@ -46,5 +46,5 @@ class SceneGrounder:
             force_json=True,
             forced_json_schema=VLMSceneDescription,
         )
-        cleaned = ReasoningMethod._strip_json_fence(raw)
+        cleaned = ReasoningMethod._extract_json(raw)
         return VLMSceneDescription.model_validate_json(cleaned)

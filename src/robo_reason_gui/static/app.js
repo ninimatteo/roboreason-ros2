@@ -40,6 +40,12 @@ const inpVlmTemp = document.getElementById('inp-vlm-temp');
 const pixelGroundingFields = document.getElementById('pixel-grounding-fields');
 const selGroundingMode = document.getElementById('sel-grounding-mode');
 
+// Groq/Qwen3 <think> control for VLM grounding calls — applies to both the
+// direct VLM planner and the VLM_LLM scene-grounding call (see
+// VLM_REASONING_EFFORT in config.py).
+const reasoningEffortFields = document.getElementById('reasoning-effort-fields');
+const selReasoningEffort = document.getElementById('sel-reasoning-effort');
+
 const cfgApply = document.getElementById('cfg-apply');
 const cfgResult = document.getElementById('cfg-result');
 
@@ -253,6 +259,9 @@ function currentConfig() {
   if ((selMode.value || 'LLM').toUpperCase() === 'VLM') {
     config.grounding_mode = selGroundingMode.value;
   }
+  if (['VLM', 'VLM_LLM'].includes((selMode.value || 'LLM').toUpperCase())) {
+    config.reasoning_effort = selReasoningEffort.value;
+  }
   return config;
 }
 
@@ -340,6 +349,13 @@ function syncPixelGroundingVisibility() {
   pixelGroundingFields.hidden = (selMode.value || 'LLM').toUpperCase() !== 'VLM';
 }
 
+// The reasoning-effort toggle applies to both VLM (direct grounding) and
+// VLM_LLM (scene-grounding call) — anywhere a VLM client is used.
+function syncReasoningEffortVisibility() {
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  reasoningEffortFields.hidden = mode !== 'VLM' && mode !== 'VLM_LLM';
+}
+
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
 // different model subsets), then also sync the camera toggle.
 function syncModelsByMode() {
@@ -353,6 +369,7 @@ function syncModelsByMode() {
   syncCameraToggle();
   syncGroundingVisibility();
   syncPixelGroundingVisibility();
+  syncReasoningEffortVisibility();
 }
 selMode.addEventListener('change', syncModelsByMode);
 

@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     #            pixel width/height are converted to a real-world grasp_width
     #            instead of relying on the VLM's blind numeric guess.
     VLM_GROUNDING_MODE: str = 'point'
+    # Qwen3-family reasoning control, forwarded verbatim to Groq as the
+    # 'reasoning_effort' request param (see LLMClient/VLMClient._call_groq).
+    # ''       — omitted (default): unchanged behavior, model's own default.
+    # 'none'   — disables <think> chain-of-thought entirely; worth trying when
+    #            a reasoning-heavy VLM (e.g. groq/qwen3.6-27b) is visibly doing
+    #            imprecise percentage-estimation arithmetic for pixel grounding
+    #            instead of grounding directly (see debug-image "shifted point"
+    #            reports on Groq vs. Nebius).
+    # 'low' / 'medium' / 'high' / 'hidden' — other Groq-supported values.
+    # Applies to both the direct VLM planner (vlm_planner_node) and the
+    # VLM->LLM hybrid's scene-grounding call (vlm_llm_planner_node).
+    VLM_REASONING_EFFORT: str = ''
 
     # ── VLM+LLM hybrid planner (scene grounding call, independent of MODEL_NAME
     # which is used for the subsequent LLM planning call) ─────────────────────

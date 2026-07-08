@@ -57,6 +57,11 @@ def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict
         # Only used by the VLM planner's direct pixel pipeline; harmless
         # (declared-but-unused launch arg) in LLM/VLM_LLM mode.
         f"grounding_mode:={config.get('grounding_mode', settings.VLM_GROUNDING_MODE)}",
+        # Used by both the VLM planner and the VLM_LLM scene-grounding call;
+        # harmless (declared-but-unused launch arg) in LLM mode. Empty string
+        # (default) omits the param, leaving the model's default behavior
+        # unchanged.
+        f"reasoning_effort:={config.get('reasoning_effort', settings.VLM_REASONING_EFFORT)}",
     ]
 
 

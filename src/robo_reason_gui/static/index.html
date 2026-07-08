@@ -101,6 +101,17 @@
           </select>
         </label>
       </div>
+      <div id="reasoning-effort-fields" class="grid" hidden>
+        <label>Reasoning effort (VLM, Groq/Qwen3)
+          <select id="sel-reasoning-effort">
+            <option value="">Default (unset)</option>
+            <option value="none">None — disable internal reasoning</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+      </div>
       <div id="grounding-fields" class="grounding-section" hidden>
         <h3 class="grounding-title">Scene grounding <span class="hint">(VLM — detects objects before LLM planning)</span></h3>
         <div class="grid">

@@ -105,9 +105,9 @@ class SelfRefine(ReasoningMethod):
         if iteration >= self.max_iterations:
             return True
         try:
-            if json.loads(self._strip_json_fence(feedback)).get('is_satisfactory', False):
+            if json.loads(self._extract_json(feedback)).get('is_satisfactory', False):
                 return True
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, json.JSONDecodeError, KeyError):
             pass
         return False
 
@@ -138,8 +138,8 @@ class SelfRefine(ReasoningMethod):
             self._verbose_print(f'Iteration {t+1} refined', {'solution': current})
 
         try:
-            return json.loads(self._strip_json_fence(current)).get('plan', [])
-        except json.JSONDecodeError:
+            return json.loads(self._extract_json(current)).get('plan', [])
+        except (ValueError, json.JSONDecodeError):
             return []
 
     def __call__(self, force_replan: bool = False, **kwargs):

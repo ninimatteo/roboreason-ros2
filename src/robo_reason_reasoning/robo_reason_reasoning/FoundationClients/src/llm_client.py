@@ -57,6 +57,12 @@ class LLMClient(BaseFoundationClient):
         top_p = kwargs.get("top_p", self.top_p)
         stream = kwargs.get("stream", self.stream)
         full_content = kwargs.get("full_content", False)
+        # Qwen3-family reasoning control: "none" disables <think> chain-of-
+        # thought tokens entirely for clean, direct structured output.
+        # Omitted (default) uses the model's own default behavior — no
+        # change unless explicitly opted into via
+        # client_parameters={'reasoning_effort': ...} or a per-call kwarg.
+        reasoning_effort = kwargs.get("reasoning_effort", self.model_parameters.get("reasoning_effort"))
         messages = self._build_messages(user_message, system_message, kwargs.get("messages"))
 
         if not messages:
@@ -80,6 +86,8 @@ class LLMClient(BaseFoundationClient):
             }
         elif force_json:
             params["response_format"] = {"type": "json_object"}
+        if reasoning_effort is not None:
+            params["reasoning_effort"] = reasoning_effort
 
         response = self.client.chat.completions.create(**params)
         

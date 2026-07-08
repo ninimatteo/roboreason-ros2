@@ -72,7 +72,7 @@ class FHP(ReasoningMethod):
             force_json=True, 
             image=image
         )
-        return json.loads(self._strip_json_fence(raw))['plan']
+        return self._parse_json_response(raw, context='plan_task')['plan']
 
     def __call__(self, force_replan: bool = False, **kwargs):
         assert 'user_request' in kwargs

@@ -27,6 +27,7 @@ class ConfigRequest(BaseModel):
     vlm_model_name: Optional[str] = None
     vlm_temperature: Optional[float] = None
     grounding_mode: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class StackRequest(BaseModel):
@@ -40,6 +41,7 @@ class StackRequest(BaseModel):
     vlm_model_name: Optional[str] = None
     vlm_temperature: Optional[float] = None
     grounding_mode: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class DriverRequest(BaseModel):
