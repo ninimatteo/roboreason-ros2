@@ -76,6 +76,19 @@ class Settings(BaseSettings):
     PICK_GRASP_DEPTH_FRACTION: float = 0.5   # fraction of object height to descend for pick
     MIN_OBJECT_HEIGHT_M: float = 0.02        # clamp for depth-computed object height
 
+    # ── Release-collision spacing (plan_manager, schemas.distribute_zone_releases) ──
+    # A "place these objects onto the tray" task can produce multiple releases
+    # that land on (about) the same point — same target zone for LLM, same
+    # depth-deprojected point for VLM/VLM_LLM. distribute_zone_releases nudges
+    # the 2nd/3rd/... release at a given spot along a line (wrapping into a
+    # grid once a row is full), spaced by the released object's grasp_width
+    # plus this margin. Two releases at the same (x, y) but different z are
+    # treated as an intentional stack, not a collision, and left alone.
+    ZONE_PLACEMENT_COLLISION_RADIUS_M: float = 0.03  # how close (x, y) counts as "the same spot"
+    ZONE_PLACEMENT_DEFAULT_SPACING_M: float = 0.05   # fallback item footprint when grasp_width is unknown
+    ZONE_PLACEMENT_MARGIN_M: float = 0.01            # extra clearance between adjacent items
+    ZONE_PLACEMENT_ITEMS_PER_ROW: int = 3            # line length before wrapping into a new grid row
+
     # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
     DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'
     # Container clock runs in UTC regardless of the operator's local time, so

@@ -23,7 +23,7 @@ from robo_reason_interfaces.srv import ExecutePlan, CancelExecution
 from robo_reason_interfaces.action import ExecuteSkill
 from robo_reason_manager.world_state import WorldState
 from robo_reason_manager.plan_validator import PlanValidator
-from robo_reason_manager.schemas import extract_skill_args, normalize_plan
+from robo_reason_manager.schemas import extract_skill_args, normalize_plan, distribute_zone_releases
 
 
 class PlanManagerNode(Node):
@@ -96,6 +96,7 @@ class PlanManagerNode(Node):
         try:
             plan_data = json.loads(request.plan_json)
             plan = normalize_plan(plan_data.get('plan', []))
+            plan = distribute_zone_releases(plan)
         except Exception as e:
             response.success = False
             response.error_message = f'Invalid plan_json: {e}'
