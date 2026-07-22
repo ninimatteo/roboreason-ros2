@@ -1,6 +1,6 @@
 # Session Context — RoboReason ROS2 VLM Pipeline
 
-**Last updated:** 2026-07-08
+**Last updated:** 2026-07-22
 
 ---
 
@@ -664,27 +664,244 @@ Full reasoning test suite: 45/45 passing after these changes.
 
 ---
 
-## Known Open Issues (updated 2026-07-08)
+### Session 5 — Release-Geometry Determinism, Zone-Collision Spacing, and the LLM-vs-VLM Benchmark
 
-- Release-height fix (Session 4 §7) has not yet been verified on real
-  hardware — next session should test pick→release on objects of a few
-  different heights and confirm the object lands flush on the table/target
-  instead of hovering ~3cm above it.
-- The plane-induced-homography → depth-based top-down (point-cloud)
-  rectification rewrite (see `docs/GRASP_GEOMETRY_PIPELINE.md`-adjacent
-  planning) has not been started; no `topdown_utils.py`/`homography_utils.py`
-  exists in the tree yet.
-- `VLM_REASONING_EFFORT='none'` mitigation (Session 4 §8) has not yet been
-  A/B tested on hardware against Groq's default grounding precision — next
-  session should try it against the same scene/prompt that showed the
-  "shifted point" symptom and compare.
-- `feature/vlm-bbox-grounding` branch (bbox grounding mode, cot_sc timeout
-  fix, `REQUEST_TIMEOUT_S` setting, release-height fix, reasoning-method
-  robustness fixes, `VLM_REASONING_EFFORT` — Session 4 §5-8) has 21 modified
-  files `git add`-staged but **not committed** — the operator intends to
-  review/commit this themselves. Two unrelated untracked files also exist
-  (`docs/council-report-20260707-124140.html`,
-  `docs/council-transcript-20260707-124140.md`, artifacts from an unrelated
-  `/llm-council` invocation) and are not part of this staged set. Next
-  session should start from this staged-but-uncommitted state — do not
-  assume it has been committed.
+Branch `feature/refactoring`. Commit `a1b744a` (zone-collision spacing) is
+landed on `main`-tracking history; everything else below is uncommitted
+working-tree state as of this session (see Known Open Issues).
+
+#### 1. Zone-release collision spacing (`a1b744a`, committed)
+
+New `distribute_zone_releases()` in
+`robo_reason_manager/robo_reason_manager/schemas.py`, called from
+`plan_manager_node.py` right after `normalize_plan` and before
+`PlanValidator`. Problem: asking for multiple objects into the same
+zone/tray (or a "line" of objects) reliably produced two releases at (or
+very near) the same point — LLM and VLM plans alike always resolve a
+zone release to that zone's exact center.
+
+- **Detection is mode-agnostic by design**: it compares release positions
+  *to each other within the plan* (a fixed collision radius,
+  `Settings.ZONE_PLACEMENT_COLLISION_RADIUS_M`), not against a scene's
+  static `targets` registry — an earlier registry-based version only ever
+  matched LLM's hand-authored positions, since VLM/VLM_LLM releases are
+  independent depth deprojections that essentially never echo a registered
+  target's coordinates exactly.
+- **Same-z stack guard**: two releases at the same (x, y) but with
+  meaningfully different z (`_STACK_Z_GAP_M`) are left alone — that's a
+  deliberate stack (e.g. "stack the red cube on the blue cube"), not an
+  accidental collision.
+- Spacing pattern: a line along +y first (`ZONE_PLACEMENT_ITEMS_PER_ROW`
+  items), wrapping into a grid along +x once a row is full — grows
+  monotonically away from the untouched first occupant (never lands back
+  on offset (0,0), unlike an earlier centered-row layout which put its
+  middle slot exactly there for odd row widths). Unbounded rather than
+  clamped to a zone's registered size, since size isn't reliably known in
+  every mode (see `docs/TODO.md` #1, still open).
+- The `approach` step immediately preceding a spaced-out release is nudged
+  by the same (dx, dy) — otherwise the arm still flies to the original,
+  now-occupied spot before sidestepping only at the release itself.
+- Tests: `src/robo_reason_manager/test/test_schemas.py` (8 cases).
+
+#### 2. LLM-mode release geometry made deterministic (uncommitted)
+
+Two hardware-reported bugs traced back to the same root cause: every
+LLM-mode prompt tells the model to compute release height/position via
+its own arithmetic (`object_height = size[2]`, `release_position.z =
+target.position.z + target.size[2]` or `= table.surface_z`), and that
+arithmetic was repeatedly observed wrong on real hardware — consistent
+with this session's broader finding (§5 below) that LLM arithmetic is the
+weak link, not perception. Fixed by computing both deterministically in
+code instead, in `llm_planner_node.py`, mirroring the pattern
+`vlm_planner_node.py` already used for VLM mode:
+
+- **`_fix_object_height(plan_steps, scene_json)`**: overwrites every
+  release's `object_height` with `(paired pick's grasp z) −
+  table_surface_z` — the true vertical drop from the actual grasp contact
+  point to the table, regardless of whether the scene author put
+  `position.z` near an object's top, middle, or base. Root cause of a
+  reported "released ~3cm above where it should be" symptom: the prompt's
+  `object_height = size[2]` convention silently assumes the grasp point is
+  at the object's top; when the operator re-tuned `position.z` lower
+  (to fix a separate pick-contact issue), release overshoot appeared as a
+  side effect.
+- **`_fix_release_height(plan_steps, scene_json)`**: overwrites every
+  release's target x/y/z. Matches release coordinates against the scene by
+  **footprint containment** (`position ± size/2`, not point-distance) —
+  a target zone like a tray is tens of cm wide, so a release can land well
+  inside it while being far from its center; point-distance matching
+  missed this on hardware (a "line on the table" release measurably inside
+  the tray's real footprint, 10cm+ from its center). When multiple zones'
+  footprints contain a point (the generic `table` zone almost always does,
+  alongside anything smaller sitting on it), the smallest-footprint match
+  wins. A position that's an **exact echo** of a target's/object's own
+  registered coordinates is read as intentional (stacking or a deliberate
+  zone placement) and left alone; anything that merely *drifted* into a
+  zone's footprint without echoing it is nudged back outside (along
+  whichever axis needs the smaller move), but only when that zone's
+  surface sits meaningfully above the bare table
+  (`_NUDGE_HEIGHT_THRESHOLD_M` — otherwise nudging "away" from the
+  generic, near-table-height `table` zone entry would just push objects
+  off the table trying to escape it). Every object already picked up
+  earlier in the *same* plan is excluded from matching (it's held, not
+  resting at its original scene position anymore) — first version of this
+  only excluded the currently-held object and produced false "stacking on
+  a stale position" matches for the 3rd/4th object in a multi-pick plan.
+- Both were iterated against real captured `debug/<run_id>/` data from
+  failing hardware runs (not just synthetic tests) until the corrected
+  numbers matched hand-derived expected values — see conversation history
+  for the specific run IDs and worked arithmetic.
+
+#### 3. VLM-mode grasp-width sampling fix (uncommitted)
+
+`vlm_planner_node.py`'s `_deproject_plan` derives `grasp_width` for a pick
+by deprojecting a bbox's left/right edge pixels and measuring real-world
+distance — but those edge pixels sit exactly on the object's silhouette
+boundary, the single worst place to get valid depth (occlusion/parallax),
+and a single failed edge pixel aborted the *entire* batched Deproject call,
+crashing the whole plan even though the actual pick/release points were
+fine. Fixed by splitting it into its own best-effort call
+(`_apply_grasp_width`, wrapped in try/except, never raises) sampling
+inset from the raw edge by `Settings.GRASP_WIDTH_EDGE_INSET_FRAC` (0.15)
+instead of the boundary itself — landing on the object's surface instead
+of its silhouette edge — with any failure just leaving the VLM's own
+width guess in place instead of aborting.
+
+#### 4. Benchmark infrastructure (new, uncommitted — `benchmark/`)
+
+Built to run the LLM-vs-VLM comparison adapted from Favali, Sabattini,
+Villani (RO-MAN 2025) — task-length / goal-specificity / affordance-
+perception axes, TS/TSR/AETS metrics (Eq. 14-16) — scoped to what's
+runnable in ~3 days on this hardware with one LLM model, one VLM model,
+no dynamic-event injection:
+
+- **`benchmark/PLAN.md`** — the full plan: 6 conditions (Pick&Place,
+  Sort/Stack, Arithmetic — each easy/hard) × 10 reps × 2 models = 120
+  trials; exact prompts (adapted to the real scene's 4 colored cubes);
+  a coarse-then-refine collection schedule.
+- **Semi-automatic logging** (TS/safety and TSR/correctness genuinely need
+  a human observer on real hardware — no collision sensor or vision-based
+  final-state check exists in this codebase):
+  - `bridge_node.py::_record_execution_outcome` — every `/execute_plan`
+    call now writes `debug/<run_id>/execution_result.json` +
+    `debug/benchmark_summary.csv` (steps executed, success/error),
+    tagged `is_benchmark` from a new GUI "Benchmark trial" checkbox
+    (`index.html`/`app.js`, plumbed through `CommandRequest`/
+    `ExecuteRequest` in `app.py`) so casual testing doesn't pollute the
+    dataset.
+  - `bridge_node.py::record_benchmark_annotation` + `GET
+    /api/benchmark/tasks` / `POST /api/benchmark/annotate` — an inline
+    form in the GUI, shown after a flagged execution finishes, asking
+    exactly two questions (safe? how many sub-tasks completed?) and
+    computing TS/TSR/AETS server-side into `benchmark/results.csv`.
+  - `benchmark/benchmark_annotate.py` — the same thing as a standalone
+    CLI script (offline/after-the-fact annotation); auto-selects the
+    latest *flagged* run, skipping any unflagged casual runs in between.
+    Its `TASKS` table must stay in sync with `bridge_node.py`'s
+    `BENCHMARK_TASKS` (duplicated deliberately — no shared import path
+    between this plain script and the ROS package).
+  - New settings: `ZONE_PLACEMENT_COLLISION_RADIUS_M`,
+    `ZONE_PLACEMENT_DEFAULT_SPACING_M`, `ZONE_PLACEMENT_MARGIN_M`,
+    `ZONE_PLACEMENT_ITEMS_PER_ROW` (§1), `GRASP_WIDTH_EDGE_INSET_FRAC`
+    (§3) — all in `robo_reason_bringup/config.py`.
+- **`benchmark/plot_results.py`** — reads `results.csv`, prints aggregate
+  tables, and writes 8 report-ready PNGs to `benchmark/figures/`
+  (headline summary, by-task TS/TSR, AETS, easy-vs-hard, plan length,
+  issue rate, a note-derived failure-mode breakdown, plus `*_pp_sort`
+  variants scoped to Pick&Place + Sort/Stack only for general-audience
+  presentation use). Palette/mark choices follow this repo's dataviz
+  skill conventions (fixed categorical order, colorblind-validated hues,
+  figure-level legends rather than in-axes ones — several bars hit 100%,
+  leaving no corner reliably empty for a per-axes legend).
+
+#### 5. Benchmark results (120 trials, run 2026-07-15 through 2026-07-20)
+
+Full data in `benchmark/results.csv`; 3 rows that had accidentally used a
+different LLM model (`nebius/google-gemma-27b` instead of the fixed
+`nebius/nvidia-nemotron-120b`) were corrected in place per the operator's
+instruction (no re-run). Headline: **LLM 95% safe / 97% success-rate, VLM
+82% safe / 66% success-rate** overall (`nebius/qwen3-2.5-70b`, `cot_sc`
+fixed for both).
+
+The notable finding — reading all 31 non-empty operator notes rather than
+trusting the aggregate numbers alone — is that VLM's biggest failure mode
+is **not** a color/vision-grounding problem, despite looking like one at
+first (13 notes literally say "picked the white cube instead of the red
+one"). Evidence against a vision explanation: **zero** such mixups occur
+in `pp_easy`/`pp_hard`, where color is stated directly ("pick the red
+cube"); **12 of 13** occur in the arithmetic task, where the model must
+first compute which color it needs from a stated value mapping
+(`blue=1, red=2, white=3, orange=4`) before grounding it. Red(2) and
+white(3) are adjacent in that list — consistent with an off-by-one slip in
+the comparison/arithmetic, not a camera/color-perception failure. Filed
+under "wrong object chosen (reasoning/value-mapping)" — 17 of 31 total
+logged issues, the dominant category by a wide margin (see
+`benchmark/figures/failure_modes.png`).
+
+Step-count comparison (answering "does VLM take a different number of
+actions for the same task"): no — LLM and VLM plan lengths are within
+~1 step of each other for every task; VLM's higher plan-length *variance*
+on hard tasks traces mostly to silently omitting one of four objects from
+a "sort/put all" plan (an incomplete-enumeration failure, not a crash) —
+checked by hand rather than assumed.
+
+#### 6. `docs/TODO.md` (new)
+
+Captures forward-looking items not implemented this session: zone-bounds-
+aware release placement (opportunistic, using real tray dimensions where
+known), a non-grasping push/nudge skill (move an object via the EE without
+gripping), a `scene_mock.json` schema change from `position`+`size` to an
+explicit bounding box for `targets.*` (agreed, deliberately deferred until
+after the benchmark push), rewriting the skill/primitive prompt
+descriptions for clarity, a multi-call "chat" interaction model (letting
+one task span several LLM/VLM calls that can see each other's state), and
+exposing this session's deterministic geometry fixes (§2 above) as
+callable skills the model can invoke directly instead of silent
+post-processing.
+
+#### 7. `scene_mock.json` — real-world scene change (operator-authored)
+
+Objects changed from 4 black shapes distinguished by type (cube/hexagon/
+tower/cylinder) to **4 cubes distinguished only by color** (blue, red,
+white, orange) — the operator's own edit, made to match a physical setup
+change and to give the benchmark's specificity axis a natural "refer by
+color vs. refer by the shared class" contrast. An old copy was kept
+alongside as `src/robo_reason_task_interface/config/scene_mock old.json`
+(untracked, not cleaned up — presumably intentional, left alone).
+
+---
+
+## Known Open Issues (updated 2026-07-22)
+
+- **Working tree is uncommitted** and covers all of Session 5 §2-4:
+  `config.py`, `app.py`, `bridge_node.py`, `app.js`/`index.html`/
+  `style.css`, `llm_planner_node.py`, `vlm_planner_node.py`,
+  `docs/TODO.md`, plus new untracked `benchmark/` (results, plan, scripts,
+  figures). Only §1 (zone-collision spacing, `a1b744a`) is committed.
+  Also untracked: `CLAUDE.md`, `docs/AUDIT_FINDINGS.md`, two
+  `docs/council-*` artifacts from an unrelated `/llm-council` invocation,
+  and `scene_mock old.json` (Session 5 §7) — none of these are part of
+  the Session 5 changes proper.
+- `_fix_object_height`/`_fix_release_height` (Session 5 §2) and the
+  grasp-width edge-inset fix (§3) are verified against real captured
+  hardware `debug/` data and unit-level replay, but not yet through a full
+  fresh end-to-end hardware run since landing — next session should
+  re-run the `sort_hard`/`arith_hard` prompts that originally surfaced
+  these bugs and confirm no regressions.
+- The nudge-outside logic in `_fix_release_height` fixes the *height* and
+  *position* for a release that drifts into a zone it wasn't meant for,
+  but doesn't stop the LLM from choosing that drifted position in the
+  first place — still an open, harder problem (see `docs/TODO.md` #7's
+  "expose the geometry fixes as callable skills" as one possible
+  direction).
+- `VLM_REASONING_EFFORT='none'` mitigation (Session 4 §8) still not A/B
+  tested on hardware — carried over, unchanged since last update.
+  Somewhat superseded in relevance by Session 5 §5's finding that the
+  dominant VLM failure mode is arithmetic/reasoning under load rather
+  than raw grounding precision, which `reasoning_effort` was aimed at.
+- The plane-induced-homography → depth-based top-down rectification
+  rewrite: still not started, carried over unchanged.
+  `docs/TODO.md` now additionally tracks the bounding-box scene schema,
+  push/nudge skill, multi-call chat model, and skill-ified geometry fixes
+  as separate, not-yet-started items — see that file for the full list
+  rather than duplicating it here.

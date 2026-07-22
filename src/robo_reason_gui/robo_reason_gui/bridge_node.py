@@ -1,9 +1,12 @@
 import asyncio
+import csv
 import io
 import json
 import os
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from rclpy.action import ActionClient
@@ -63,6 +66,27 @@ JOINT_STATES_TIMEOUT_S = settings.JOINT_STATES_TIMEOUT_S
 PLAN_TIMEOUT_S = settings.PLAN_TIMEOUT_S
 EXECUTE_TIMEOUT_S = settings.EXECUTE_TIMEOUT_S
 CANCEL_TIMEOUT_S = settings.CANCEL_TIMEOUT_S
+
+# task_id -> (label, sub_tasks_required) for the GUI's inline benchmark
+# annotation form (see record_benchmark_annotation). Must stay in sync with
+# the standalone benchmark/benchmark_annotate.py's copy of this same table
+# and with benchmark/PLAN.md §1 — there's no shared import between this
+# ROS2 package and that plain script, so it's duplicated deliberately
+# rather than reached for across a fragile relative-path import.
+BENCHMARK_TASKS = {
+    'pp_easy':    ('Pick&Place easy',   1),
+    'pp_hard':    ('Pick&Place hard',   4),
+    'sort_easy':  ('Sort/Stack easy',   1),
+    'sort_hard':  ('Sort/Stack hard',   4),
+    'arith_easy': ('Arithmetic easy',   1),
+    'arith_hard': ('Arithmetic hard',   4),
+}
+BENCHMARK_RESULTS_FIELDS = [
+    'timestamp', 'run_id', 'task_id', 'difficulty', 'model_label',
+    'reasoning_method', 'model_name', 'repetition', 'command',
+    'num_planned_steps', 'steps_executed', 'safety_ok', 'TS',
+    'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS', 'notes',
+]
 
 
 class GuiBridgeNode(Node):
@@ -134,6 +158,11 @@ class GuiBridgeNode(Node):
         self._cancel_client = self.create_client(CancelExecution, '/cancel_execution')
         self._command_lock = threading.Lock()
         self._scene_json = self._load_scene()
+        # Set by plan_command() to the DebugRun folder its /plan_task call
+        # just wrote, so execute_command() can attach the execution outcome
+        # to the same run for benchmark logging (see _record_execution_outcome).
+        self._last_plan_run_id = None
+        self._last_plan_is_benchmark = False
 
         # --- live execution log -> WebSocket fan-out ---
         # The subscription callback runs on the executor thread; WebSocket queues
@@ -462,7 +491,7 @@ class GuiBridgeNode(Node):
             raise RuntimeError(f'service {client.srv_name} timed out after {timeout}s')
         return future.result()
 
-    def plan_command(self, user_command: str) -> dict:
+    def plan_command(self, user_command: str, is_benchmark: bool = False) -> dict:
         """Plan a command via /plan_task. Returns the plan without executing it."""
         result = {
             'command': user_command,
@@ -487,11 +516,31 @@ class GuiBridgeNode(Node):
             result['planned'] = True
             result['plan_json'] = plan_resp.plan_json
             result['plan'] = json.loads(plan_resp.plan_json)
+            result['run_id'] = self._latest_debug_run_id()
+            self._last_plan_run_id = result['run_id']
+            self._last_plan_is_benchmark = is_benchmark
         except Exception as exc:
             result['error'] = f'{type(exc).__name__}: {exc}'
         return result
 
-    def execute_command(self, plan_json: str) -> dict:
+    def _latest_debug_run_id(self):
+        """Best-effort: the run_id of the DebugRun folder /plan_task just
+        wrote (see debug_recorder.py) — there's no run_id in PlanTask.srv's
+        response, so this identifies it by "most recently created folder
+        under DEBUG_DIR" instead, which is safe since plan_command() and
+        execute_command() are always called back-to-back for one user
+        action, never interleaved with another planning call.
+        """
+        try:
+            root = Path(settings.DEBUG_DIR)
+            runs = [p for p in root.iterdir() if p.is_dir()]
+            if not runs:
+                return None
+            return max(runs, key=lambda p: p.stat().st_mtime).name
+        except OSError:
+            return None
+
+    def execute_command(self, plan_json: str, is_benchmark: bool = False) -> dict:
         """Execute a previously-planned plan via /execute_plan.
 
         While this runs the plan manager publishes /execution_log, which is
@@ -534,7 +583,168 @@ class GuiBridgeNode(Node):
             result['error'] = f'{type(exc).__name__}: {exc}'
         finally:
             self._command_lock.release()
+        # is_benchmark is read from this execute call (not the earlier plan
+        # call) since it's the authoritative flag for whether this outcome
+        # should count as benchmark data — the frontend always sends the
+        # same checkbox value on both calls for one command submission
+        # (see sendCommand() in app.js), so in practice they always agree.
+        self._record_execution_outcome(result, is_benchmark)
         return result
+
+    def _record_execution_outcome(self, result: dict, is_benchmark: bool) -> None:
+        """Persist execute_command()'s outcome next to the DebugRun folder
+        planning wrote for this command (see _latest_debug_run_id), and
+        append one row to DEBUG_DIR/benchmark_summary.csv.
+
+        Written for every execution, tagged with is_benchmark, so ad-hoc
+        testing still gets a debug record but scripts/benchmark_annotate.py
+        can tell it apart from an actual benchmark trial (the "Benchmark
+        trial" checkbox in the GUI) and refuse to log it into
+        docs/benchmark_results.csv by accident.
+
+        This only captures what the program can know on its own — how many
+        steps actually ran and whether the service call itself failed.
+        Whether the run was actually *safe* (no real-world collision) or
+        *correct* (objects ended up where intended) still needs a human
+        observer; see scripts/benchmark_annotate.py, which reads this same
+        run_id and asks for exactly those two judgments before computing
+        TS/TSR/AETS. Never raises — this is best-effort logging and must
+        not be able to fail a real execute_command() call.
+        """
+        run_id = self._last_plan_run_id
+        if not run_id:
+            return
+        try:
+            num_steps_executed = len(result['report'].splitlines()) if result.get('report') else 0
+            outcome = {
+                'run_id': run_id,
+                'executed': result['executed'],
+                'num_steps_executed': num_steps_executed,
+                'error': result.get('error'),
+                'is_benchmark': is_benchmark,
+            }
+            run_dir = Path(settings.DEBUG_DIR) / run_id
+            (run_dir / 'execution_result.json').write_text(json.dumps(outcome, indent=2))
+
+            csv_path = Path(settings.DEBUG_DIR) / 'benchmark_summary.csv'
+            fields = ['run_id', 'executed', 'num_steps_executed', 'error', 'is_benchmark']
+            is_new = not csv_path.exists()
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fields)
+                if is_new:
+                    writer.writeheader()
+                writer.writerow(outcome)
+        except Exception as exc:
+            self.get_logger().warn(f'[GuiBridgeNode] failed to record execution outcome: {exc}')
+
+    def get_benchmark_tasks(self) -> dict:
+        """task_id -> {label, sub_tasks_required}, for the GUI's benchmark
+        annotation form dropdown — see BENCHMARK_TASKS / benchmark/PLAN.md §1.
+        """
+        return {
+            task_id: {'label': label, 'sub_tasks_required': required}
+            for task_id, (label, required) in BENCHMARK_TASKS.items()
+        }
+
+    def _benchmark_results_csv(self) -> Path:
+        # This file lives at <repo>/src/robo_reason_gui/robo_reason_gui/
+        # bridge_node.py; colcon's --symlink-install (the standard build for
+        # this project, see CLAUDE.md) keeps it at that real source path
+        # rather than copying it into install/, so this resolves correctly
+        # even when imported via the installed package.
+        repo_root = Path(__file__).resolve().parents[3]
+        return repo_root / 'benchmark' / 'results.csv'
+
+    def _next_benchmark_repetition(self, results_csv: Path, task_id: str, model_label: str) -> int:
+        if not results_csv.exists():
+            return 1
+        with open(results_csv, newline='') as f:
+            rows = list(csv.DictReader(f))
+        return sum(1 for r in rows if r['task_id'] == task_id and r['model_label'] == model_label) + 1
+
+    def record_benchmark_annotation(self, run_id: str, task_id: str, safety_ok: bool,
+                                     sub_tasks_completed: int, notes: str = '') -> dict:
+        """Compute TS/TSR/AETS (Favali et al., RO-MAN 2025, Eq. 14-16) for
+        `run_id` and append one row to benchmark/results.csv — this is what
+        the GUI's inline "Benchmark trial" annotation form calls; the
+        standalone benchmark/benchmark_annotate.py script does the same
+        thing from a terminal. Keep both in sync if either changes.
+        """
+        if task_id not in BENCHMARK_TASKS:
+            return {'ok': False, 'error': f'Unknown task_id: {task_id}'}
+
+        label, sub_tasks_required = BENCHMARK_TASKS[task_id]
+        if not (0 <= sub_tasks_completed <= sub_tasks_required):
+            return {'ok': False, 'error': f'sub_tasks_completed must be 0-{sub_tasks_required}'}
+
+        run_dir = Path(settings.DEBUG_DIR) / run_id
+        if not run_dir.is_dir():
+            return {'ok': False, 'error': f'No such run: {run_id}'}
+
+        def read_json(name, default=None):
+            path = run_dir / name
+            if not path.exists():
+                return default
+            try:
+                return json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                return default
+
+        config = read_json('config.json', {}) or {}
+        response = read_json('response.json', {}) or {}
+        execution = read_json('execution_result.json', {}) or {}
+        command_path = run_dir / 'command.txt'
+        command = command_path.read_text().strip() if command_path.exists() else ''
+
+        # config.json has no explicit "mode" field — VLM/VLM_LLM runs are
+        # the ones with a grounding_mode key (see vlm_planner_node.py's
+        # DebugRun config dict), LLM runs aren't.
+        model_label = 'VLM' if 'grounding_mode' in config else 'LLM'
+        num_planned_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
+        steps_executed = execution.get('num_steps_executed') or 0
+
+        ts = 1 if safety_ok else 0
+        tsr = sub_tasks_completed / sub_tasks_required if sub_tasks_required else 0.0
+        aets = (
+            sub_tasks_completed / (sub_tasks_required * steps_executed)
+            if sub_tasks_required and steps_executed else 0.0
+        )
+
+        results_csv = self._benchmark_results_csv()
+        repetition = self._next_benchmark_repetition(results_csv, task_id, model_label)
+        row = {
+            'timestamp': datetime.now().isoformat(timespec='seconds'),
+            'run_id': run_id,
+            'task_id': task_id,
+            'difficulty': 'hard' if task_id.endswith('_hard') else 'easy',
+            'model_label': model_label,
+            'reasoning_method': config.get('reasoning_method', ''),
+            'model_name': config.get('model_name', ''),
+            'repetition': repetition,
+            'command': command,
+            'num_planned_steps': num_planned_steps,
+            'steps_executed': steps_executed,
+            'safety_ok': safety_ok,
+            'TS': ts,
+            'sub_tasks_completed': sub_tasks_completed,
+            'sub_tasks_required': sub_tasks_required,
+            'TSR': round(tsr, 4),
+            'AETS': round(aets, 4),
+            'notes': notes,
+        }
+
+        try:
+            results_csv.parent.mkdir(parents=True, exist_ok=True)
+            is_new = not results_csv.exists()
+            with open(results_csv, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=BENCHMARK_RESULTS_FIELDS)
+                if is_new:
+                    writer.writeheader()
+                writer.writerow(row)
+        except OSError as exc:
+            return {'ok': False, 'error': f'Failed to write {results_csv}: {exc}'}
+
+        return {'ok': True, 'repetition': repetition, 'TS': ts, 'TSR': row['TSR'], 'AETS': row['AETS']}
 
     def cancel_execution(self) -> dict:
         """Emergency-stop: cancel the in-flight skill, abort the rest of the

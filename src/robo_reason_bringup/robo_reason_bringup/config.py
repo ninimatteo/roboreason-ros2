@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     #            pixel width/height are converted to a real-world grasp_width
     #            instead of relying on the VLM's blind numeric guess.
     VLM_GROUNDING_MODE: str = 'point'
+    # A pick bbox's raw left/right edge pixels sit exactly on the object's
+    # silhouette boundary — the single worst place to sample depth (highest
+    # rate of "no valid depth" dropouts on real hardware). Sampling this
+    # fraction inward from each edge instead lands on the object's actual
+    # surface. See _apply_grasp_width in vlm_planner_node.py.
+    GRASP_WIDTH_EDGE_INSET_FRAC: float = 0.15
     # Qwen3-family reasoning control, forwarded verbatim to Groq as the
     # 'reasoning_effort' request param (see LLMClient/VLMClient._call_groq).
     # ''       — omitted (default): unchanged behavior, model's own default.

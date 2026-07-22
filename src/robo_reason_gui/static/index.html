@@ -43,6 +43,10 @@
       <div id="chat-history"></div>
       <form id="chat-form" class="chat-form">
         <input id="chat-input" type="text" placeholder="e.g. pick up the red cube and place it on zone A" autocomplete="off" />
+        <label class="benchmark-toggle" title="Tag this run as benchmark data — see docs/BENCHMARK_PLAN.md">
+          <input id="chat-benchmark" type="checkbox" />
+          Benchmark trial
+        </label>
         <button id="chat-send" type="submit">Send</button>
         <button id="chat-estop" type="button" class="estop" title="Stop the robot now, abort the plan, and return home" disabled>Stop</button>
       </form>

@@ -344,10 +344,18 @@ class VLMPlannerNode(Node):
 
         Collects all pixel-coordinate fields (deprojecting a bbox's center
         pixel), issues a single batched Deproject call, then substitutes the
-        results back in place. For a pick step's bounding box, two extra
-        points (the box's left-edge and right-edge midpoints) are deprojected
-        in the same batch and their real-world (base-frame) distance replaces
-        the VLM's blind grasp_width guess with a vision-grounded estimate.
+        results back in place. This batch is required — any failure aborts
+        the plan, same as before.
+
+        For a pick step's bounding box, grasp_width is separately refined
+        from the box's real-world width via _apply_grasp_width, issued as
+        its own, best-effort Deproject call: the left/right edge points it
+        needs sit right on the object's silhouette boundary, which is where
+        a depth camera is most likely to have no valid return at all (a real
+        failure mode observed on hardware, not hypothetical). Splitting it
+        out means one unlucky edge pixel only costs that step's grasp_width
+        refinement instead of aborting the whole plan the way it used to
+        when this was batched together with the required center points.
 
         Depth compensation (only when table_surface_z is known): a pick's
         target_position.z from deprojection is the object's raw TOP SURFACE
@@ -372,8 +380,10 @@ class VLMPlannerNode(Node):
             req_v.append(int(v))
             return len(req_u) - 1
 
-        # (step_idx, field, center_batch_idx, width_batch_idx_pair_or_None)
+        # (step_idx, field, center_batch_idx)
         entries = []
+        # (step_idx, x_min, x_max, cy) — handled separately, best-effort.
+        width_requests = []
         for i, step in enumerate(pixel_steps):
             for field in PIXEL_FIELDS:
                 val = step.get(field)
@@ -381,17 +391,14 @@ class VLMPlannerNode(Node):
                     continue
                 if len(val) == 2:
                     center_idx = _add_pixel(val[0], val[1])
-                    entries.append((i, field, center_idx, None))
+                    entries.append((i, field, center_idx))
                 elif len(val) == 4:
                     x_min, y_min, x_max, y_max = val
                     cx, cy = (x_min + x_max) / 2.0, (y_min + y_max) / 2.0
                     center_idx = _add_pixel(cx, cy)
-                    width_pair = None
+                    entries.append((i, field, center_idx))
                     if field == 'target_position' and step.get('action_name') == 'pick':
-                        left_idx = _add_pixel(x_min, cy)
-                        right_idx = _add_pixel(x_max, cy)
-                        width_pair = (left_idx, right_idx)
-                    entries.append((i, field, center_idx, width_pair))
+                        width_requests.append((i, x_min, x_max, cy))
 
         if not entries:
             return pixel_steps
@@ -409,18 +416,11 @@ class VLMPlannerNode(Node):
             raise RuntimeError(f'Deproject failed: {dep.error_message}')
 
         plan_steps = copy.deepcopy(pixel_steps)
-        for i, field, center_idx, width_pair in entries:
+        for i, field, center_idx in entries:
             pt = dep.points[center_idx]
             plan_steps[i][field] = [pt.x, pt.y, pt.z]
-            if width_pair is not None:
-                left_idx, right_idx = width_pair
-                lp, rp = dep.points[left_idx], dep.points[right_idx]
-                real_width = ((lp.x - rp.x) ** 2 + (lp.y - rp.y) ** 2) ** 0.5
-                plan_steps[i]['grasp_width'] = real_width
-                self.get_logger().info(
-                    f'[VLMPlannerNode] pick: bbox-derived grasp_width={real_width:.3f} m '
-                    f'(overriding VLM estimate)'
-                )
+
+        self._apply_grasp_width(plan_steps, width_requests)
 
         if table_surface_z is not None:
             fraction = settings.PICK_GRASP_DEPTH_FRACTION
@@ -456,6 +456,59 @@ class VLMPlannerNode(Node):
                     held_release_lift = None
 
         return plan_steps
+
+    def _apply_grasp_width(self, plan_steps: list, width_requests: list) -> None:
+        """Best-effort grasp_width refinement from a pick bbox's real-world
+        width — mutates plan_steps in place, never raises.
+
+        Samples each pick's left/right edge inset by
+        GRASP_WIDTH_EDGE_INSET_FRAC from the raw bbox boundary rather than
+        the boundary itself, since a depth camera is least reliable exactly
+        on an object's silhouette edge (an inset sample lands on the
+        object's surface instead). Issued as its own Deproject call, and any
+        failure (timeout, service unavailable, no valid depth at an edge
+        pixel) just leaves the VLM's own grasp_width guess in place — this
+        is a refinement, not a required input, so it must never abort the
+        plan the way a failure here used to when it was batched with the
+        required target/release center points.
+        """
+        if not width_requests:
+            return
+        try:
+            inset = settings.GRASP_WIDTH_EDGE_INSET_FRAC
+            req_u, req_v = [], []
+            for _, x_min, x_max, cy in width_requests:
+                span = x_max - x_min
+                req_u.append(int(x_min + inset * span))
+                req_u.append(int(x_max - inset * span))
+                req_v.append(int(cy))
+                req_v.append(int(cy))
+
+            req = Deproject.Request()
+            req.u = req_u
+            req.v = req_v
+            future = self._deproject_client.call_async(req)
+            dep = self._wait_for_future(future, '/camera/deproject (grasp_width)')
+            if not dep.success:
+                self.get_logger().warn(
+                    f'[VLMPlannerNode] grasp_width refinement skipped ({dep.error_message}); '
+                    "keeping the VLM's own width estimate."
+                )
+                return
+
+            for idx, (step_idx, *_rest) in enumerate(width_requests):
+                lp, rp = dep.points[2 * idx], dep.points[2 * idx + 1]
+                real_width = ((lp.x - rp.x) ** 2 + (lp.y - rp.y) ** 2) ** 0.5
+                plan_steps[step_idx]['grasp_width'] = real_width
+                self.get_logger().info(
+                    f'[VLMPlannerNode] pick: bbox-derived grasp_width={real_width:.3f} m '
+                    f'(overriding VLM estimate)'
+                )
+        except Exception as exc:
+            self.get_logger().warn(
+                f'[VLMPlannerNode] grasp_width refinement failed ({exc}); '
+                "keeping the VLM's own width estimate."
+            )
 
 
 def main(args=None):
