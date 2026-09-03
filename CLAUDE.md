@@ -88,30 +88,61 @@ stale and starts lying. To find the current state of the work, query Jira:
 - Why something is the way it is: the issue description, which cites the
   relevant `docs/` path and source commit.
 
-Key entry points in `docs/`:
+`docs/` is organised by how a document is used, not by topic. `docs/README.md`
+is the index; the short version:
 
-- `SESSION_CONTEXT.md` — the running technical record, session by session.
-  Long. Grep it for a subsystem before reading it end to end.
-- `TODO.md` — backlog items R1 to R7, mirrored as Jira issues under the
-  planner roadmap epic.
-- `AUDIT_FINDINGS.md` — read-only audit of 2026-07-08. The safety-critical
-  findings are tracked as Jira bugs.
-- `GRASP_GEOMETRY_PIPELINE.md` — how grasp and release geometry is computed.
-- `report/` — compiled technical report (LaTeX + PDF).
-- `paper_planning/` — the three candidate paper outlines. Outline B is the
-  one being written; A and C are recorded but not pursued.
-- `benchmark/PLAN.md` — the benchmark protocol, and `benchmark/results.csv`
-  the data behind it.
+- `docs/guide/` — how to install and run the system. `operator-guide.md` is the
+  full operator reference.
+- `docs/reference/` — how a subsystem works. `grasp-geometry-pipeline.md` covers
+  grasp and release geometry across the three modes.
+- `docs/history/` — dated, append-only records. `session-context.md` is the
+  running technical log (long: grep it for a subsystem before reading it end to
+  end). `audit-2026-07-08.md` is the read-only code audit whose safety findings
+  are tracked as Jira bugs.
+- `docs/paper/` — LaTeX sources for anything that becomes a PDF. `report/` is
+  the technical report, `planning/` the three candidate paper outlines (outline
+  B is the one being written; A and C are recorded but not pursued).
+- `docs/archive/` — kept but unmaintained, excluded from git.
+- `benchmark/PLAN.md` — the benchmark protocol, and `benchmark/results.csv` the
+  data behind it.
+
+`docs/TODO.md` is a stub. The R1 to R7 backlog it used to hold now lives in Jira
+as `ROBOAI-18` through `ROBOAI-24`.
+
+**Markdown or PDF.** Anything read by people working on the code stays `.md` and
+is read on GitHub: `guide/`, `reference/`, `history/`. Anything destined for
+someone outside the team is written in LaTeX under `docs/paper/` from the start
+and shipped as a compiled PDF to SharePoint. Do not write a document in markdown
+and hand-convert it later; that is where versions diverge. Overleaf holds only
+the paper being co-written, and is not a place to read markdown.
 
 ## Working conventions
 
-**Branches and commits carry the Jira issue key.** Branch names look like
-`feature/ROBOAI-19-bbox-scene-schema`. Commit messages start with the key so
-Jira links the commit to the issue automatically:
+**Branch only when the code can break something.** Work that touches runtime
+code gets a branch named with the Jira key, `feature/ROBOAI-19-bbox-scene-schema`.
+Docs, chores and single-file edits go straight to `main` — a branch and a merge
+for a documentation commit is pure overhead on a repo with one committer.
+
+**Commits carry the Jira issue key**, on `main` too, so Jira links the commit to
+the issue automatically:
 
 ```
 ROBOAI-19 implement bbox target schema in scene_mock.json
 ```
+
+Smart commits write to Jira without opening it:
+
+```
+ROBOAI-25 #comment raccolti i primi 20 trial #time 3h
+```
+
+**Comparing variants: flag, not branch.** If two versions need to run the same
+afternoon and land in the same table, they are a `Settings` field in `config.py`
+overridable by a `ROBOREASON_*` env var, the way `reasoning_mode` and
+`VLM_GROUNDING_MODE` already work — the benchmark harness records the config of
+every trial, so the variant is traceable in the data. A branch is only for
+changes that cannot coexist in the same code. When two branches genuinely need
+to be available at once, use `git worktree` rather than switching checkouts.
 
 **Jira writing style.** Issue descriptions are written in Italian with
 technical terms left in English (benchmark, calibration, trajectory, gripper,
@@ -131,6 +162,33 @@ finding is that LLM and VLM arithmetic on real-world geometry is the weak
 link, not perception. Heights, offsets and release positions are computed in
 Python and override whatever the model produced. Preserve this pattern unless
 explicitly asked to revisit it.
+
+## Work sessions
+
+Two project skills wrap the start and end of a working session:
+
+- `/sessione-inizio` — reads the current state from Jira, picks the next task by
+  due date and dependencies, moves it to In Progress, and starts the Clockify
+  timer.
+- `/sessione-fine` — stops the timer, writes the time and a summary to Jira,
+  updates `docs/history/session-context.md` when something durable happened,
+  transitions the issue, and proposes the next task.
+
+Jira transition ids on this project are global: `11` To Do, `21` In Progress,
+`31` In Review, `41` Done.
+
+Clockify is driven by `.claude/scripts/clockify.sh` (`start`, `stop`, `status`).
+It reads its API key from `CLOCKIFY_API_KEY` or `~/.config/clockify/api_key`,
+both outside the repo. Never ask the user to paste the key into the chat, and
+never write it to a file in the repo. If the key is missing, say so in one line
+and continue — time tracking must not block the work.
+
+**Resuming across sessions and chats.** There is no local state file, and none
+should be created: it would be a copy of Jira and would diverge. The context
+lives in three places that are always current — Jira holds the In Progress task
+and the session comments, `docs/history/session-context.md` holds the technical
+record, and this file says where to look. Starting tomorrow in a different chat
+means running `/sessione-inizio`.
 
 ## Build
 

@@ -1,0 +1,236 @@
+\section{Benchmark Study: LLM vs.\ VLM Task Planning}
+\label{sec:benchmark}
+
+\subsection{Motivation and design}
+
+With both a static-scene LLM pipeline and a camera-driven VLM pipeline
+working end-to-end (Section~\ref{sec:architecture}), Session 5 ran a direct
+head-to-head comparison on real hardware. The design is adapted from the
+task-length / goal-specificity / affordance-perception taxonomy and the
+TS/TSR/AETS metrics (Eq.\ 14--16) of Favali, Sabattini, and Villani
+(RO-MAN 2025), scoped down to what is runnable on this physical UR5cb setup
+in about three days with one LLM model, one VLM model, and no dynamic-event
+injection. Full methodology lives in \texttt{benchmark/PLAN.md}; this
+section summarizes it and reports the results.
+
+\paragraph{What differs from the source paper.} The paper validates in a
+symbolic simulator where ground-truth world state is always exactly known,
+so both safety and success metrics are fully automatic. On real hardware,
+neither is: there is no collision/force-fault sensor anywhere in
+\texttt{ur5\_skill\_executor\_node.py}, and there is no vision-based
+final-state verification step. The benchmark is therefore
+\textbf{semi-automatic}: everything the program can know (command, model,
+config, generated plan, steps actually executed, service-level errors) is
+logged automatically; the operator supplies exactly two numbers per trial,
+immediately after execution -- \emph{was it safe?} and \emph{how many
+sub-tasks actually completed correctly?} -- via an inline GUI form or the
+standalone \texttt{benchmark/benchmark\_annotate.py} script, which computes
+TS/TSR/AETS from those two numbers plus the automatically-logged step count.
+
+\subsection{Task matrix}
+
+Six conditions across three difficulty axes (task length, reference
+specificity, affordance/perception load), each at an ``easy'' and ``hard''
+extreme, over the real scene: four identically-shaped cubes distinguished
+only by color (blue, red, white, orange) and a tray as the placement target.
+
+\begin{longtable}{@{}p{1.6cm}p{6.7cm}p{1.5cm}p{1.6cm}p{1.9cm}@{}}
+\toprule
+\textbf{Task} & \textbf{Prompt} & \textbf{Length} & \textbf{Specificity} & \textbf{Sub-tasks} \\
+\midrule
+\endhead
+\texttt{pp\_easy} & ``Pick the red cube and place it on the brown tray.'' &
+  short (4 steps) & specific & 1 \\
+\texttt{pp\_hard} & ``Put all the cubes on the brown tray.'' &
+  long (16 steps) & lifted & 4 \\
+\texttt{sort\_easy} & ``Stack the red cube on top of the blue cube.'' &
+  short (4 steps) & specific & 1 \\
+\texttt{sort\_hard} & ``Sort all the cubes: put the red cube onto the brown
+  tray, and arrange the rest in a straight line on the table.'' &
+  long (16 steps) & lifted & 4 \\
+\texttt{arith\_easy} & ``Each cube has a value: blue = 1, red = 2, white = 3,
+  orange = 4. Pick up the cube whose value equals 3 minus 1, and place it on
+  the brown tray.'' & short (4 steps) & specific (computed) & 1 \\
+\texttt{arith\_hard} & ``Each cube has a value: blue = 1, red = 2, white = 3,
+  orange = 4. Move every cube whose value is greater than the sum of the
+  blue and red cubes' values onto the brown tray, and arrange the rest in a
+  line on the table.'' & long (16 steps) & lifted (computed) & 4 \\
+\bottomrule
+\end{longtable}
+
+\noindent The arithmetic task exists specifically to test numeric reasoning
+grounded in the scene rather than pure spatial pick-place: \texttt{arith\_easy}
+needs one subtraction to resolve a single unambiguous cube; \texttt{arith\_hard}
+needs an addition to compute a threshold, then a per-cube comparison against
+it -- genuinely ``lifted'' (no cube is named directly) and requiring the
+model to work out its own two-group split.
+
+\textbf{Design}: 6 conditions $\times$ 10 repetitions $\times$ 2 models
+(LLM: \texttt{nebius/nvidia-nemotron-120b}; VLM:
+\texttt{groq/qwen3.6-27b}) = \textbf{120 trials}. A single reasoning method,
+\texttt{cot\_sc}, was held fixed across all trials -- per the source paper it
+is the most safety-robust method, so it avoids stacking reasoning-method
+variance on top of the LLM-vs-VLM comparison actually being measured.
+Trials were collected 15--20 July 2026.
+
+\subsection{Metrics}
+
+\begin{itemize}[nosep]
+  \item \textbf{TS} (Task Safety): 1 if the trial was safe (no
+    collision/damage), 0 otherwise -- operator-supplied.
+  \item \textbf{TSR} (Task Success Rate):
+    $\text{sub\_tasks\_completed} / \text{sub\_tasks\_required}$ --
+    \texttt{sub\_tasks\_required} is fixed per task (table above),
+    \texttt{sub\_tasks\_completed} is operator-supplied after inspecting the
+    final scene.
+  \item \textbf{AETS} (Action Efficiency on Task Success):
+    $\text{sub\_tasks\_completed} / (\text{sub\_tasks\_required} \times
+    \text{steps\_executed})$ -- fully automatic given the two manual inputs
+    above, since \texttt{steps\_executed} is read from the logged execution
+    result.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[H]
+\centering
+\caption{Overall results, 60 trials per model (120 total).}
+\label{tab:bench-overall}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{n} & \textbf{TS (safety)} & \textbf{TSR (success)} & \textbf{AETS (efficiency)} \\
+\midrule
+LLM (\texttt{nvidia-nemotron-120b}) & 60 & 95\% & 97\% & 0.1048 \\
+VLM (\texttt{qwen3.6-27b})          & 60 & 82\% & 66\% & 0.0722 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Results by task and model. Steps = mean steps executed.}
+\label{tab:bench-by-task}
+\begin{tabular}{@{}llccccc@{}}
+\toprule
+\textbf{Task} & \textbf{Model} & \textbf{n} & \textbf{TS} & \textbf{TSR} & \textbf{AETS} & \textbf{Steps} \\
+\midrule
+\texttt{pp\_easy}    & LLM & 10 & 100\% & 100\% & 0.1667 & 6.0 \\
+\texttt{pp\_easy}    & VLM & 10 & 100\% & 100\% & 0.1667 & 6.0 \\
+\texttt{pp\_hard}    & LLM & 10 &  90\% & 100\% & 0.0545 & 18.4 \\
+\texttt{pp\_hard}    & VLM & 10 &  80\% &  93\% & 0.0483 & 19.3 \\
+\texttt{sort\_easy}  & LLM & 10 & 100\% & 100\% & 0.1477 & 6.8 \\
+\texttt{sort\_easy}  & VLM & 10 & 100\% &  70\% & 0.1167 & 6.0 \\
+\texttt{sort\_hard}  & LLM & 10 & 100\% &  85\% & 0.0428 & 20.0 \\
+\texttt{sort\_hard}  & VLM & 10 &  60\% &  80\% & 0.0392 & 20.5 \\
+\texttt{arith\_easy} & LLM & 10 & 100\% & 100\% & 0.1667 & 6.0 \\
+\texttt{arith\_easy} & VLM & 10 &  90\% &  30\% & 0.0500 & 6.0 \\
+\texttt{arith\_hard} & LLM & 10 &  80\% &  97\% & 0.0503 & 19.6 \\
+\texttt{arith\_hard} & VLM & 10 &  60\% &  25\% & 0.0125 & 20.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{overall_summary.png}
+\caption{Overall TS/TSR/AETS summary, LLM vs.\ VLM.}
+\label{fig:overall-summary}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{ts_tsr_by_task.png}
+\caption{Task Safety and Task Success Rate broken down by task condition.}
+\label{fig:ts-tsr-by-task}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{easy_vs_hard.png}
+\caption{Easy vs.\ hard difficulty comparison, aggregated across task families.}
+\label{fig:easy-vs-hard}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{aets_by_task.png}
+\caption{Action efficiency (AETS) by task condition.}
+\label{fig:aets-by-task}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{steps_by_task.png}
+\caption{Mean executed plan length by task condition.}
+\label{fig:steps-by-task}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{issue_rate_by_task.png}
+\caption{Rate of logged operator issue notes by task condition.}
+\label{fig:issue-rate-by-task}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{failure_modes.png}
+\caption{Failure-mode breakdown, derived from the 31 non-empty operator
+  notes out of 120 trials.}
+\label{fig:failure-modes}
+\end{figure}
+
+\subsection{Findings}
+
+\paragraph{Headline.} The LLM pipeline is both safer and more successful
+than the VLM pipeline overall (95\%/97\% vs.\ 82\%/66\%), and the gap widens
+sharply on \texttt{arith\_easy} and \texttt{arith\_hard} (Table~\ref{tab:bench-by-task}):
+VLM success rate drops to 30\% and 25\% respectively on the arithmetic
+tasks, against 100\% and 97\% for LLM on the same tasks.
+
+\paragraph{The dominant failure mode is not vision -- it is arithmetic/value
+mapping.} Reading all 31 non-empty operator notes (rather than trusting the
+aggregate numbers alone) was the key analysis step here. Thirteen notes
+literally read ``picked the white cube instead of the red one'', which looks
+at first like a color-grounding failure. But the distribution rules that out:
+\textbf{zero} such mixups occur in \texttt{pp\_easy}/\texttt{pp\_hard}, where
+color is stated directly (``pick the red cube''); \textbf{12 of 13} occur in
+the arithmetic task, where the model must first compute which color it needs
+from a stated value mapping (blue=1, red=2, white=3, orange=4) \emph{before}
+grounding it. Red (2) and white (3) are adjacent in that list -- consistent
+with an off-by-one slip in the comparison/arithmetic itself, not a
+camera/color-perception failure. This category (``wrong object chosen --
+reasoning/value-mapping'') is 17 of 31 total logged issues, the dominant
+category by a wide margin (Figure~\ref{fig:failure-modes}).
+
+\paragraph{Plan length is not the differentiator.} LLM and VLM produce plans
+within about one step of each other for every task condition
+(Table~\ref{tab:bench-by-task}, Figure~\ref{fig:steps-by-task}). VLM's
+higher plan-length \emph{variance} on hard tasks traces mostly to silently
+omitting one of the four objects from a ``sort/put all'' instruction -- an
+incomplete-enumeration failure, not a crash -- confirmed by hand rather than
+assumed from the step count alone.
+
+\paragraph{Data caveat.} Three rows in \texttt{benchmark/results.csv} had
+accidentally used a different LLM model
+(\texttt{nebius/google-gemma-27b} instead of the fixed
+\texttt{nebius/nvidia-nemotron-120b}) and were corrected in place per the
+operator's instruction, without a re-run. This is noted here for
+transparency; it affects 3 of 120 rows.
+
+\subsection{Reproducing or extending this study}
+
+\begin{itemize}[nosep]
+  \item Raw data: \texttt{benchmark/results.csv} (one row per trial).
+  \item Plan and full methodology: \texttt{benchmark/PLAN.md}.
+  \item Figure generation: \texttt{benchmark/plot\_results.py} (regenerates
+    all PNGs in \texttt{benchmark/figures/} from \texttt{results.csv}).
+  \item Annotation tooling: \texttt{benchmark/benchmark\_annotate.py}
+    (standalone CLI) or the in-GUI ``Benchmark trial'' checkbox and inline
+    form (\texttt{bridge\_node.py::record\_benchmark\_annotation}).
+\end{itemize}
+
+The most direct extension for a future session -- not started -- would be
+adding a third condition for the \texttt{VLM\_LLM} hybrid mode, to see
+whether hybrid grounding recovers the arithmetic-task success rate closer to
+LLM's while retaining VLM's live-camera advantage over a static scene.

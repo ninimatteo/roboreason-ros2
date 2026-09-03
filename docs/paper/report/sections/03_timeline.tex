@@ -1,0 +1,226 @@
+\section{Development Timeline}
+\label{sec:timeline}
+
+The repository's git history spans \textbf{27 May 2026} (initial commit) to
+\textbf{22 July 2026} (most recent committed work at the time of this
+report), across 57 commits organized into five working sessions of
+increasing scope. This section gives the narrative account of each session;
+Section~\ref{sec:tech-decisions} groups the underlying bug fixes and design
+decisions by theme rather than chronology, for readers who want the ``why''
+without the session structure.
+
+\subsection{Pre-history: bring-up and the VLA-to-LLM/VLM pivot (late May 2026)}
+
+The earliest commits (\texttt{5478d4e}, \texttt{245b34d}, \texttt{3484aa9})
+establish the ROS2 package skeleton, including refactoring an early
+monolithic \texttt{robo\_reason\_real} package into the seven focused
+packages listed in Section~\ref{sec:architecture}, and rewriting RG2 gripper
+control to use digital I/O instead of a URScript socket (\texttt{92d0ead}) --
+the socket approach proved unreliable for real-time gripper control. This
+period is also when the VLA approach documented in the older
+\texttt{robotic-ai/docs} materials was abandoned in favor of the current
+LLM/VLM architecture (Section~\ref{sec:introduction}); no VLA code exists in
+this repository's history, meaning the pivot happened before this repository
+was created.
+
+Early hardening work in this period: fixing a callback deadlock, workspace
+limits, pick-state tracking, plan normalization, a startup-home behavior, and
+the real-robot launch file (\texttt{c43c235}); adding threading to the task
+interface to avoid a separate deadlock (\texttt{b4817e3},
+\texttt{5ab610d}); and introducing horizontal/vertical approach with smooth
+linear pick/release trajectories (\texttt{15ddecd}).
+
+\subsection{Session 1: VLM pipeline stand-up and calibration (mid-June 2026)}
+
+Goal: get a real camera into the loop and produce a working
+pixel-to-3D-to-robot pipeline.
+
+\textbf{ChArUco detection.} Replaced \texttt{estimatePoseCharucoBoard} with
+\texttt{solvePnP} (\texttt{SOLVEPNP\_ITERATIVE}) for more stable pose
+estimates; migrated to OpenCV's new \texttt{ArucoDetector} API with
+\texttt{CORNER\_REFINE\_NONE}; added manual axis drawing via
+\texttt{projectPoints} to support an explicit \texttt{z\_sign} convention.
+
+\textbf{OpenCV 4.5.4 compatibility.} \texttt{cv2.line}/\texttt{circle}/
+\texttt{putText} reject \texttt{numpy.int32} scalars on this OpenCV version;
+fixed by converting through \texttt{np.round(...).astype(np.int32).tolist()}
+everywhere pixel coordinates were drawn.
+
+\textbf{QoS mismatch.} The camera driver publishes with \texttt{BEST\_EFFORT}
+(sensor-data QoS); all three camera subscriptions in
+\texttt{camera\_services\_node} and \texttt{pixel\_overlay\_viewer\_node} were
+still on the default \texttt{RELIABLE} profile and silently received nothing.
+Fixed by switching to \texttt{qos\_profile\_sensor\_data}.
+
+\textbf{VLM pick/release state tracking.} In VLM mode, object positions come
+from the camera rather than a static scene, so
+\texttt{apply\_skill\_result('pick')} -- which only set \texttt{robot.holding}
+when \texttt{find\_object\_near} matched a known object -- never fired, and
+the plan validator then rejected the paired release for ``nothing held''.
+Fixed by making the holding-state guardrails mode-aware: full guardrails
+stay active in LLM mode; VLM mode skips object-matching entirely.
+
+\textbf{Workspace limits.} The default \texttt{x: [0.15, 0.85]} excluded
+objects near the robot base; corrected to match the real table and camera
+coverage (an operator-maintained value in \texttt{scene\_mock.json}, not a
+one-time fix).
+
+\subsection{Session 2: code review and refactor}
+
+A systematic pass fixing five concrete bugs surfaced by code review, followed
+by deduplication and dead-code removal.
+
+Bugs fixed: a call to a nonexistent \texttt{get\_total\_used\_tokens()}
+method (corrected to \texttt{get\_total\_usage()}); a misspelt
+\texttt{force\_replanning} kwarg silently swallowed by \texttt{**kwargs}
+instead of reaching every reasoning method's \texttt{force\_replan} parameter;
+an inconsistent \texttt{"end of simulation"} vs.\ \texttt{"end\_of\_simulation"}
+JSON key between the ReAct prompt and its parser; a live \texttt{assert} on
+LLM output in Tree-of-Thought batch evaluation that was a guaranteed crash on
+any model returning an unexpected count (removed entirely, replaced by
+always using IID evaluation); and a ChArUco board-geometry mismatch between
+\texttt{config.py}'s defaults ($5\times7$, 0.03/0.015\,m) and the actual
+launch-file-authoritative board ($3\times4$, 0.062/0.031\,m).
+
+Refactors: a shared \texttt{\_select\_prompts()} helper collapsing an
+identical VLM/LLM prompt-selection branch repeated across six reasoning
+methods (11 call sites); a new \texttt{agent\_runner.py} with
+\texttt{run\_plan\_loop()} removing $\sim$30 duplicated lines between the LLM
+and VLM planner nodes; a \texttt{\_wait\_for\_future()} helper replacing two
+bare busy-wait loops with a 10-second-timeout version; and removal of a
+byte-identical \texttt{\_call\_nebius} method (Nebius is OpenAI-API-compatible
+and only differs by \texttt{base\_url}, so it now routes through
+\texttt{\_call\_openai}). Several unused classes and a broken \texttt{\_\_main\_\_}
+block were deleted, and all node log prefixes were standardized to
+\texttt{[ClassName]}.
+
+\subsection{Session 3: web GUI, emergency stop, debug recorder}
+
+The largest single addition: the full \texttt{robo\_reason\_gui} package,
+built across six phases (scaffold $\to$ read-only dashboard $\to$ chat wired
+to plan/execute $\to$ live streamed execution $\to$ stack orchestration with
+live planner params $\to$ GUI-owned UR driver with auto-retry $\to$ polish),
+described in Section~\ref{sec:architecture}.
+
+Alongside the GUI itself:
+\begin{itemize}[nosep]
+  \item A new \texttt{CancelExecution.srv} service implementing an emergency
+    stop: abort the current plan, cancel the active
+    \texttt{/execute\_skill} goal, and send the arm home. Wired through
+    \texttt{plan\_manager\_node}'s step loop (a \texttt{threading.Event}
+    checked before every step), the bridge node (deliberately not gated
+    behind the same lock as normal command execution, so it stays callable
+    while a plan is blocked mid-execution), and a red Stop button in the
+    frontend.
+  \item A shared \texttt{\_strip\_json\_fence()} helper across all six
+    reasoning methods to tolerate markdown code-fence-wrapped JSON, plus a
+    fix for a \texttt{force\_json}/\texttt{force\_json\_response} kwarg-name
+    mismatch that had silently disabled JSON enforcement on some call sites.
+  \item A model registry refresh: Groq's lineup fully replaced (old Llama
+    4/3.3/3.1 models removed; \texttt{qwen3-32b} and vision-capable
+    \texttt{qwen3.6-27b} added), Nebius additions, and every launch file's
+    hardcoded default model name updated to match (several had gone stale,
+    pointing at models no longer in the registry).
+  \item A per-run debug recorder (\texttt{debug\_recorder.py}) capturing
+    command, config, raw response, logs, and camera frame/overlay per
+    \texttt{/plan\_task} call, plus a \texttt{DEBUG\_TIMEZONE} setting so
+    debug-folder timestamps match the operator's local time rather than the
+    container's UTC clock.
+  \item Two failure modes newly surfaced by that debug recorder: Groq empty
+    completions on \texttt{fhp}/\texttt{ffhp} (likely exhausting the
+    reasoning-token budget on the longer chained prompt), and Nebius
+    bad-grounding-depth failures where the plan parses fine but the returned
+    pixel lands off the target's surface. A reduced-schema mitigation was
+    discussed but not implemented in this session.
+\end{itemize}
+
+\subsection{Session 4: VLM$\to$LLM hybrid, grasp-width geometry, grounding fixes}
+
+\textbf{VLM$\to$LLM hybrid pipeline} (\texttt{mode=VLM\_LLM}, new
+\texttt{vlm\_llm\_planner\_node.py} + \texttt{scene\_grounder.py}): a VLM
+grounding call detects objects/targets as pixel centers, deprojects them to
+world coordinates, assembles a generated scene in memory, then hands off to
+the standard LLM planner. Grounding and planning model/temperature are wired
+independently through config, launch files, and the GUI.
+
+This session also fixed a project-wide \textbf{VLM pixel-coordinate
+convention bug}: Qwen-family VLMs ignore a requested \texttt{[h, w]}
+(row, col) output order and always emit their native \texttt{[x, y]}
+(col, row) convention, causing a systematic axis-swap between the detected
+scene and the real one. Every reasoning-method prompt, \texttt{skills.py},
+\texttt{extraction\_classes.py}, and both VLM planner nodes were standardized
+to consistently use \texttt{[x, y]}.
+
+\textbf{Width-aware TCP offset and release-height fix.} Added
+\texttt{grasp\_width} to the action schema and every prompt; added a
+piecewise-linear \texttt{tcp\_offset\_z\_for\_width()} calibration table
+(since the RG2's fingers pivot, flange-to-contact distance varies with
+object width); capped pick descent depth so tall objects are gripped nearer
+their top instead of driving the rigid TCP clamp into them; and fixed a
+\textbf{double-counted release height} in the hybrid pipeline where a
+depth-measured top surface was having the VLM's separate, non-depth-grounded
+size estimate added on top of it a second time. See
+\texttt{docs/GRASP\_GEOMETRY\_PIPELINE.md} for the full geometry derivation.
+
+\textbf{Further hardening} in the same session: local-plane-centroid
+correction for VLM-click grounding error near object edges; a
+\texttt{table\_surface\_z}/\texttt{top\_z} sign inversion fix in object-height
+computation; moving TCP calibration out of \texttt{config.py} into a
+dedicated \texttt{grasp\_geometry.py}; a new terminal-log capture service so
+each debug run also captures camera/robot/stack subprocess logs; the UR
+driver supervisor fast-failing on an \texttt{[ERROR]} log marker instead of
+always waiting a full 30-second timeout; and consolidating scattered
+per-class settings into \texttt{config.py} as the single settings source.
+
+A first \textbf{bbox grounding mode} (point vs.\ bounding box for VLM pixel
+grounding) and a \textbf{CoT-SC timeout fix} closed out the session: no
+provider client had ever had an explicit HTTP timeout (SDK defaults up to
+600\,s exceeded the app's 300\,s plan timeout), and \texttt{cot\_sc} ran its
+$k{=}5$ independent samples sequentially, multiplying exposure to any single
+slow call; fixed with a bounded, configurable
+\texttt{Settings.REQUEST\_TIMEOUT\_S} on every client and parallelized
+sampling via \texttt{ThreadPoolExecutor} (with a lock added around metrics
+updates, now hit concurrently).
+
+Three further robustness fixes closed the session: a \texttt{cot\_sc}
+crash when a sampled action came back as a non-dict, now caught and raised as
+a catchable \texttt{ActionParsingError}; an unclosed \texttt{<think>} block
+(model exhausts its token budget mid-thought) that previously bypassed the
+blank-response retry path, now truncated and retried correctly; and a new
+\texttt{VLM\_REASONING\_EFFORT} setting forwarding Groq's
+\texttt{reasoning\_effort} parameter end-to-end, as a mitigation for
+Groq/Qwen's imprecise in-\texttt{<think>} percentage-estimation grounding
+(not yet A/B tested on hardware). The full reasoning test suite stood at
+45/45 passing at the end of this session.
+
+\subsection{Session 5: release-geometry determinism, zone-collision spacing, and the LLM-vs-VLM benchmark}
+
+The current session, on branch \texttt{feature/refactoring}.
+
+\textbf{Zone-release collision spacing} (\texttt{a1b744a}, committed):
+requesting multiple objects into the same zone reliably produced overlapping
+releases at the zone's exact center; a new
+\texttt{distribute\_zone\_releases()} spaces them along a line-then-grid
+pattern, detecting collisions by comparing release positions to each other
+\emph{within the plan} (mode-agnostic) rather than against a scene's static
+target registry (which only ever matched LLM's hand-authored positions).
+
+\textbf{LLM-mode release geometry made deterministic}: two hardware-reported
+bugs traced to the same root cause -- every LLM prompt asked the model to
+compute release height/position via its own arithmetic, and that arithmetic
+was repeatedly wrong on real hardware. Fixed by computing both
+deterministically in code (\texttt{\_fix\_object\_height},
+\texttt{\_fix\_release\_height}), mirroring what VLM mode already did.
+
+\textbf{VLM-mode grasp-width sampling fix}: bbox edge pixels sit exactly on
+an object's silhouette boundary, the worst place to get valid depth, and a
+single failed edge sample aborted the entire batched deprojection call --
+crashing an otherwise-fine plan. Fixed by making width sampling a
+best-effort, exception-isolated call sampling slightly inset from the raw
+edge.
+
+\textbf{Benchmark infrastructure and study}: a full LLM-vs-VLM comparison,
+covered in detail in Section~\ref{sec:benchmark}.
+
+Full details of every fix in this section, including exact file lists and
+line-level rationale, are in \texttt{docs/SESSION\_CONTEXT.md}.

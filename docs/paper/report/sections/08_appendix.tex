@@ -1,0 +1,161 @@
+\section{Appendix: Operational Reference}
+\label{sec:appendix}
+
+This appendix is a quick-start command reference, kept in sync with
+\texttt{CLAUDE.md} and \texttt{docs/SESSION\_CONTEXT.md} at the repository
+root. If any command below fails, those two files (not this report) are the
+first place to check for drift.
+
+\subsection{Build}
+
+\begin{lstlisting}
+# Standard build (must be outside any Python venv)
+cd /root/ws
+colcon build --symlink-install
+source install/setup.bash
+
+# If venv dependencies need to be respected:
+source venv/bin/activate
+python3 $(which colcon) build --symlink-install \
+  --cmake-args -DPython3_EXECUTABLE=$(which python3)
+source install/setup.bash
+\end{lstlisting}
+
+\subsection{Run}
+
+\paragraph{Recommended -- web GUI (manages the full stack as child processes):}
+\begin{lstlisting}
+ros2 run robo_reason_gui gui_node
+# open http://localhost:8080
+\end{lstlisting}
+
+\paragraph{LLM dry-run (no robot, no camera):}
+\begin{lstlisting}
+# Terminal 1:
+ros2 launch robo_reason_bringup dry_run.launch.py use_mock_llm:=true
+# Terminal 2:
+ros2 run robo_reason_task_interface task_interface_node
+\end{lstlisting}
+
+\paragraph{VLM dry-run (mock PNG camera):}
+\begin{lstlisting}
+ros2 launch robo_reason_bringup vlm_dry_run.launch.py \
+  images_dir:=/path/to/mock_frames model_name:=groq/qwen3.6-27b
+\end{lstlisting}
+
+\paragraph{Camera driver (Orbbec):}
+\begin{lstlisting}
+./scripts/run_orbbec_registered.sh
+\end{lstlisting}
+
+\paragraph{Camera services + overlay:}
+\begin{lstlisting}
+ros2 launch vlm_camera_service camera_services.launch.py \
+  show_overlay:=true \
+  charuco_z_sign:=1.0 \
+  board_in_base_x:=-0.224 \
+  board_in_base_y:=-0.348 \
+  board_in_base_roll:=3.14159 \
+  board_in_base_yaw:=1.5708 \
+  z_offset_m:=0.01
+\end{lstlisting}
+
+\paragraph{LLM mode (real robot):}
+\begin{lstlisting}
+export GROQ_API_KEY=gsk_...
+ros2 launch robo_reason_bringup real_robot.launch.py \
+  mode:=LLM \
+  reasoning_method:=fhp \
+  model_name:=groq/qwen3-32b \
+  temperature:=0.1
+\end{lstlisting}
+
+\paragraph{VLM mode (real robot):}
+\begin{lstlisting}
+export GROQ_API_KEY=gsk_...
+ros2 launch robo_reason_bringup real_robot.launch.py \
+  mode:=VLM \
+  model_name:=groq/qwen3.6-27b \
+  temperature:=0.1
+\end{lstlisting}
+
+\paragraph{Task interface CLI:}
+\begin{lstlisting}
+ros2 run robo_reason_task_interface task_interface_node
+\end{lstlisting}
+
+\subsection{API keys}
+
+Set \texttt{\{PROVIDER\}\_API\_KEY} environment variables (e.g.\
+\texttt{GROQ\_API\_KEY}, \texttt{NEBIUS\_API\_KEY}, \texttt{ANTHROPIC\_API\_KEY})
+or add them to a \texttt{.env} file in the working directory.
+
+\subsection{ChArUco board parameters (current, authoritative)}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Dictionary & \texttt{DICT\_6X6\_250} \\
+Layout & $3 \times 4$ squares \\
+\texttt{square\_length} & 0.062\,m \\
+\texttt{marker\_length} & 0.031\,m \\
+\texttt{axis\_length} & 0.08\,m \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Board pose in \texttt{base\_link} (current defaults)}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+\texttt{board\_in\_base\_x} & $-0.224$\,m \\
+\texttt{board\_in\_base\_y} & $-0.348$\,m \\
+\texttt{board\_in\_base\_z} & $-0.030$\,m \\
+\texttt{board\_in\_base\_roll} & 3.14159\,rad ($180^\circ$ around X) \\
+\texttt{board\_in\_base\_pitch} & 0.0 \\
+\texttt{board\_in\_base\_yaw} & 1.5708\,rad ($90^\circ$ around Z) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Intrinsic XYZ convention: roll first, then pitch, then yaw. Measured once
+per physical setup -- re-measure if the camera or board mount has moved
+(Section~\ref{sec:open-issues}, issue I8).
+
+\subsection{Docker container}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Item} & \textbf{Value} \\
+\midrule
+Image tag & \texttt{roboreason:ur} \\
+Launch alias & \texttt{roboreason-ur} (includes \texttt{--privileged -v /dev:/dev}) \\
+Workspace mount & \texttt{\textasciitilde/docker\_ws/ros2\_humble} (host) $\to$ \texttt{/root/ws} (container) \\
+Setup guide & \texttt{docs/docker-setup.md} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Repository pointers}
+
+\begin{itemize}[nosep]
+  \item \textbf{Detailed session log}: \texttt{docs/SESSION\_CONTEXT.md}
+    (file-by-file change tables for every session).
+  \item \textbf{Raw backlog}: \texttt{docs/TODO.md}.
+  \item \textbf{Grasp geometry derivation}: \texttt{docs/GRASP\_GEOMETRY\_PIPELINE.md}.
+  \item \textbf{Full operator guide}: \texttt{docs/ROBOREASON\_GUIDE.md}.
+  \item \textbf{Docker setup for new collaborators}: \texttt{docs/docker-setup.md}.
+  \item \textbf{GUI package README}: \texttt{src/robo\_reason\_gui/README.md}.
+  \item \textbf{Benchmark data, plan, and figures}: \texttt{benchmark/}.
+  \item \textbf{Current branch at time of writing}: \texttt{feature/refactoring}.
+  \item \textbf{Superseded/historical}: the sibling working directory
+    \texttt{robotic-ai/docs} contains the pre-repository VLA-era planning
+    documents (Section~\ref{sec:introduction}) -- historical reference only,
+    not an accurate description of the current system.
+\end{itemize}

@@ -1,0 +1,165 @@
+\section{Key Technical Decisions}
+\label{sec:tech-decisions}
+
+Section~\ref{sec:timeline} presented the project chronologically. This
+section regroups the material by theme, for a reader trying to understand
+one subsystem (e.g.\ ``how does grasp geometry work'') rather than one
+session.
+
+\subsection{Perception and calibration}
+
+\paragraph{ChArUco extrinsic calibration.} The camera-to-base transform is
+computed as $T_{\text{base,cam}} = T_{\text{base,board}} \cdot
+T_{\text{cam,board}}^{-1}$, where $T_{\text{cam,board}}$ is estimated live
+each frame via \texttt{solvePnP} and $T_{\text{base,board}}$ is a fixed,
+manually-measured pose (\texttt{board\_in\_base\_\{x,y,z,roll,pitch,yaw\}}
+in \texttt{config.py}). When the board is not visible, the deprojection
+service emits a warning and falls back to returning coordinates in the
+camera frame rather than failing silently -- a deliberate choice so that a
+temporarily-occluded board produces an obviously-wrong (camera-frame)
+answer instead of a plausible-looking wrong (stale-base-frame) one.
+
+\paragraph{Handedness (\texttt{charuco\_z\_sign}).} The board pose estimate
+can resolve to either a right-handed or left-handed triad depending on
+corner-ordering ambiguity; \texttt{charuco\_z\_sign=1.0} (right-handed, Z
+toward the camera) is correct and is now the default -- it defaulted to
+$-1.0$ early in the project and was corrected once the ambiguity was
+understood.
+
+\paragraph{\texttt{z\_offset\_m}.} A small (default 1\,cm) offset is added to
+every deprojected point before it reaches the planner, lifting object
+coordinates slightly above the measured table surface. This exists because
+depth noise and calibration error otherwise occasionally place a computed
+pick point fractionally \emph{below} the physical table, which the executor
+cannot safely reach.
+
+\paragraph{The VLM pixel-coordinate convention bug (Session 4).} The single
+highest-leverage perception fix in the project: every VLM prompt asked for
+pixel coordinates in \texttt{[h, w]} (row, column) order, but Qwen-family
+models ignore that instruction and always emit their native \texttt{[x, y]}
+(column, row) convention. This produced a systematic axis swap between where
+the model thought it was pointing and where the deprojection actually
+sampled -- a bug that looks like random grounding noise until the swap
+pattern is noticed. It was standardized to \texttt{[x, y]} everywhere
+(prompts, schemas, deprojection code) rather than fought at the prompt level,
+since the model's behavior was consistent, just not the one requested.
+
+\subsection{Grasp and release geometry}
+
+This is the most iterated-on subsystem in the project, because it is where
+small, silent unit-convention mismatches directly become millimeter-scale
+hardware errors. See \texttt{docs/GRASP\_GEOMETRY\_PIPELINE.md} for the full
+derivation; the key decisions:
+
+\begin{itemize}[nosep]
+  \item \textbf{Mid-body pick descent.} The gripper descends to
+    $\text{descent} = \min(0.5 \times \text{height}, \text{max\_descent})$,
+    not to the object's top surface -- this centers the grasp contact point
+    on typical rigid objects rather than pinching right at the top edge.
+  \item \textbf{Width-aware TCP offset.} The RG2's fingers pivot, so
+    flange-to-contact distance is a function of how far apart the fingers
+    are, which depends on object width. A piecewise-linear calibration table
+    (\texttt{grasp\_geometry.py}) interpolates the correct TCP Z offset per
+    pick, reset to a default after release.
+  \item \textbf{Release-lift height must match the actual grasp point, not
+    the object's full height.} The recurring bug pattern across two
+    sessions: release-lift amount was set to the object's \emph{full}
+    height, implicitly assuming the object was grasped at its very top --
+    but the paired pick descended mid-body. Net effect: every release
+    overshot upward by roughly half the object's height. Fixed (Session 4)
+    by carrying \texttt{height - descent} (true grasp-point-to-bottom
+    distance) as the release-lift value instead of the full height.
+  \item \textbf{Double-counted stacking height (VLM\_LLM hybrid, Session 4).}
+    A depth-measured true top surface was having the VLM's separate, blind
+    size estimate added on top of it a second time by the LLM's own
+    stacking formula (\texttt{position.z + size[2]}). Fixed by deriving
+    target height from depth and resetting \texttt{position.z} to a base
+    reference so the existing formula reconstructs the true top surface
+    instead of double-counting.
+  \item \textbf{Deterministic LLM-mode geometry (Session 5).} The same class
+    of bug recurred in LLM mode, where every prompt asks the model to
+    compute \texttt{object\_height} and \texttt{release\_position.z} via its
+    own arithmetic -- consistently wrong on real hardware. Rather than
+    iterating the prompt again, this was pulled out of the model entirely:
+    \texttt{\_fix\_object\_height} recomputes it from the paired pick's
+    actual grasp Z minus table surface Z; \texttt{\_fix\_release\_height}
+    matches a release against the scene by \emph{footprint containment}
+    (bounding box, not point-distance -- a tray is tens of centimeters wide,
+    so a release can land validly inside it while being far from its
+    registered center point) and nudges only positions that drifted into a
+    zone without exactly echoing a registered target/stacking position
+    (to avoid re-nudging a deliberate stack or placement).
+  \item \textbf{Grasp-width sampling (Session 5).} Deriving \texttt{grasp\_width}
+    by deprojecting a bounding box's left/right edge pixels sampled directly
+    on the object's silhouette boundary -- the single worst place for valid
+    depth (occlusion/parallax) -- and one failed edge sample aborted the
+    entire batched deprojection call, crashing an otherwise-valid plan.
+    Fixed by sampling inset from the edge and isolating the failure so it
+    degrades to ``keep the VLM's own width guess'' instead of crashing.
+\end{itemize}
+
+\subsection{Reasoning-method robustness}
+
+Across six independently-implemented reasoning methods (FHP/FFHP, ReAct,
+CoT-SC, Self-Refine, Tree-of-Thought, Always-Act), the same categories of
+failure recurred and were each fixed once at the shared base-class or helper
+level rather than six times:
+
+\begin{itemize}[nosep]
+  \item \textbf{Markdown-fenced JSON} (\texttt{```json ... ```}) breaking
+    \texttt{json.loads()} -- fixed with a shared
+    \texttt{\_strip\_json\_fence()} classmethod.
+  \item \textbf{Unclosed \texttt{<think>} blocks} on token-budget exhaustion
+    silently producing a non-blank-looking response that skipped the
+    existing blank-response retry path -- fixed by extending the
+    think-block-stripping regex to also match an \emph{un}closed block.
+  \item \textbf{Non-dict actions in a parsed plan} causing an unhandled
+    \texttt{TypeError} deep in Pydantic validation instead of a catchable
+    planning error -- fixed with an \texttt{isinstance} guard raising a
+    dedicated \texttt{ActionParsingError}.
+  \item \textbf{Sequential CoT-SC sampling} multiplying a single slow-call
+    risk by $k$ -- fixed by parallelizing the $k$ independent samples with a
+    thread pool (and adding a lock around now-concurrent metrics updates).
+  \item \textbf{No provider request timeout anywhere} -- every provider
+    client gained a configurable, bounded request timeout
+    (\texttt{Settings.REQUEST\_TIMEOUT\_S}), closing off a class of ``the plan
+    was generated but the app already gave up waiting'' failures.
+\end{itemize}
+
+The pattern across all of these: \textbf{push correctness fixes down into a
+shared base class or helper} rather than into each reasoning method's
+individual file, so future reasoning methods inherit the fix automatically.
+
+\subsection{Concurrency and process supervision}
+
+\begin{itemize}[nosep]
+  \item \textbf{\texttt{ReentrantCallbackGroup} + \texttt{MultiThreadedExecutor}
+    everywhere a node makes nested service calls} (Section~\ref{sec:architecture}) --
+    the single structural rule that prevents deadlock in this codebase.
+  \item \textbf{The UR driver is treated as inherently flaky, not fixed.}
+    Rather than debugging the stock \texttt{ur\_control.launch.py} driver's
+    intermittent startup failure, \texttt{UrDriverSupervisor} wraps it with
+    retry-with-backoff against an explicit readiness probe, and later
+    (Session 4) fast-fails on an \texttt{[ERROR]} log marker instead of
+    always waiting out a fixed timeout.
+  \item \textbf{Hard guard against duplicate executors.} A leftover
+    \texttt{/execute\_skill} action server from a crashed or improperly
+    stopped previous session would silently double-run every skill if a new
+    stack started on top of it. \texttt{StackSupervisor} checks for this
+    explicitly (not just by process name) before allowing a new start.
+\end{itemize}
+
+\subsection{Configuration consolidation}
+
+Settings accumulated in three places over the project's history: scattered
+per-class Python constants, launch-file default arguments, and
+\texttt{config.py}. Two consolidation passes (Session 2's ChArUco defaults
+sync, Session 4's full settings consolidation) moved everything into
+\texttt{config.py} as the single \texttt{pydantic-settings} source of truth,
+each field overridable via a \texttt{ROBOREASON\_}-prefixed environment
+variable. The recurring failure mode this fixes is a launch file's hardcoded
+default silently drifting out of sync with the authoritative value elsewhere
+(e.g.\ Session 2's board-geometry mismatch, Session 3's stale model-name
+defaults after a registry refresh) -- consolidation does not prevent drift by
+itself, but it reduces the number of places drift can occur from three to
+one.

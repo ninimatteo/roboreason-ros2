@@ -1,0 +1,113 @@
+\documentclass[11pt]{article}
+
+% ---------------------------------------------------------------------------
+% RoboReason ROS2 -- Project Report
+% ---------------------------------------------------------------------------
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds}
+\usepackage{caption}
+\usepackage{parskip}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage{listings}
+
+% --- colors -----------------------------------------------------------------
+\definecolor{rrblue}{RGB}{31,78,121}
+\definecolor{rrgray}{RGB}{90,90,90}
+\definecolor{codebg}{RGB}{245,245,245}
+
+\titleformat{\section}{\Large\bfseries\color{rrblue}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{rrblue}}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{rrgray}}{\thesubsubsection}{1em}{}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{rrgray} RoboReason ROS2 -- Project Report}
+\fancyhead[R]{\small\color{rrgray} \leftmark}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- graphics path for benchmark figures ------------------------------------
+\graphicspath{{../../benchmark/figures/}}
+
+\newcommand{\rrnote}[1]{{\color{rrgray}\small\emph{#1}}}
+
+\title{
+  \vspace{-1.5cm}
+  {\Huge\bfseries\color{rrblue} RoboReason ROS2}\\[0.4cm]
+  {\Large Project Report: LLM/VLM Task Planning for a UR5cb Manipulator}
+}
+\author{Matteo Nini}
+\date{Report compiled 22 July 2026 \\ \small (project active 27 May 2026 -- 22 July 2026, resuming September 2026)}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+\noindent
+RoboReason ROS2 is a ROS2-based task planning system that uses large language
+models (LLMs) and vision-language models (VLMs) to translate natural-language
+commands into executable pick-and-place plans for a UR5cb robotic arm with an
+OnRobot RG2 gripper. This report documents the project from its initial
+commit (27 May 2026) through the end of the current working phase
+(22 July 2026), covering the architectural pivot away from an earlier
+Vision-Language-Action (VLA) approach, the resulting LLM/VLM pipeline and its
+supporting infrastructure (camera calibration, a web GUI, a debug/benchmark
+harness), the major bug-fix and refactoring passes that hardened the system
+for real hardware, and a 120-trial LLM-vs-VLM benchmark study. It closes with
+a snapshot of open issues and a prioritized roadmap for the next working
+phase, planned to resume in September 2026.
+
+Part~\ref{part:summary} is a concise narrative intended to be read first,
+in one sitting, to re-orient quickly after the pause. Part~\ref{part:technical}
+is the comprehensive technical reference, organized by architecture,
+chronological development history, key engineering decisions, the benchmark
+study, open issues, and the forward roadmap.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+\part{Executive Summary}
+\label{part:summary}
+\input{sections/00_executive_summary}
+
+\newpage
+\part{Technical Report}
+\label{part:technical}
+
+\input{sections/01_introduction}
+\input{sections/02_architecture}
+\input{sections/03_timeline}
+\input{sections/04_technical_decisions}
+\input{sections/05_benchmark}
+\input{sections/06_open_issues}
+\input{sections/07_roadmap}
+\input{sections/08_appendix}
+
+\end{document}

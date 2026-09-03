@@ -1,0 +1,189 @@
+\section{Roadmap}
+\label{sec:roadmap}
+
+This section reorganizes the backlog in \texttt{docs/TODO.md} (items R1--R7
+below map directly to that file's items 1--7) into three phases by
+dependency and cost, and adds the two items raised elsewhere in this report
+but not present in \texttt{TODO.md}. No calendar dates are attached beyond
+``resume in September'' -- phases reflect priority and dependency order, not
+a schedule, since real-world constraints on the September restart are not
+yet known.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small},
+  phase/.style={rectangle, rounded corners, draw=rrblue, fill=rrblue!8,
+    minimum width=4.3cm, minimum height=2.6cm, align=left, text width=4cm,
+    inner sep=8pt},
+  phasehead/.style={font=\bfseries\small\color{rrblue}}
+]
+  \node[phase] (a) at (0,0) {
+    \textbf{Phase A -- Verify \& stabilize}\\[2pt]
+    \footnotesize
+    $\bullet$ Re-verify Session 5 geometry fixes on hardware (I1)\\
+    $\bullet$ Re-check camera/board calibration (I8)\\
+    $\bullet$ R1: zone-bounds-aware release placement
+  };
+  \node[phase, right=0.9cm of a] (b) {
+    \textbf{Phase B -- Model quality \& schema}\\[2pt]
+    \footnotesize
+    $\bullet$ R4: bounding-box scene schema\\
+    $\bullet$ R5: rewrite skill/primitive prompt text\\
+    $\bullet$ R3: real tray-dimension-aware placement\\
+    $\bullet$ Benchmark: add VLM\_LLM condition
+  };
+  \node[phase, right=0.9cm of b] (c) {
+    \textbf{Phase C -- New capabilities}\\[2pt]
+    \footnotesize
+    $\bullet$ R2: push/nudge skill (no grasp)\\
+    $\bullet$ R6: multi-call ``chat'' interaction\\
+    $\bullet$ R7: geometry fixes as callable skills
+  };
+
+  \draw[-{Latex[length=3mm]}, thick, rrblue!50] (a.east) -- (b.west);
+  \draw[-{Latex[length=3mm]}, thick, rrblue!50] (b.east) -- (c.west);
+\end{tikzpicture}
+\caption{Proposed phasing of the roadmap. Phase A is the recommended
+  September restart focus; B depends on A's schema decisions; C depends on
+  R6/R7 being designed together (Section~\ref{sec:roadmap}, R6).}
+\label{fig:roadmap-phases}
+\end{figure}
+
+\subsection{Phase A -- verify and stabilize}
+
+\paragraph{Hardware re-verification (I1, I8).} Not a backlog item so much as
+a gate: nothing else in this roadmap should be trusted until the Session 5
+geometry fixes are confirmed against a live run and calibration is confirmed
+current (Section~\ref{sec:open-issues}).
+
+\paragraph{R1 -- Zone-bounds-aware release placement.}
+\texttt{distribute\_zone\_releases} (\texttt{schemas.py}) currently spaces
+out colliding releases along a line/grid using only the released object's
+\texttt{grasp\_width}, with no notion of how big the target tray/zone
+actually is -- nothing stops the grid from growing past the zone's physical
+edge, and \texttt{PlanValidator} only checks \emph{global} workspace limits,
+not per-zone bounds, so an overflow would not be caught anywhere. Zone size
+is reliably known in \texttt{LLM} mode (\texttt{scene\_mock.json}'s
+hand-authored \texttt{targets.*.size}) and \texttt{VLM\_LLM} mode (the
+generated scene's visually-estimated target size), but not in plain
+point-grounding \texttt{VLM} mode. Plan: add \emph{opportunistic}
+bounds-checking -- clamp/validate against a size when one is available, fall
+back to today's unbounded behavior when it is not. Needs re-plumbing an
+optional size hint back into \texttt{distribute\_zone\_releases}, which
+currently deliberately takes only \texttt{plan} (no \texttt{scene\_state}) --
+see Section~\ref{sec:tech-decisions}'s zone-collision-spacing discussion for
+why that dependency was dropped, and keep any size hint optional so it does
+not reintroduce the LLM-only-matching problem that fix solved.
+
+\subsection{Phase B -- model quality and schema}
+
+\paragraph{R4 -- \texttt{scene\_mock.json}: bounding box instead of
+position + size, for \texttt{targets}.} Replace
+\texttt{targets.*.position} (center) + \texttt{size} (dimensions) with an
+explicit bounding box (\texttt{min}/\texttt{max} corners, or a \texttt{min}
+corner + size). Agreed and deliberately deferred until after the benchmark
+push (now complete). Rationale: removes an assumed, undocumented convention
+(\texttt{position} = center, half-extent = \texttt{size}/2) that this
+project's own bugs have repeatedly tripped on (the release-height
+base-vs-contact-point confusion, the footprint-vs-point-distance matching
+gap in \texttt{\_fix\_release\_height}); matches how a physical zone is
+actually measured by hand (two corners); simplifies the existing
+footprint-containment code (direct min/max comparison instead of computing
+half-extents every time) and the stacking-height prompt instruction
+(\texttt{target.z\_max} instead of
+\texttt{target.position.z + target.size[2]}); and fits VLM bbox grounding
+more naturally (a detected pixel bbox's corners deproject straight into a
+real-world min/max box). \textbf{Not} proposed for \texttt{objects.*} --
+picking needs a contact point, not a box. \textbf{Breaking change}, touches:
+\texttt{llm\_planner\_node.py}'s \texttt{\_fix\_object\_height}/
+\texttt{\_fix\_release\_height}; the stacking-height instruction duplicated
+across all six LLM prompt files; \texttt{vlm\_llm\_planner\_node.py}'s
+\texttt{\_build\_generated\_scene}; \texttt{docs/GRASP\_GEOMETRY\_PIPELINE.md};
+and \texttt{scene\_mock.json} itself.
+
+\paragraph{R5 -- Rewrite the skill/primitive descriptions for clarity.}
+Revisit what the LLM/VLM actually sees: the \texttt{UR5Action} field
+docstrings (\texttt{extraction\_classes.py}) and the skill-list text embedded
+in each reasoning method's prompt (\texttt{skills.py} / per-method
+\texttt{EmbodiedAgentsPrompts/*.py}), to better explain what each primitive
+does, what each parameter means, and what convention it follows -- e.g.\ is
+\texttt{object\_height} still worth exposing to the model at all, now that
+\texttt{\_fix\_object\_height}/\texttt{\_fix\_release\_height} compute it
+deterministically and ignore whatever the model puts there (closely related
+to R7). No concrete plan yet; needs a pass through current prompt text to
+find what is unclear or stale first.
+
+\paragraph{R3 -- Real tray-dimension-aware ``best'' positioning.} Distinct
+from R1's bounds-\emph{checking}: actively using a tray's real physical size
+to compute the \emph{best} placement, not just a safe non-colliding one --
+centering the layout, choosing the axis that best fits the tray's actual
+aspect ratio instead of always growing along a fixed axis (currently
+hardcoded +y then +x, see \texttt{\_zone\_slot\_offset}), or packing more
+optimally than a simple line/grid. Worth deciding whether this stays
+deterministic (inside \texttt{distribute\_zone\_releases}, as today's
+line/grid does) or becomes an explicit skill the LLM can invoke with a
+stated intent (``arrange neatly'' vs.\ ``just don't collide''). Depends on
+R1 first, since both need real zone dimensions plumbed through.
+
+\paragraph{Benchmark extension.} Add a third \texttt{VLM\_LLM} condition to
+the existing 120-trial study (Section~\ref{sec:benchmark}), to test whether
+hybrid grounding recovers arithmetic-task success rate closer to LLM's
+while keeping VLM's live-camera advantage.
+
+\subsection{Phase C -- new capabilities}
+
+\paragraph{R2 -- Non-grasping ``push/nudge'' skill.} A skill that
+repositions an object by contacting and sliding it with the end-effector,
+without closing the gripper -- e.g.\ nudging into place, clearing a path, or
+repositioning something the gripper cannot or should not grasp. Open
+questions before implementing: the action shape (likely a new
+\texttt{ALLOWED\_SKILLS} entry alongside
+\texttt{approach|pick|release|move\_home|wait} in \texttt{schemas.py}, needing
+a start-contact point and an end point); the executor-side trajectory
+(contact-and-slide -- different geometry from pick's mid-body descent); and
+threading the new skill through every reasoning method's prompt (LLM + VLM
+variants), the same way \texttt{grasp\_width} and bbox grounding were
+threaded through everywhere in earlier passes.
+
+\paragraph{R6 -- A ``chat'' for multiple LLM/VLM calls per task.} Every
+reasoning method today is a single request/response cycle (or, for
+\texttt{cot\_sc}, several \emph{independent} samples voted on at once) -- no
+notion of an ongoing conversation where a follow-up call can react to what
+an earlier call in the \emph{same} task decided. Explore a real multi-turn
+interaction, closer to ReAct's reason/act loop but generalized, so the agent
+(or the operator) can issue several calls within one task and have later
+calls see earlier ones' output/state. Directly enables R7 (a model that can
+call a ``fix my plan'' skill and see the result before finalizing).
+
+\paragraph{R7 -- Expose the deterministic geometry fixes as callable
+skills.} Several deterministic, code-side corrections currently silently
+override whatever the LLM/VLM computed:
+\texttt{llm\_planner\_node.py}'s \texttt{\_fix\_object\_height},
+\texttt{\_fix\_release\_height} (surface-height lookup, footprint-overlap
+nudging), and \texttt{schemas.py}'s \texttt{distribute\_zone\_releases}
+(collision spacing). All are one-shot, invisible post-processing today: the
+model never sees that its numbers were corrected and cannot ask for a
+\emph{different} correction if the automatic one is not what was actually
+wanted. Idea: expose them as callable tools the LLM/VLM can invoke directly
+-- ``recompute this release's height'', ``space these releases apart'',
+``nudge this point out of zone X'' -- as part of a multi-call interaction
+(R6), so the model actively decides to use the correction rather than having
+it silently applied. Would also make failures more diagnosable (the model's
+own trace would show \emph{why} a position changed). Open question: how much
+of the current hardcoded-in-Python geometry logic to keep as an automatic
+safety net regardless -- this project's whole pattern so far has been ``do
+not trust the model's own arithmetic for real-world geometry''
+(Section~\ref{sec:tech-decisions}) -- versus how much to hand over as an
+optional tool call.
+
+\subsection{Not on this roadmap, deliberately}
+
+Two things this report does \emph{not} recommend picking back up without a
+separate decision: reviving the VLA direction (Section~\ref{sec:introduction}
+explains why it was abandoned; nothing in the benchmark results
+(Section~\ref{sec:benchmark}) argues for revisiting that), and adding new
+foundation-model providers beyond the current five (Groq, Nebius, OpenAI,
+Anthropic, Gemini) -- the benchmark's findings point to reasoning/arithmetic
+robustness and prompt/schema design as the leverage points, not model
+breadth.

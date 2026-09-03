@@ -1,0 +1,178 @@
+\section{System Architecture}
+\label{sec:architecture}
+
+\subsection{Package structure}
+
+\begin{longtable}{@{}p{4.2cm}p{10.8cm}@{}}
+\toprule
+\textbf{Package} & \textbf{Role} \\
+\midrule
+\endhead
+\texttt{robo\_reason\_interfaces} & All ROS2 msgs/srvs/actions (CMake):
+  \texttt{PlanTask}, \texttt{ExecutePlan}, \texttt{ExecuteSkill},
+  \texttt{Deproject}, \texttt{GetImage}, \texttt{CancelExecution},
+  \texttt{PixelArray}. \\
+\texttt{robo\_reason\_bringup} & Centralized configuration
+  (\texttt{config.py}, a single \texttt{pydantic-settings} class) and launch
+  files. \\
+\texttt{robo\_reason\_reasoning} & LLM/VLM foundation-model clients and the
+  seven reasoning-method implementations; no ROS2 nodes -- pure Python
+  library. \\
+\texttt{robo\_reason\_planner} & Three planner nodes: LLM, VLM, and the
+  VLM$\to$LLM hybrid. \\
+\texttt{robo\_reason\_manager} & Plan manager: validates a generated plan,
+  sequences \texttt{/execute\_skill} calls, maintains \texttt{WorldState}. \\
+\texttt{robo\_reason\_executor} & Skill executor nodes: \texttt{fake} (no
+  hardware) and \texttt{ur5cb} (real UR5cb + RG2). \\
+\texttt{robo\_reason\_task\_interface} & Terminal CLI entry point and
+  \texttt{scene\_mock.json}, the static scene description used by LLM mode. \\
+\texttt{vlm\_camera\_service} & Camera bridge: RGB capture, pixel$\to$3D
+  deprojection, ChArUco calibration. \\
+\texttt{robo\_reason\_gui} & FastAPI + embedded \texttt{rclpy} bridge node;
+  supervises the ROS2 stack, UR driver, and camera service as child
+  processes. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Node pipeline and data flow}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=0.9cm and 1.6cm,
+  every node/.style={font=\small},
+  box/.style={rectangle, draw=rrblue, rounded corners, fill=rrblue!7,
+    minimum height=0.9cm, minimum width=3.4cm, align=center},
+  svc/.style={font=\scriptsize\ttfamily, rrgray}
+]
+  \node[box] (ti) {task\_interface\_node\\(or GUI)};
+  \node[box, below=of ti] (planner) {llm\_planner\_node /\\vlm\_planner\_node /\\vlm\_llm\_planner\_node};
+  \node[box, below=of planner] (manager) {plan\_manager\_node};
+  \node[box, below=of manager] (executor) {fake\_skill\_executor\_node /\\ur5\_skill\_executor\_node};
+
+  \node[box, right=3.4cm of planner, fill=rrblue!4] (camera) {camera\_services\_node /\\mock\_camera\_service\_node};
+
+  \draw[-{Latex[length=2mm]}, thick] (ti) -- (planner) node[midway, right, svc] {/plan\_task (srv)};
+  \draw[-{Latex[length=2mm]}, thick] (planner) -- (manager) node[midway, right, svc] {/execute\_plan (srv)};
+  \draw[-{Latex[length=2mm]}, thick] (manager) -- (executor) node[midway, right, svc] {/execute\_skill (action)};
+
+  \draw[-{Latex[length=2mm]}, thick, rrgray] (planner.east) to[bend left=12]
+    node[midway, above, svc] {/camera/get\_image} (camera.west);
+  \draw[-{Latex[length=2mm]}, thick, rrgray] (camera.west) to[bend left=12]
+    node[midway, below, svc] {/camera/deproject} (planner.east);
+\end{tikzpicture}
+\caption{Core service/action pipeline. VLM and VLM\_LLM planners additionally
+  call the camera services node; LLM mode does not.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Configuration}
+
+All runtime settings live in \texttt{robo\_reason\_bringup/config.py} as a
+single \texttt{pydantic-settings} \texttt{Settings} class. Every field is
+overridable via a \texttt{ROBOREASON\_} environment variable or a
+\texttt{.env} file, with no code changes needed for tuning (model,
+temperature, robot IP, timeouts, calibration geometry, etc.). This became the
+single source of truth for what had previously been scattered per-class
+constants (Section~\ref{sec:tech-decisions}, Session 4 item 4).
+
+\subsection{Reasoning layer (\texttt{robo\_reason\_reasoning})}
+
+\texttt{EmbodiedAgent} is the entry point. It selects one of seven reasoning
+methods based on \texttt{reasoning\_mode} --
+\texttt{FHP}/\texttt{FFHP}, \texttt{React}, \texttt{CoTSC}, \texttt{StepAction}
+(\texttt{always\_act}), \texttt{SelfRefine}, \texttt{TreeOfThought} -- and
+instantiates either an \texttt{LLMClient} or a \texttt{VLMClient}.
+
+All clients use a \texttt{provider/model-name} string (e.g.\
+\texttt{groq/qwen3.6-27b}, \texttt{nebius/nvidia-nemotron-120b}). A
+\texttt{ModelRegistry} in \texttt{base\_client.py} maps short names to
+official API model IDs; an unregistered \texttt{provider/model-name} string
+is passed through directly. Supported providers: Groq, Nebius
+(OpenAI-API-compatible), OpenAI, Anthropic, Google Gemini, selected by
+prefix.
+
+\subsection{VLM pipeline detail}
+
+\texttt{vlm\_planner\_node} (and the hybrid \texttt{vlm\_llm\_planner\_node}):
+\begin{enumerate}[nosep]
+  \item Captures an RGB frame via \texttt{/camera/get\_image}.
+  \item Runs \texttt{EmbodiedAgent(client\_type='vlm')}: the VLM outputs pixel
+    coordinates, either a \texttt{[x, y]} point or a
+    \texttt{[x\_min, y\_min, x\_max, y\_max]} bounding box, controlled by the
+    \texttt{grounding\_mode} setting.
+  \item Batch-deprojects all pixel fields to world \texttt{[x, y, z]} via
+    \texttt{/camera/deproject}.
+  \item Applies depth-based grasp geometry compensation (mid-body pick using
+    a configurable grasp-depth fraction, plus width-aware TCP offset --
+    Section~\ref{sec:tech-decisions}).
+\end{enumerate}
+
+The hybrid \texttt{VLM\_LLM} mode first runs a VLM scene-grounding call to
+build a \texttt{scene\_mock.json}-shaped object list in memory (the file
+itself is never touched), then hands off to the standard LLM planner over
+that generated scene.
+
+\subsection{GUI architecture}
+
+\texttt{server\_node.py} is the entry point: it initializes \texttt{rclpy},
+spins \texttt{GuiBridgeNode} on a \texttt{MultiThreadedExecutor} in a
+background thread, wires together three supervisors, and serves
+\texttt{uvicorn} on \texttt{0.0.0.0:8080}.
+
+\begin{itemize}[nosep]
+  \item \textbf{\texttt{StackSupervisor}} -- launches
+    \texttt{gui\_stack.launch.py} as a child process group; reaps stale
+    processes by name before every start and refuses to launch while the ROS
+    graph still shows a leftover \texttt{/execute\_skill} server from a
+    previous session (a hard guard against two executors double-running
+    every skill).
+  \item \textbf{\texttt{UrDriverSupervisor}} -- the stock UR driver
+    (\texttt{ur\_control.launch.py}) fails intermittently on startup; this
+    supervisor retries with backoff until the bridge's \texttt{robot\_ready()}
+    probe passes, and auto-reconnects on unexpected process exit.
+  \item \textbf{\texttt{CameraServiceSupervisor}} -- the same
+    subprocess-supervision pattern, wrapping the Orbbec camera launch script;
+    readiness is the bridge's \texttt{camera\_available()} probe.
+\end{itemize}
+
+\texttt{GuiBridgeNode} additionally owns: connectivity probes (trajectory
+action server, \texttt{/joint\_states} freshness, gripper I/O), the
+\texttt{/plan\_task} + \texttt{/execute\_plan} + \texttt{/cancel\_execution}
+service clients, \texttt{/execution\_log} WebSocket fan-out, live planner
+retuning via \texttt{SetParameters}, camera-frame grab and JPEG encoding with
+pixel/ChArUco-axis overlay drawing, and duplicate-executor preflight checks.
+
+The frontend is plain \texttt{index.html} + \texttt{app.js} + \texttt{style.css}
+with no build step; static files are served through a custom route rather
+than Starlette's \texttt{StaticFiles}, because \texttt{--symlink-install}
+produces symlinks that \texttt{StaticFiles} refuses to follow outside the
+served directory.
+
+\subsection{ROS2 concurrency pattern}
+
+All service/action nodes use \texttt{ReentrantCallbackGroup} together with a
+\texttt{MultiThreadedExecutor}. This is required because service callbacks
+issue nested client calls (e.g.\ the planner calling
+\texttt{/camera/get\_image} and \texttt{/camera/deproject} from inside its own
+\texttt{/plan\_task} callback); a single-threaded executor with the default
+callback group would deadlock on the first such nested call.
+
+\subsection{Debug artifacts}
+
+Every planning run writes a timestamped folder under \texttt{DEBUG\_DIR}
+(\texttt{debug/} by default) containing the input command, the active
+configuration, the raw model response, logs, and (in VLM modes) the captured
+camera frame with pixel/bbox overlays. This debug capture is what made the
+Session 5 geometry fixes possible to verify against real hardware failures
+rather than synthetic tests alone (Section~\ref{sec:tech-decisions}), and it
+is the same mechanism the benchmark harness (Section~\ref{sec:benchmark})
+builds on.
+
+\subsection{Scene description (LLM mode)}
+
+\texttt{scene\_mock.json} in \texttt{robo\_reason\_task\_interface/config/}
+provides workspace geometry and object positions in the robot base frame for
+LLM mode. VLM and VLM\_LLM modes read only \texttt{workspace.table.surface\_z}
+from it (for grasp geometry) -- object positions in those modes come from the
+camera, not from the file.

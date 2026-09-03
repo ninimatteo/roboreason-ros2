@@ -1,0 +1,69 @@
+\section{Known Open Issues}
+\label{sec:open-issues}
+
+Snapshot as of 22 July 2026, the end of Session 5. This mirrors the ``Known
+Open Issues'' section of \texttt{docs/SESSION\_CONTEXT.md}; kept here so this
+report is self-contained.
+
+\begin{enumerate}[label=\textbf{I\arabic*.}, leftmargin=1.6cm]
+
+  \item \textbf{Session 5 geometry fixes are not yet hardware-verified
+    end-to-end.} \texttt{\_fix\_object\_height} / \texttt{\_fix\_release\_height}
+    (Section~\ref{sec:tech-decisions}) and the grasp-width edge-inset fix are
+    verified against real captured hardware \texttt{debug/} data and
+    unit-level replay, but not through a fresh, live end-to-end hardware run
+    since landing. \textbf{Action:} re-run the \texttt{sort\_hard} and
+    \texttt{arith\_hard} prompts that originally surfaced these bugs and
+    confirm no regressions -- listed first in the September restart plan
+    (Executive Summary).
+
+  \item \textbf{The nudge-outside logic only corrects a drifted release
+    after the fact.} \texttt{\_fix\_release\_height} fixes the height and
+    position of a release that drifts into a zone it was not meant for, but
+    does nothing to stop the LLM from \emph{choosing} that drifted position
+    in the first place. This remains open; see Roadmap item R7 (exposing
+    geometry fixes as callable skills) as one possible direction.
+
+  \item \textbf{\texttt{VLM\_REASONING\_EFFORT='none'} still not A/B tested
+    on hardware.} Carried over from Session 4, unchanged. Somewhat
+    superseded in relevance by the benchmark's finding
+    (Section~\ref{sec:benchmark}) that the dominant VLM failure mode is
+    arithmetic/reasoning under load rather than raw grounding precision,
+    which this setting was aimed at -- worth re-evaluating whether it is
+    still the right lever before spending time A/B testing it.
+
+  \item \textbf{Plane-induced-homography $\to$ depth-based top-down
+    rectification rewrite: not started.} Carried over unchanged from earlier
+    sessions; no immediate plan attached.
+
+  \item \textbf{Zone size is unknown in plain VLM (point-grounding) mode.}
+    \texttt{distribute\_zone\_releases} spaces out colliding releases using
+    only the released object's \texttt{grasp\_width}, with no notion of the
+    target zone/tray's actual size -- nothing stops the spacing grid from
+    growing past a tray's physical edge. See Roadmap item R1.
+
+  \item \textbf{Groq empty-completion failures on \texttt{fhp}/\texttt{ffhp}.}
+    (\texttt{qwen3.6-27b}) -- hypothesized to be the model exhausting its
+    reasoning-token budget on the longer chained predicates$\to$plan prompt;
+    \texttt{cot\_sc}'s shorter single-shot prompt does not show this. A
+    reduced-schema / split-grounding-from-planning mitigation was discussed
+    (Session 3) but not implemented.
+
+  \item \textbf{Nebius bad-grounding-depth failures} on
+    \texttt{fhp}/\texttt{ffhp}/\texttt{always\_act} -- the plan parses fine
+    (not a JSON error) but returned pixel coordinates do not land on the
+    target's actual surface, so deprojection gets no valid depth. Reproduced
+    across multiple reasoning methods on Nebius; same schema-complexity
+    hypothesis as the Groq issue above, but manifesting as a
+    grounding-accuracy failure rather than a parse failure.
+
+  \item \textbf{Physical-setup-dependent calibration will drift over the
+    pause.} ChArUco board pose (\texttt{board\_in\_base\_*}) and workspace
+    limits in \texttt{scene\_mock.json} are tied to the exact physical
+    mounting of the camera and table; a month of disuse is enough time for a
+    bump, a re-mount, or a lighting change to invalidate them silently.
+    \textbf{Action:} re-verify calibration (Executive Summary, restart
+    checklist item 2) before trusting any pick/place coordinates in the
+    first September session.
+
+\end{enumerate}

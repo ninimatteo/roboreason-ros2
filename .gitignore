@@ -16,7 +16,7 @@ msg/_*.py
 build_isolated/
 devel_isolated/
 roboreason_ros2.tar
-docs/docker-setup.md
+docs/guide/docker-setup.md
 
 venv/
 
@@ -68,3 +68,6 @@ venv/
 
 # Per-run planner debug artifacts (command/response/errors/images/summary.csv)
 /debug/
+
+# Artefatti di sessioni non legate al progetto, tenuti in locale
+docs/archive/

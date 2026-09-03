@@ -1,0 +1,172 @@
+\section*{Read this first}
+\addcontentsline{toc}{section}{Read this first}
+
+This part is written to be read in one sitting, after the one-month pause,
+before diving back into code. It answers four questions: what is this
+project, why does it look the way it does, what has actually been
+accomplished, and what should happen next.
+
+\subsection*{What RoboReason is}
+
+RoboReason ROS2 lets an operator type (or eventually speak) a natural-language
+instruction -- ``pick the red cube and place it on the tray'' -- and have a
+UR5cb arm with an OnRobot RG2 gripper carry it out. A language model (LLM) or
+vision-language model (VLM) turns the instruction plus a description of the
+scene into a structured sequence of primitive skills (\texttt{approach},
+\texttt{pick}, \texttt{release}, \texttt{move\_home}, \texttt{wait}), which a
+plan manager validates and a skill executor runs on the real (or simulated)
+arm. A FastAPI web GUI supervises the whole ROS2 stack, the camera, and the
+UR driver, and gives an operator a chat-style interface with live execution
+feedback, an emergency stop, and per-run debug capture.
+
+\subsection*{Why LLM/VLM and not VLA}
+
+\textbf{The project did not start here.} The \texttt{docs/} folder in the
+adjacent working directory
+(\texttt{Robot\_AI\_...Technical\_Steps}, \texttt{Vision\_Language\_Action\_
+(VLA)\_Models\_in\_Robotics}, \texttt{VLA\_Future\_Directions}) documents an
+earlier direction built around end-to-end Vision-Language-Action models --
+networks trained to map pixels and language directly to robot actions. That
+approach was \textbf{deliberately abandoned} in favor of the current
+LLM/VLM-plus-classical-planning architecture. Those older documents are kept
+only as historical record; nothing in them describes the system as it exists
+today, and they should not be used as a reference for current work.
+
+The practical reasons for the pivot, as reflected in the codebase's design:
+\begin{itemize}[nosep]
+  \item \textbf{Interpretability and debuggability.} An LLM/VLM plan is a
+    readable JSON list of named skills with explicit coordinates -- every
+    step can be logged, inspected, and corrected. A VLA's action output is a
+    black box by comparison, which makes hardware debugging (the dominant
+    cost on this project, see Part~\ref{part:technical}) far harder.
+  \item \textbf{No training data / no fine-tuning loop required.} Off-the-shelf
+    foundation models (Groq, Nebius, OpenAI, Anthropic, Gemini) are used
+    directly through their APIs, with prompt engineering as the main lever --
+    no dataset collection or model training infrastructure needed.
+  \item \textbf{Deterministic geometry where it matters.} As the benchmark
+    study in Section~\ref{sec:benchmark} shows, most real-world failures on
+    this project trace back to \emph{arithmetic and reasoning} mistakes by
+    the model (misjudging heights, offsets, or which object a value maps to),
+    not to perception. The current architecture lets those computations be
+    pulled out of the model and done deterministically in Python
+    (Section~\ref{sec:tech-decisions}), which is not possible with an
+    end-to-end VLA.
+\end{itemize}
+
+\subsection*{Timeline at a glance}
+
+The project's git history runs from the initial commit on
+\textbf{27 May 2026} to the most recent committed work on
+\textbf{22 July 2026} -- roughly eight weeks, organized into five working
+sessions of increasing scope. Figure~\ref{fig:exec-timeline} gives the
+high-level shape; Section~\ref{sec:timeline} gives the full session-by-session
+account.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small},
+  milestone/.style={rectangle, rounded corners, draw=rrblue, fill=rrblue!8,
+    minimum width=2.6cm, minimum height=1.1cm, align=center, text width=2.5cm},
+  dateline/.style={rrgray, font=\scriptsize}
+]
+  \draw[-{Latex[length=2mm]}, thick, rrblue!60] (-0.3,0) -- (14.8,0);
+
+  \foreach \x/\lab/\date in {
+    0/{VLA pivot \\ \& bring-up}/27 May,
+    3/{VLM pipeline \\ \& calibration}/mid-Jun,
+    6/{Web GUI \\ (6 phases)}/mid-Jun,
+    9/{VLM$\to$LLM \\ hybrid}/late Jun,
+    12/{Grasp geometry \\ hardening}/early Jul,
+    14.5/{Benchmark study \\ (120 trials)}/15--20 Jul
+  } {
+    \draw[rrblue, thick] (\x,0.08) -- (\x,-0.08);
+    \node[dateline, below=2pt] at (\x,-0.1) {\date};
+  }
+
+  \node[milestone] at (0,1.3) {Session 1\\Bring-up};
+  \node[milestone] at (3.5,1.9) {Session 2\\Code review \& refactor};
+  \node[milestone] at (7.5,1.3) {Session 3\\Web GUI + e-stop};
+  \node[milestone] at (11,1.9) {Session 4\\VLM$\to$LLM hybrid};
+  \node[milestone] at (14.5,1.3) {Session 5\\Benchmark};
+
+  \draw[rrblue!40] (0,1.05) -- (0,0.15);
+  \draw[rrblue!40] (3.5,1.55) -- (4.5,0.15);
+  \draw[rrblue!40] (7.5,1.05) -- (7,0.15);
+  \draw[rrblue!40] (11,1.55) -- (10.5,0.15);
+  \draw[rrblue!40] (14.5,1.05) -- (14.5,0.15);
+\end{tikzpicture}
+\caption{Project timeline, 27 May -- 22 July 2026 (five working sessions).}
+\label{fig:exec-timeline}
+\end{figure}
+
+\subsection*{What has actually been delivered}
+
+\begin{itemize}[nosep]
+  \item A working \textbf{LLM planning pipeline} (\texttt{mode=LLM}) driven
+    by a static hand-authored scene description, and a working
+    \textbf{VLM planning pipeline} (\texttt{mode=VLM}) driven by a real
+    camera with ChArUco-calibrated pixel-to-3D deprojection, plus a
+    \textbf{hybrid VLM$\to$LLM mode} (\texttt{mode=VLM\_LLM}) that grounds a
+    scene with the VLM and then plans over it with the LLM.
+  \item Six interchangeable \textbf{reasoning methods}
+    (FHP/FFHP, ReAct, Chain-of-Thought Self-Consistency, Self-Refine,
+    Tree-of-Thought, Always-Act), all supporting both point and bounding-box
+    pixel grounding for VLM modes.
+  \item A full \textbf{web GUI} (\texttt{robo\_reason\_gui}) that supervises
+    the ROS2 stack, the UR driver (with auto-retry against a known flaky
+    startup), and the camera service as child processes, with live chat,
+    execution streaming, an emergency stop, and per-run debug capture.
+  \item A series of \textbf{hardware-driven correctness fixes} to the
+    grasp/release geometry (Section~\ref{sec:tech-decisions}), each traced to
+    a specific observed failure on the real robot and verified against
+    captured debug data, not just unit tests.
+  \item A \textbf{120-trial benchmark} directly comparing the LLM and VLM
+    pipelines across six task conditions, with a reusable measurement
+    harness (Section~\ref{sec:benchmark}) that produces publication-ready
+    figures.
+\end{itemize}
+
+\subsection*{Headline result}
+
+Across the benchmark's 120 trials, the \textbf{LLM pipeline} was safer and
+more successful than the \textbf{VLM pipeline} (95\% task-safety / 97\%
+task-success vs.\ 82\% / 66\%). The more interesting finding, reached by
+reading the operator's free-text failure notes rather than trusting the
+aggregate numbers alone, is that VLM's dominant failure mode is \emph{not}
+color perception -- it is \emph{arithmetic/value-mapping reasoning} under the
+harder tasks. Section~\ref{sec:benchmark} gives the full breakdown.
+
+\subsection*{State of the working tree}
+
+As of this report, all Session 5 work (deterministic release-geometry fixes,
+grasp-width sampling fix, the full \texttt{benchmark/} harness, and
+\texttt{docs/TODO.md}) has been committed by the operator, so the repository
+reflects the state described in this report with no dangling uncommitted
+changes carried across the pause.
+
+\subsection*{Picking this back up in September}
+
+Recommended first session, in order:
+\begin{enumerate}[nosep]
+  \item \textbf{Re-verify hardware, don't assume.} The two Session 5
+    geometry fixes (\texttt{\_fix\_object\_height},
+    \texttt{\_fix\_release\_height}) were validated against \emph{replayed}
+    debug data, not a fresh end-to-end run. Re-run the \texttt{sort\_hard}
+    and \texttt{arith\_hard} prompts that originally surfaced the bugs they
+    fix, and confirm no regressions, before trusting them for new work.
+  \item \textbf{Check the UR driver and camera calibration still hold.} Both
+    are physical-setup-dependent (Section~\ref{sec:open-issues}); a month of
+    disuse is enough for a cable, mount, or lighting change to drift the
+    ChArUco calibration.
+  \item \textbf{Read Section~\ref{sec:roadmap}} for the prioritized backlog --
+    it reflects everything in \texttt{docs/TODO.md} plus items raised but
+    deliberately deferred during the benchmark push (notably the
+    bounding-box scene schema change, item R4).
+\end{enumerate}
+
+The rest of this report (Part~\ref{part:technical}) is the full technical
+record: architecture, the complete session-by-session history, every
+significant bug fix with its root cause, the benchmark methodology and
+results in detail, the current open-issues list, and the prioritized
+roadmap.
