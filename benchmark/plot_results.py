@@ -10,10 +10,11 @@ numbers behind each figure are easy to sanity-check without opening an
 image viewer.
 
 Palette and mark choices follow this project's dataviz conventions:
-categorical hues assigned in fixed order (LLM = slot 1 blue, VLM = slot 2
-aqua, always in that order across every figure), text kept in ink/muted
-tones rather than series colors, hairline recessive gridlines, a legend
-whenever two series are shown, and no dual-axis charts — different-scale
+categorical hues assigned in fixed order (LLM = slot 1 blue, VLM_LLM =
+slot 2 orange, VLM = slot 3 aqua, always in that order across every
+figure — see MODELS/COLOR below), text kept in ink/muted tones rather
+than series colors, hairline recessive gridlines, a legend whenever two
+or more series are shown, and no dual-axis charts — different-scale
 metrics (percentages vs. AETS vs. step counts) each get their own panel.
 """
 import csv
@@ -35,7 +36,7 @@ TASK_LABELS = {
     'sort_easy': 'Sort/Stack\n(easy)', 'sort_hard': 'Sort/Stack\n(hard)',
     'arith_easy': 'Arithmetic\n(easy)', 'arith_hard': 'Arithmetic\n(hard)',
 }
-MODELS = ['LLM', 'VLM']
+MODELS = ['LLM', 'VLM_LLM', 'VLM']
 
 # Explicit, per-run_id classification of every non-empty `notes` entry into
 # a primary failure mode — deliberately NOT a keyword classifier (an
@@ -85,10 +86,13 @@ NOTE_CATEGORY = {
     '20260720-154726-b9aa78e0': REASONING,   # wrong cube (blue) on tray, failed to grasp red, only white correct
 }
 
-# Categorical palette (fixed order, colorblind-validated — see
-# dataviz skill references/palette.md). LLM always slot 1, VLM always
-# slot 2, in every figure in this script.
-COLOR = {'LLM': '#2a78d6', 'VLM': '#1baf7a'}
+# Categorical palette (fixed order, colorblind-validated with
+# scripts/validate_palette.js — see dataviz skill references/palette.md).
+# LLM always slot 1 (blue), VLM_LLM always slot 2 (orange), VLM always
+# slot 3 (aqua), in every figure in this script. VLM_LLM added
+# 2026-09-04 (ROBOAI-25) when this became a 3-arm study; slot 2 was
+# unused before that (the July 2-arm study only had slots 1 and 3).
+COLOR = {'LLM': '#2a78d6', 'VLM_LLM': '#eb6834', 'VLM': '#1baf7a'}
 INK = '#0b0b0b'
 INK_SECONDARY = '#52514e'
 INK_MUTED = '#898781'
@@ -121,6 +125,18 @@ def grouped(rows, key_fn):
     return out
 
 
+def series_offset(i, n_series, width, gap):
+    """Symmetric per-series offset for the i-th of n_series bars sharing
+    one category slot, e.g. n_series=2 -> [-0.5, 0.5] * (width+gap),
+    n_series=3 -> [-1, 0, 1] * (width+gap). Generalizes what used to be a
+    2-series-only `(i - 0.5) * (width + gap)` hardcoded at each call site
+    (broke silently once MODELS grew to 3 with VLM_LLM — bars overlapped
+    instead of erroring, so this only would have been caught by looking at
+    the figure).
+    """
+    return (i - (n_series - 1) / 2) * (width + gap)
+
+
 def add_model_legend(fig):
     """A shared, figure-level legend placed outside the plot area (top
     right), rather than an in-axes legend — several of these charts have
@@ -150,8 +166,8 @@ def style_axes(ax, ylabel=None):
 def grouped_bar(ax, categories, cat_labels, series_values, value_fmt='{:.0f}', ymax=None):
     """series_values: {'LLM': [...], 'VLM': [...]} aligned to `categories`."""
     n = len(categories)
-    width = 0.34
-    gap = 0.04
+    width = 0.26
+    gap = 0.03
     x = range(n)
     overall_max = max(v for vals in series_values.values() for v in vals)
     # Always reserve headroom above the tallest bar (for its value label) and
@@ -160,7 +176,7 @@ def grouped_bar(ax, categories, cat_labels, series_values, value_fmt='{:.0f}', y
     # clearance from both the bar top and the axes title above it.
     top = ymax if ymax else overall_max * 1.22
     for i, model in enumerate(MODELS):
-        offset = (i - 0.5) * (width + gap)
+        offset = series_offset(i, len(MODELS), width, gap)
         xs = [xi + offset for xi in x]
         vals = series_values[model]
         bars = ax.bar(xs, vals, width=width, color=COLOR[model], label=model, zorder=3)
@@ -195,7 +211,7 @@ def fig_ts_tsr_by_task(rows, task_order=None, filename='ts_tsr_by_task.png', sup
         style_axes(ax, ylabel='%')
         ax.set_title(title, fontsize=11.5, color=INK, loc='left', pad=10)
     fig.suptitle(
-        suptitle or 'Safety and success rate by task — LLM vs VLM (n=10 per bar)',
+        suptitle or f'Safety and success rate by task — {" vs ".join(MODELS)} (n=10 per bar)',
         fontsize=13, x=0.02, ha='left',
     )
     fig.tight_layout(rect=(0, 0, 1, 0.88))
@@ -246,8 +262,8 @@ def fig_steps_by_task(rows):
     g = grouped(rows, lambda r: (r['model_label'], r['task_id']))
     fig, ax = plt.subplots(figsize=(8.5, 4.2))
     n = len(TASK_ORDER)
-    width = 0.34
-    gap = 0.04
+    width = 0.26
+    gap = 0.03
     x = range(n)
 
     per_model = {}
@@ -259,7 +275,7 @@ def fig_steps_by_task(rows):
     top = max(m + s for d in per_model.values() for m, s in zip(d['means'], d['stds'])) * 1.22
 
     for i, model in enumerate(MODELS):
-        offset = (i - 0.5) * (width + gap)
+        offset = series_offset(i, len(MODELS), width, gap)
         xs = [xi + offset for xi in x]
         means, stds = per_model[model]['means'], per_model[model]['stds']
         bars = ax.bar(
@@ -275,7 +291,7 @@ def fig_steps_by_task(rows):
     ax.set_xticklabels([TASK_LABELS[t] for t in TASK_ORDER], fontsize=9)
     ax.set_ylim(0, top)
     style_axes(ax, ylabel='Steps executed (mean ± std)')
-    ax.set_title('Plan length by task — LLM vs VLM', fontsize=12, color=INK, loc='left', pad=10)
+    ax.set_title(f'Plan length by task — {" vs ".join(MODELS)}', fontsize=12, color=INK, loc='left', pad=10)
     fig.tight_layout(rect=(0, 0, 1, 0.90))
     add_model_legend(fig)
     fig.savefig(FIGURES_DIR / 'steps_by_task.png', dpi=200)
@@ -333,7 +349,7 @@ def fig_overall_summary(rows, task_filter=None, filename='overall_summary.png', 
         ax.set_title(title, fontsize=11.5, color=INK, pad=10)
         ax.tick_params(axis='x', labelsize=10)
     fig.suptitle(
-        suptitle or f'Overall headline results — LLM vs VLM (n={n_per_bar} per bar)',
+        suptitle or f'Overall headline results — {" vs ".join(MODELS)} (n={n_per_bar} per bar)',
         fontsize=13, x=0.02, ha='left',
     )
     fig.tight_layout(rect=(0, 0, 1, 0.90))
@@ -355,12 +371,12 @@ def fig_failure_modes(rows):
     categories = [REASONING, COLLISION, GRASP, INCOMPLETE]
     fig, ax = plt.subplots(figsize=(8.5, 4.6))
     y = range(len(categories))
-    height = 0.34
-    gap = 0.04
+    height = 0.26
+    gap = 0.03
     max_count = max(counts[c][m] for c in categories for m in MODELS)
     top = max_count * 1.2
     for i, model in enumerate(MODELS):
-        offset = (0.5 - i) * (height + gap)
+        offset = -series_offset(i, len(MODELS), height, gap)  # inverted: barh's y grows downward
         ys = [yi + offset for yi in y]
         vals = [counts[c][model] for c in categories]
         bars = ax.barh(ys, vals, height=height, color=COLOR[model], zorder=3)

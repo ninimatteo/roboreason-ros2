@@ -89,6 +89,30 @@ BENCHMARK_RESULTS_FIELDS = [
 ]
 
 
+def _mode_from_summary(debug_dir: Path, run_id: str) -> str:
+    """Looks up this run's real mode ('LLM', 'VLM', or 'VLM_LLM') from
+    debug/summary.csv, written by DebugRun (debug_recorder.py) directly
+    from the planner node that ran it — the ground truth. Guessing from
+    config.json's 'grounding_mode' key (the old approach, kept below as a
+    fallback) mislabels every VLM_LLM run as 'VLM', since VLM_LLM's config
+    carries a grounding_mode too (it grounds with a VLM call same as plain
+    VLM does); it would silently merge two of the three benchmark arms.
+    Mirrors benchmark/benchmark_annotate.py's identical helper — keep both
+    in sync if either changes.
+    """
+    summary_path = debug_dir / 'summary.csv'
+    if summary_path.exists():
+        try:
+            with open(summary_path, newline='') as f:
+                for row in csv.DictReader(f):
+                    if row.get('run_id') == run_id:
+                        mode = (row.get('mode') or '').strip()
+                        return mode.removesuffix('-mock') or 'LLM'
+        except OSError:
+            pass
+    return None
+
+
 class GuiBridgeNode(Node):
     """ROS2 bridge between the web GUI and the RoboReason stack.
 
@@ -696,10 +720,12 @@ class GuiBridgeNode(Node):
         command_path = run_dir / 'command.txt'
         command = command_path.read_text().strip() if command_path.exists() else ''
 
-        # config.json has no explicit "mode" field — VLM/VLM_LLM runs are
-        # the ones with a grounding_mode key (see vlm_planner_node.py's
-        # DebugRun config dict), LLM runs aren't.
-        model_label = 'VLM' if 'grounding_mode' in config else 'LLM'
+        model_label = _mode_from_summary(run_dir.parent, run_id)
+        if model_label is None:
+            # Fallback for a run_id summary.csv doesn't have a row for —
+            # can't tell VLM from VLM_LLM this way, only that it wasn't
+            # plain LLM.
+            model_label = 'VLM' if 'grounding_mode' in config else 'LLM'
         num_planned_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
         steps_executed = execution.get('num_steps_executed') or 0
 
