@@ -301,6 +301,65 @@ def fig_steps_by_task(rows):
     plt.close(fig)
 
 
+def fig_timing_by_task(rows):
+    """Planning time by task/mode — wall-clock from command received to
+    plan fully formed (== time until the robot starts moving in this
+    architecture; see benchmark/PLAN.md §4). Not in the original paper,
+    added 2026-09-04: worth a look given VLM_LLM pays for two model calls
+    (grounding then planning) where VLM pays for one, and kimi-k2.6 is
+    measurably slower than July's models. Rows missing a duration (older
+    debug/ captures from before this was tracked) are skipped, per task/
+    model group, rather than treated as 0 — a 0s "average" among 9 real
+    trials from a single stray blank would misrepresent that cell.
+    """
+    g = grouped(rows, lambda r: (r['model_label'], r['task_id']))
+    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+    n = len(TASK_ORDER)
+    width = 0.26
+    gap = 0.03
+    x = range(n)
+
+    def _durations(model, task):
+        return [float(r['planning_duration_s']) for r in g[(model, task)] if r.get('planning_duration_s')]
+
+    per_model = {}
+    for model in MODELS:
+        vals = [_durations(model, t) for t in TASK_ORDER]
+        per_model[model] = {
+            'means': [mean(v) if v else 0.0 for v in vals],
+            'stds': [pstdev(v) if len(v) > 1 else 0.0 for v in vals],
+        }
+    if not any(m for d in per_model.values() for m in d['means']):
+        return  # no timing data yet (e.g. plotting before any trial has one)
+    top = max(m + s for d in per_model.values() for m, s in zip(d['means'], d['stds'])) * 1.22 or 1.0
+
+    for i, model in enumerate(MODELS):
+        offset = series_offset(i, len(MODELS), width, gap)
+        xs = [xi + offset for xi in x]
+        means, stds = per_model[model]['means'], per_model[model]['stds']
+        bars = ax.bar(
+            xs, means, width=width, yerr=stds, capsize=3, color=COLOR[model],
+            label=model, zorder=3, error_kw={'ecolor': INK_MUTED, 'elinewidth': 1},
+        )
+        for b, m, s in zip(bars, means, stds):
+            ax.text(
+                b.get_x() + b.get_width() / 2, m + s + top * 0.02,
+                f'{m:.0f}s', ha='center', va='bottom', fontsize=8.5, color=INK_SECONDARY,
+            )
+    ax.set_xticks(list(x))
+    ax.set_xticklabels([TASK_LABELS[t] for t in TASK_ORDER], fontsize=9)
+    ax.set_ylim(0, top)
+    style_axes(ax, ylabel='Planning time, s (mean ± std)')
+    ax.set_title(
+        f'Time to plan by task — {" vs ".join(MODELS)}',
+        fontsize=12, color=INK, loc='left', pad=10,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    add_model_legend(fig)
+    fig.savefig(FIGURES_DIR / 'timing_by_task.png', dpi=200)
+    plt.close(fig)
+
+
 def fig_issue_rate_by_task(rows):
     """Objective, non-interpretive: fraction of trials with a non-empty
     `notes` field (an observed issue was written down), by task/model. No
@@ -413,7 +472,7 @@ def fig_failure_modes(rows):
 
 def print_tables(rows):
     g = grouped(rows, lambda r: (r['model_label'], r['task_id']))
-    print(f"{'Model':<5} {'Task':<10} {'N':>3} {'TS%':>6} {'TSR%':>6} {'AETS':>7} {'steps':>7}")
+    print(f"{'Model':<5} {'Task':<10} {'N':>3} {'TS%':>6} {'TSR%':>6} {'AETS':>7} {'steps':>7} {'plan_s':>7}")
     for m in MODELS:
         for t in TASK_ORDER:
             grp = g[(m, t)]
@@ -422,7 +481,9 @@ def print_tables(rows):
             tsr = 100 * mean(float(r['TSR']) for r in grp)
             aets = mean(float(r['AETS']) for r in grp)
             steps = mean(int(r['steps_executed']) for r in grp)
-            print(f'{m:<5} {t:<10} {n:>3} {ts:>5.1f}% {tsr:>5.1f}% {aets:>7.4f} {steps:>7.2f}')
+            durations = [float(r['planning_duration_s']) for r in grp if r.get('planning_duration_s')]
+            plan_s = f'{mean(durations):>7.1f}' if durations else f'{"n/a":>7}'
+            print(f'{m:<5} {t:<10} {n:>3} {ts:>5.1f}% {tsr:>5.1f}% {aets:>7.4f} {steps:>7.2f} {plan_s}')
     print()
     for m in MODELS:
         xs = [r for r in rows if r['model_label'] == m]
@@ -441,6 +502,7 @@ def main():
     fig_aets_by_task(rows)
     fig_easy_vs_hard(rows)
     fig_steps_by_task(rows)
+    fig_timing_by_task(rows)
     fig_issue_rate_by_task(rows)
     fig_overall_summary(rows)
     fig_failure_modes(rows)

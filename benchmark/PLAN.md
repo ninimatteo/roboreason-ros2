@@ -143,6 +143,31 @@ be picked after the fact to fit whatever the numbers turn out to be:
   `sub_tasks_completed / (sub_tasks_required × steps_executed)`.
   `steps_executed` is read automatically from `execution_result.json`.
 
+**Timing (new 2026-09-04, not in the paper).** Fully automatic, no manual
+input — both durations are measured at the actual service-call boundary,
+not estimated:
+- **`planning_duration_s`**: wall-clock time from the planner node
+  starting to handle the command to the plan being fully formed. This is
+  also "how long until the robot starts moving" in this architecture —
+  there's no streaming/partial execution, the robot can't move before the
+  whole plan comes back. Measured in `DebugRun.finish()`
+  (`debug_recorder.py`) and written to `debug/summary.csv`.
+- **`execution_duration_s`**: wall-clock time for the `/execute_plan` call
+  itself — the robot (or fake executor) actually running the plan.
+  Measured in `bridge_node.py::execute_command()` around the service call,
+  captured whether it succeeds, errors, or raises. Written to
+  `execution_result.json` and `debug/benchmark_summary.csv`.
+- **`total_duration_s`**: `planning_duration_s + execution_duration_s`,
+  computed at annotation time, not independently measured — "how long the
+  whole request took start to finish."
+
+All three land in `benchmark/results_2026-09_3arm.csv` alongside TS/TSR/AETS.
+Expect `planning_duration_s` to be the more interesting one across arms —
+`kimi-k2.6` was observed at ~1-2 min per VLM-mode `cot_sc` call during
+ROBOAI-12 testing, and `VLM_LLM` pays for two model calls (grounding then
+planning) where `VLM` pays for one — worth a look even outside the two
+planned statistical tests in §3.
+
 ---
 
 ## 5. Step-by-step

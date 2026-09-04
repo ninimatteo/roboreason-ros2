@@ -72,7 +72,7 @@ def _now() -> datetime:
 
 _CSV_FIELDS = [
     'timestamp', 'run_id', 'mode', 'command', 'reasoning_method', 'model_name',
-    'temperature', 'success', 'num_steps', 'error',
+    'temperature', 'success', 'num_steps', 'error', 'planning_duration_s',
 ]
 _csv_lock = threading.Lock()
 
@@ -159,10 +159,18 @@ class DebugRun:
             (self.dir / 'error.txt').write_text(error)
         (self.dir / 'logs.txt').write_text('\n'.join(self._logs))
 
-        num_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
-        self._append_summary_row(success, num_steps, error)
+        # Wall-clock time from DebugRun construction (right as the planner
+        # node started handling this /plan_task call) to here (the plan is
+        # fully formed, response.json about to be written) — this is what
+        # "how long until the robot starts moving" actually is in this
+        # architecture: execution can't begin until the whole plan is back,
+        # there's no streaming/partial execution.
+        planning_duration_s = round((_now() - self._started).total_seconds(), 3)
 
-    def _append_summary_row(self, success: bool, num_steps, error) -> None:
+        num_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
+        self._append_summary_row(success, num_steps, error, planning_duration_s)
+
+    def _append_summary_row(self, success: bool, num_steps, error, planning_duration_s) -> None:
         root = Path(settings.DEBUG_DIR)
         root.mkdir(parents=True, exist_ok=True)
         csv_path = root / 'summary.csv'
@@ -177,6 +185,7 @@ class DebugRun:
             'success': success,
             'num_steps': num_steps if num_steps is not None else '',
             'error': (error or '').splitlines()[0][:300] if error else '',
+            'planning_duration_s': planning_duration_s,
         }
         with _csv_lock:
             is_new = not csv_path.exists()

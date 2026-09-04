@@ -50,7 +50,9 @@ RESULTS_FIELDS = [
     'timestamp', 'run_id', 'task_id', 'difficulty', 'model_label',
     'reasoning_method', 'model_name', 'repetition', 'command',
     'num_planned_steps', 'steps_executed', 'safety_ok', 'TS',
-    'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS', 'notes',
+    'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS',
+    'planning_duration_s', 'execution_duration_s', 'total_duration_s',
+    'notes',
 ]
 
 
@@ -102,16 +104,12 @@ def _find_run(debug_dir: Path, run_id: str = None) -> Path:
     )
 
 
-def _mode_from_summary(debug_dir: Path, run_id: str) -> str:
-    """Looks up this run's real mode ('LLM', 'VLM', or 'VLM_LLM') from
-    debug/summary.csv, written by DebugRun (debug_recorder.py) directly
-    from the planner node that ran it — the ground truth. Guessing from
-    config.json's 'grounding_mode' key (the old approach) mislabels every
-    VLM_LLM run as 'VLM', since VLM_LLM's config carries a grounding_mode
-    too (it grounds with a VLM call same as plain VLM does); it would
-    silently merge two of the three benchmark arms. Falls back to that
-    same broken heuristic only if summary.csv has no row for this run
-    (e.g. a very old debug/ capture from before 'mode' was added there).
+def _summary_row_for(debug_dir: Path, run_id: str) -> dict:
+    """Looks up this run's row in debug/summary.csv, written by DebugRun
+    (debug_recorder.py) directly from the planner node that ran it — the
+    ground truth for this run's real mode and planning_duration_s. Returns
+    None if summary.csv has no row for this run_id (e.g. a very old
+    debug/ capture from before these fields existed).
     """
     summary_path = debug_dir / 'summary.csv'
     if summary_path.exists():
@@ -119,11 +117,21 @@ def _mode_from_summary(debug_dir: Path, run_id: str) -> str:
             with open(summary_path, newline='') as f:
                 for row in csv.DictReader(f):
                     if row.get('run_id') == run_id:
-                        mode = (row.get('mode') or '').strip()
-                        return mode.removesuffix('-mock') or 'LLM'
+                        return row
         except OSError:
             pass
     return None
+
+
+def _mode_from_summary_row(row: dict) -> str:
+    """'LLM', 'VLM', or 'VLM_LLM' from a debug/summary.csv row (see
+    _summary_row_for). Guessing from config.json's 'grounding_mode' key
+    instead (the old approach, kept as a fallback where this is called)
+    mislabels every VLM_LLM run as 'VLM' — VLM_LLM grounds with a VLM call
+    too — silently merging two of the three benchmark arms.
+    """
+    mode = (row.get('mode') or '').strip()
+    return mode.removesuffix('-mock') or 'LLM'
 
 
 def _load_run(run_dir: Path) -> dict:
@@ -141,11 +149,16 @@ def _load_run(run_dir: Path) -> dict:
     execution = read_json('execution_result.json', {}) or {}
     command = (run_dir / 'command.txt').read_text().strip() if (run_dir / 'command.txt').exists() else ''
 
-    model_label = _mode_from_summary(run_dir.parent, run_dir.name)
-    if model_label is None:
+    summary_row = _summary_row_for(run_dir.parent, run_dir.name)
+    if summary_row is not None:
+        model_label = _mode_from_summary_row(summary_row)
+        planning_duration_s = summary_row.get('planning_duration_s') or ''
+    else:
         # Fallback for a run_id summary.csv doesn't have a row for — can't
-        # tell VLM from VLM_LLM this way, only that it wasn't plain LLM.
+        # tell VLM from VLM_LLM this way, only that it wasn't plain LLM;
+        # no planning duration available either.
         model_label = 'VLM' if 'grounding_mode' in config else 'LLM'
+        planning_duration_s = ''
 
     num_planned_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
     steps_executed = execution.get('num_steps_executed')
@@ -159,6 +172,8 @@ def _load_run(run_dir: Path) -> dict:
         'num_planned_steps': num_planned_steps,
         'steps_executed': steps_executed,
         'execution_error': execution.get('error'),
+        'planning_duration_s': planning_duration_s,
+        'execution_duration_s': execution.get('execution_duration_s') or '',
     }
 
 
@@ -213,6 +228,8 @@ def annotate(run_id: str = None) -> None:
     print(f"Command: {run['command']!r}")
     print(f"Model: {run['model_label']} ({run['model_name']}, {run['reasoning_method']})")
     print(f"Planned steps: {run['num_planned_steps']}  Executed steps: {run['steps_executed']}")
+    print(f"Planning time: {run['planning_duration_s'] or '?'} s  "
+          f"Execution time: {run['execution_duration_s'] or '?'} s")
     if run['execution_error']:
         print(f"Execution error: {run['execution_error']}")
     print()
@@ -233,6 +250,15 @@ def annotate(run_id: str = None) -> None:
         if sub_tasks_required and steps_executed else 0.0
     )
 
+    planning_duration_s = run['planning_duration_s']
+    execution_duration_s = run['execution_duration_s']
+    total_duration_s = ''
+    if planning_duration_s != '' and execution_duration_s != '':
+        try:
+            total_duration_s = round(float(planning_duration_s) + float(execution_duration_s), 3)
+        except ValueError:
+            pass
+
     row = {
         'timestamp': datetime.now().isoformat(timespec='seconds'),
         'run_id': run['run_id'],
@@ -251,6 +277,9 @@ def annotate(run_id: str = None) -> None:
         'sub_tasks_required': sub_tasks_required,
         'TSR': round(tsr, 4),
         'AETS': round(aets, 4),
+        'planning_duration_s': planning_duration_s,
+        'execution_duration_s': execution_duration_s,
+        'total_duration_s': total_duration_s,
         'notes': notes,
     }
 

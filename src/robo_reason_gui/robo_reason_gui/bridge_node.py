@@ -85,18 +85,18 @@ BENCHMARK_RESULTS_FIELDS = [
     'timestamp', 'run_id', 'task_id', 'difficulty', 'model_label',
     'reasoning_method', 'model_name', 'repetition', 'command',
     'num_planned_steps', 'steps_executed', 'safety_ok', 'TS',
-    'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS', 'notes',
+    'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS',
+    'planning_duration_s', 'execution_duration_s', 'total_duration_s',
+    'notes',
 ]
 
 
-def _mode_from_summary(debug_dir: Path, run_id: str) -> str:
-    """Looks up this run's real mode ('LLM', 'VLM', or 'VLM_LLM') from
-    debug/summary.csv, written by DebugRun (debug_recorder.py) directly
-    from the planner node that ran it — the ground truth. Guessing from
-    config.json's 'grounding_mode' key (the old approach, kept below as a
-    fallback) mislabels every VLM_LLM run as 'VLM', since VLM_LLM's config
-    carries a grounding_mode too (it grounds with a VLM call same as plain
-    VLM does); it would silently merge two of the three benchmark arms.
+def _summary_row_for(debug_dir: Path, run_id: str) -> dict:
+    """Looks up this run's row in debug/summary.csv, written by DebugRun
+    (debug_recorder.py) directly from the planner node that ran it — the
+    ground truth for this run's real mode and planning_duration_s. Returns
+    None if summary.csv has no row for this run_id (e.g. a very old
+    debug/ capture from before these fields existed).
     Mirrors benchmark/benchmark_annotate.py's identical helper — keep both
     in sync if either changes.
     """
@@ -106,11 +106,21 @@ def _mode_from_summary(debug_dir: Path, run_id: str) -> str:
             with open(summary_path, newline='') as f:
                 for row in csv.DictReader(f):
                     if row.get('run_id') == run_id:
-                        mode = (row.get('mode') or '').strip()
-                        return mode.removesuffix('-mock') or 'LLM'
+                        return row
         except OSError:
             pass
     return None
+
+
+def _mode_from_summary_row(row: dict) -> str:
+    """'LLM', 'VLM', or 'VLM_LLM' from a debug/summary.csv row (see
+    _summary_row_for). Guessing from config.json's 'grounding_mode' key
+    instead (the old approach, kept as a fallback at each call site)
+    mislabels every VLM_LLM run as 'VLM' — VLM_LLM grounds with a VLM call
+    too — silently merging two of the three benchmark arms.
+    """
+    mode = (row.get('mode') or '').strip()
+    return mode.removesuffix('-mock') or 'LLM'
 
 
 class GuiBridgeNode(Node):
@@ -592,6 +602,12 @@ class GuiBridgeNode(Node):
         if not self._command_lock.acquire(blocking=False):
             result['error'] = 'a command is already running'
             return result
+        # Wall-clock time for the actual /execute_plan call — started only
+        # once past the guards above (duplicate executor, lock already
+        # held), which aren't part of "how long did the robot take", and
+        # stopped whether the call succeeds, errors, or raises, so a failed
+        # execution's duration is captured too, not just a successful one.
+        exec_t0 = time.monotonic()
         try:
             exec_req = ExecutePlan.Request()
             exec_req.plan_json = plan_json
@@ -606,6 +622,7 @@ class GuiBridgeNode(Node):
         except Exception as exc:
             result['error'] = f'{type(exc).__name__}: {exc}'
         finally:
+            result['execution_duration_s'] = round(time.monotonic() - exec_t0, 3)
             self._command_lock.release()
         # is_benchmark is read from this execute call (not the earlier plan
         # call) since it's the authoritative flag for whether this outcome
@@ -646,12 +663,13 @@ class GuiBridgeNode(Node):
                 'num_steps_executed': num_steps_executed,
                 'error': result.get('error'),
                 'is_benchmark': is_benchmark,
+                'execution_duration_s': result.get('execution_duration_s'),
             }
             run_dir = Path(settings.DEBUG_DIR) / run_id
             (run_dir / 'execution_result.json').write_text(json.dumps(outcome, indent=2))
 
             csv_path = Path(settings.DEBUG_DIR) / 'benchmark_summary.csv'
-            fields = ['run_id', 'executed', 'num_steps_executed', 'error', 'is_benchmark']
+            fields = ['run_id', 'executed', 'num_steps_executed', 'error', 'is_benchmark', 'execution_duration_s']
             is_new = not csv_path.exists()
             with open(csv_path, 'a', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=fields)
@@ -694,8 +712,8 @@ class GuiBridgeNode(Node):
     def record_benchmark_annotation(self, run_id: str, task_id: str, safety_ok: bool,
                                      sub_tasks_completed: int, notes: str = '') -> dict:
         """Compute TS/TSR/AETS (Favali et al., RO-MAN 2025, Eq. 14-16) for
-        `run_id` and append one row to benchmark/results.csv — this is what
-        the GUI's inline "Benchmark trial" annotation form calls; the
+        `run_id` and append one row to _benchmark_results_csv() — this is
+        what the GUI's inline "Benchmark trial" annotation form calls; the
         standalone benchmark/benchmark_annotate.py script does the same
         thing from a terminal. Keep both in sync if either changes.
         """
@@ -725,12 +743,17 @@ class GuiBridgeNode(Node):
         command_path = run_dir / 'command.txt'
         command = command_path.read_text().strip() if command_path.exists() else ''
 
-        model_label = _mode_from_summary(run_dir.parent, run_id)
-        if model_label is None:
+        summary_row = _summary_row_for(run_dir.parent, run_id)
+        if summary_row is not None:
+            model_label = _mode_from_summary_row(summary_row)
+            planning_duration_s = summary_row.get('planning_duration_s') or ''
+        else:
             # Fallback for a run_id summary.csv doesn't have a row for —
             # can't tell VLM from VLM_LLM this way, only that it wasn't
-            # plain LLM.
+            # plain LLM; no planning duration available either.
             model_label = 'VLM' if 'grounding_mode' in config else 'LLM'
+            planning_duration_s = ''
+        execution_duration_s = execution.get('execution_duration_s') or ''
         num_planned_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
         steps_executed = execution.get('num_steps_executed') or 0
 
@@ -740,6 +763,13 @@ class GuiBridgeNode(Node):
             sub_tasks_completed / (sub_tasks_required * steps_executed)
             if sub_tasks_required and steps_executed else 0.0
         )
+
+        total_duration_s = ''
+        if planning_duration_s != '' and execution_duration_s != '':
+            try:
+                total_duration_s = round(float(planning_duration_s) + float(execution_duration_s), 3)
+            except ValueError:
+                pass
 
         results_csv = self._benchmark_results_csv()
         repetition = self._next_benchmark_repetition(results_csv, task_id, model_label)
@@ -761,6 +791,9 @@ class GuiBridgeNode(Node):
             'sub_tasks_required': sub_tasks_required,
             'TSR': round(tsr, 4),
             'AETS': round(aets, 4),
+            'planning_duration_s': planning_duration_s,
+            'execution_duration_s': execution_duration_s,
+            'total_duration_s': total_duration_s,
             'notes': notes,
         }
 
