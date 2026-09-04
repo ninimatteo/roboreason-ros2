@@ -1133,19 +1133,82 @@ within a single working day (`kimi-k3` appeared hours after being
 removed as unavailable). Always verify against the host in
 `base_client.py`, never against the studio docs.
 
+## 6. ROBOAI-19's bounds schema exposed two silent geometry assumptions, both found on hardware
+
+Landing the `targets.*.bounds` schema (position+size → explicit
+axis-aligned `[min, max]` box) surfaced two bugs neither the migration
+nor its own investigation had predicted, both only visible once real
+plans ran on the real robot:
+
+- **Four of the six reasoning-method prompts never had a target-geometry
+  instruction at all.** Only `fhp_ffhp_prompts.py` and `react_prompts.py`
+  carried the "how to compute a release position" block; `cot_sc`, `tot`,
+  `always_act`, and `self_refine` never did. This was invisible under the
+  old schema, because a target's `position` was a ready-made coordinate
+  the model could just copy — no instruction needed. Under `bounds`
+  there's nothing to copy: the model must compute a midpoint itself, and
+  without being told to, it doesn't reliably land inside the zone (a
+  `cot_sc` + `nebius/kimi-k2.6` trial released 4 cm outside the tray's
+  edge — inside the 4 cm z-lookup tolerance, so height still matched,
+  but x/y didn't). Fixed by adding the same "release into a target zone:
+  midpoint of `bounds`, use it exactly" instruction to all four prompts'
+  plan/action-generating templates, not the evaluation/scoring/sorting
+  ones (they never emit positions).
+- **`distribute_zone_releases` (`robo_reason_manager/schemas.py`) spaces
+  out colliding releases with a grid that grows in one direction,
+  unbounded, by design — its own docstring said "no zone size is known."**
+  ROBOAI-19 makes that false: every `targets.*` zone now declares its own
+  footprint. With the prompt fix above, the LLM reliably asks for the
+  exact same zone-centre point for every object placed in that zone (by
+  design — see the decision below), so `distribute_zone_releases` is what
+  actually has to fan them out, and with 4 cubes in a 0.22 × 0.31 m tray
+  its old unbounded grid put the 4th cube outside the tray. Fixed:
+  `distribute_zone_releases` now takes an optional `targets` argument and,
+  when a release cluster's anchor matches a known zone, lays out
+  occupants on a grid centred on the anchor and clamped to that zone's
+  `bounds` (falling back to the old unbounded grid when no zone matches
+  or the zone is too small for another in-bounds slot).
+- **Deliberately not fixed the other way** (prompting the LLM to compute N
+  distinct in-bounds points itself, one per object): considered, rejected.
+  It's exactly the "LLM does real-world geometry arithmetic" pattern this
+  project has already been burned by more than once (see the top of this
+  file); it also breaks `_fix_release_height`'s exact-centre-echo check,
+  which is how the deterministic code currently tells "the model meant
+  this zone" from "this point drifted here by accident." Spacing stays
+  Python-side, deterministic, per the project's standing convention.
+
+Also fixed in passing: the new prompt text itself had unescaped `{` `}`
+in a literal `bounds: {"x": [...], ...}` example, inside a template later
+run through `str.format()` — broke `fhp`/`react` with `KeyError: '"x"'`
+until escaped as `{{`/`}}`. Caught by the existing `robo_reason_reasoning`
+test suite, not by the migration's own review.
+
+All three fixes verified: numeric equivalence checks against
+`scene_mock.json` for `_fix_release_height`/`_mock_plan`, the full
+existing test suite (45 `robo_reason_reasoning` + 12 `robo_reason_manager`,
+including 4 new bounds-aware `distribute_zone_releases` cases), and a
+live hardware trial ("Put all the cubes on the brown tray.", 4 cubes) —
+all four landed inside the tray.
+
 ---
 
 ## Known Open Issues (updated 2026-09-04)
 
-- **`feature/ROBOAI-19-bbox-scene-schema` is in a broken intermediate
-  state**: `scene_mock.json` is converted to `bounds`, none of its
-  consumers are. Uncommitted. Do not run trials from it.
-- **`targets.table` size looks wrong on `main`**: declared
-  `size [0.6, 1.2]` against a table that is 1.2 (x) × 0.8 (y) — x and y
-  appear swapped, and the zone claims to reach y = -1.20 against a
-  workspace limit of y = -0.80. Pre-existing, no Jira issue filed yet.
-- **3-arm benchmark collection is at 1 trial** and paused until
-  ROBOAI-19 lands, since the scene schema change makes earlier trials
-  non-comparable.
+- **`targets.table`'s y-range still slightly exceeds the workspace
+  limit**: `bounds.y = [-0.85, -0.20]` against `workspace.limits.y =
+  [-0.80, 0.00]` — a 5 cm overshoot on the near edge. Much smaller than
+  the pre-ROBOAI-19 value (`size`-derived range reached y = -1.20, a
+  40 cm overshoot), narrowed by the user's own hardware calibration
+  alongside the bounds migration, but not eliminated. No Jira issue
+  filed yet.
+- **3-arm benchmark collection is at 1 trial**, paused since the
+  ROBOAI-19 schema change makes earlier trials non-comparable. ROBOAI-19
+  is now verified on hardware and in Jira review, but not yet merged to
+  `main` — collection stays paused until it lands there.
+- **`_fix_release_height`, `_mock_plan`, and `_build_generated_scene`
+  (`llm_planner_node.py`, `vlm_llm_planner_node.py`) have zero automated
+  test coverage**, despite being the most-corrected geometry code in the
+  project. `distribute_zone_releases` (`robo_reason_manager`) does now
+  have coverage (`test_schemas.py`). Worth a Jira issue of its own.
 - The GUI camera-frame proxy readiness bug from 2026-09-03 §4 is still
   not investigated and still has no Jira issue.
