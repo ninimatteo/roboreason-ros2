@@ -13,7 +13,7 @@ def test_groq():
 
 def test_nebius():
     return {
-        "model_name": "nebius/qwen3-2.5-70b",
+        "model_name": "nebius/nvidia-nemotron-120b",
         'temperature': 0.7,
         'max_tokens': 2048,
         'top_p': 0.9,

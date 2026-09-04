@@ -131,7 +131,14 @@ class CoTSC(ReasoningMethod):
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 
+        # 'idle' (not 'move_home') so agent_runner.run_plan_loop's filter
+        # (action_name in {'idle', 'end_of_simulation'}) correctly drops this
+        # bare termination sentinel instead of appending it as a real plan
+        # step with no target_position/release_position — was reaching
+        # _deproject_plan in VLM mode as a step 0-deprojected to (0,0),
+        # raising "No valid depth at u=0, v=0"; harmless-looking but silently
+        # present in LLM mode too (a no-op trailing move_home).
         return self._output(
-            action=UR5Action(action_name='move_home', score=1.0),
+            action=UR5Action(action_name='idle', score=1.0),
             end_of_simulation=True,
         )

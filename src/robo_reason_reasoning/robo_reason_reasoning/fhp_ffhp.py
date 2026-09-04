@@ -100,7 +100,8 @@ class FHP(ReasoningMethod):
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 
+        # 'idle', see cot_sc.py's identical fix for why.
         return self._output(
-            action=UR5Action(action_name='move_home'),
+            action=UR5Action(action_name='idle'),
             end_of_simulation=True,
         )

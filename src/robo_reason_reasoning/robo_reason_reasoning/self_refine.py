@@ -158,7 +158,8 @@ class SelfRefine(ReasoningMethod):
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 
+        # 'idle', see cot_sc.py's identical fix for why.
         return self._output(
-            action=UR5Action(action_name='move_home', score=0.0),
+            action=UR5Action(action_name='idle', score=0.0),
             end_of_simulation=True,
         )

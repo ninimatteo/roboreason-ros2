@@ -372,6 +372,26 @@ class VLMPlannerNode(Node):
         amount when placing the same held object.
         """
         PIXEL_FIELDS = ('target_position', 'release_position')
+        # Per action, only the field(s) it actually uses (per the skills-
+        # library prompt: approach/pick take target_position, release takes
+        # release_position, move_home/wait take neither). The model still
+        # fills every *unused* field with a placeholder (observed:
+        # [0.0, 0.0, 0.0, 0.0]) to satisfy the JSON schema rather than
+        # omitting it — e.g. an 'approach' step's release_position, or
+        # move_home's/wait's target_position and release_position alike.
+        # That placeholder used to be deprojected as a literal pixel (0, 0)
+        # — the image corner, where a depth camera never has valid data —
+        # which aborted the whole batched Deproject call (any single
+        # failure aborts the batch, see below) even though every step's
+        # actually-relevant coordinates were fine. Restrict each step to its
+        # relevant field(s) instead of blindly including both.
+        ACTION_PIXEL_FIELDS = {
+            'approach': ('target_position',),
+            'pick': ('target_position',),
+            'release': ('release_position',),
+            'move_home': (),
+            'wait': (),
+        }
 
         req_u, req_v = [], []
 
@@ -385,7 +405,8 @@ class VLMPlannerNode(Node):
         # (step_idx, x_min, x_max, cy) — handled separately, best-effort.
         width_requests = []
         for i, step in enumerate(pixel_steps):
-            for field in PIXEL_FIELDS:
+            relevant_fields = ACTION_PIXEL_FIELDS.get(step.get('action_name'), PIXEL_FIELDS)
+            for field in relevant_fields:
                 val = step.get(field)
                 if not isinstance(val, (list, tuple)):
                     continue

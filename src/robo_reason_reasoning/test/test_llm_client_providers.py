@@ -61,7 +61,7 @@ def make_client(monkeypatch):
 @pytest.mark.parametrize("provider,model_name", [
     ("groq", "openai-oss-120b"),
     ("openai", "gpt-4o-mini"),
-    ("nebius", "qwen3-2.5-70b"),
+    ("nebius", "nvidia-nemotron-120b"),
 ])
 def test_provider_returns_message_content(make_client, provider, model_name):
     client, completions = make_client(provider, model_name, response_content="the answer")
@@ -77,7 +77,7 @@ def test_provider_returns_message_content(make_client, provider, model_name):
 @pytest.mark.parametrize("provider,model_name", [
     ("groq", "openai-oss-120b"),
     ("openai", "gpt-4o-mini"),
-    ("nebius", "qwen3-2.5-70b"),
+    ("nebius", "nvidia-nemotron-120b"),
 ])
 def test_force_json_sets_response_format(make_client, provider, model_name):
     client, completions = make_client(provider, model_name)

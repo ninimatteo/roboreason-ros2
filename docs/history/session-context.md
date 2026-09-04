@@ -905,3 +905,146 @@ alongside as `src/robo_reason_task_interface/config/scene_mock old.json`
   push/nudge skill, multi-call chat model, and skill-ified geometry fixes
   as separate, not-yet-started items — see that file for the full list
   rather than duplicating it here.
+
+---
+
+### Session 6 — September Restart Gate (ROBOAI-12), Nebius Endpoint Mime-Type Bug, Model Catalog Refresh (in progress)
+
+First session back after the six-week pause (last hardware run 2026-07-20).
+Working the restart gate (ROBOAI-12): re-verify Session 5's geometry fixes
+and the camera/workspace calibration on real hardware before trusting
+either for new work.
+
+#### 1. Hardware re-verification: driver, calibration, LLM-mode geometry fix
+
+UR driver connected on the 3rd auto-retry attempt (consistent with the
+known flakiness pattern, not a new issue) once the physical network path
+was confirmed reachable (a VPN issue on the operator's side, not a robot
+problem). Teach pendant required manually starting External Control on the
+physical pendant before the reverse interface reported connected — the
+GUI's health probe reflects this correctly (`level: amber` with probes
+green until the pendant connects, `level: green` after).
+
+ChArUco calibration confirmed live: `calibrated: true, seen: true` against
+today's physical setup, board detected without re-running the recalibrate
+flow.
+
+`sort_hard` ("Sort all the cubes: put the red cube onto the brown tray,
+and arrange the rest in a straight line on the table.") re-run end to end
+in `mode=LLM` on the real arm (`cot_sc`, `nebius/nvidia-nemotron-120b`).
+Operator confirmed the physical outcome matched the prompt. The generated
+plan's `object_height` for every release was `0.019999999999999997`
+(`grasp_z − table_surface_z = -0.01 − (-0.03)`), exactly matching
+`_fix_object_height`'s documented formula — no regression in the Session 5
+LLM-mode geometry fixes. `arith_hard` and the VLM-mode re-run were not
+reached this session (see Known Open Issues below).
+
+#### 2. New bug found: Nebius rejects image requests on a MIME-type mismatch
+
+Re-running `sort_hard` in `mode=VLM` (Nebius) failed with
+`openai.BadRequestError: 400 - {'detail': [{'type': 'string_type', 'loc':
+['body', 'messages', 0, 'content', 'str'], ...}]}` — a validation error
+that, taken at face value, says the message content must be a plain
+string. Root-caused by direct experimentation against the live endpoint
+(same image bytes, only the declared MIME type varied):
+
+- `vlm_planner_node.py::_save_frame` writes the captured camera frame to
+  disk as **PNG** (`cv2.imwrite` with a `.png` path).
+- `vlm_client.py`'s `_build_image_url_content` (used by `_call_openai`,
+  hence `_call_nebius`) and `_call_groq` both hardcoded the data URI's
+  MIME type as `image/jpeg` regardless of the actual bytes.
+- Nebius's endpoint now validates the declared MIME against the payload
+  and rejects a mismatch with the confusing 400 above — real PNG bytes
+  labeled `image/jpeg` → 400; the same bytes labeled `image/png` → 200;
+  a genuinely re-encoded JPEG labeled `image/jpeg` → 200.
+
+This bug is **not new** — the mismatch has existed since at least the July
+benchmark, which ran `mode=VLM` on Nebius successfully (66% success rate).
+Nebius's backend evidently tolerated the mismatch then and validates
+strictly now; nothing in this repo's code changed between July and today.
+Confirmed model-independent: reproduced identically against both
+`qwen3-2.5-70b` (July's model, since removed from the catalog — see §3)
+and `kimi-k3` (invalid pick, see §3) before landing on the real cause.
+
+**Fix** (`vlm_client.py`): added `_sniff_mime_type` (checks magic bytes:
+PNG/JPEG/GIF/WEBP, falls back to JPEG) and changed `_encode_image` to
+return `(base64_str, mime_type)` instead of assuming JPEG; both call
+sites now label the data URI with the sniffed type. Verified end to end
+with a live `VLMClient` call against `nebius/kimi-k2.6` using the real
+captured frame — correct response (`"White"`, the table zone's actual
+color). Not yet re-verified via a full `mode=VLM` plan + execution on the
+robot (see Known Open Issues).
+
+#### 3. Nebius/Groq model catalog drift
+
+Both provider catalogs changed during the six-week pause:
+
+- **Nebius dropped `qwen3-2.5-70b`** (`Qwen/Qwen2.5-VL-72B-Instruct`)
+  entirely — this was the model used for the entire July VLM-mode
+  benchmark arm. Two previously-registered text-only entries
+  (`nvidia-cosmos3-33b`, `kimi-k2.6`) turned out to now be vision-capable
+  and were reclassified; one new vision model (`minicpm-v-4.5`) added.
+  ~14 new text-only models added to `ModelRegistry.NEBIUS_MODELS`.
+- **Groq dropped `qwen3-32b`** (no vision, no replacement needed — use
+  `openai-oss-120b`) and added a second vision model, `qwen3.8-27b`.
+- **Process note, corrected mid-investigation**: the catalog was initially
+  checked against `api.studio.nebius.com`, which is a *different host*
+  from `api.tokenfactory.nebius.com` — the one `base_client.py`'s nebius
+  branch actually calls. `moonshotai/Kimi-K3` exists on the Studio host
+  only; picking it as the new VLM default 404'd against the real
+  endpoint. Caught by testing the fix end to end (not just via manual
+  `curl`) before declaring it done — the manual `curl` reproduction had
+  used the wrong host throughout. Corrected to a verified-available model.
+- **New Nebius VLM-mode default: `nvidia-cosmos3-33b`** (operator's
+  choice) — NVIDIA's physical-AI-reasoning line, 64B (32B reasoner + 32B
+  generator on Qwen3-VL 32B). Explicitly **not** a verified equivalent to
+  `qwen3-2.5-70b` (different family, no shared trial data on this task,
+  and 64B ≠ 72B either) — any new `mode=VLM` + Nebius trial from now on is
+  a fresh baseline, not comparable to the July VLM arm's numbers. The
+  other two real vision candidates, for reference: `kimi-k2.6` (1T MoE,
+  32B active/token) and `minicpm-v-4.5` (8B, smallest of the three).
+
+Updated: `base_client.py` (`ModelRegistry`), `robo_reason_gui/options.py`
+(`VLM_ONLY_MODELS`), 3 dry-run launch files' defaults/examples, both
+`example_of_usage_*.py` scripts, `test_llm_client_providers.py` (swapped
+its dead-model parametrize case), and `docs/guide/operator-guide.md`'s
+"Available Models" section. 45/45 tests in
+`robo_reason_reasoning/test/` pass.
+
+#### 4. Observed, not investigated: GUI camera-frame proxy stuck "not ready"
+
+`/api/camera/frame` returns 503 "camera frame unavailable" and
+`bridge_node.py::camera_available()` (which checks `/camera/get_image`
+service readiness) reports `ready: false` persistently after a camera
+service restart, even though the raw Orbbec driver publishes
+`/camera/color/image_raw` at a steady ~30 Hz (confirmed via
+`ros2 topic hz`) and `/camera/get_image` itself is live in the ROS graph.
+Did not block anything this session (worked around by reading frames
+directly off disk from `debug/` captures) but is worth a look — possibly
+a stale service client reference in `GuiBridgeNode` that isn't re-wired
+after `camera_services_node` restarts alongside a Stack restart.
+
+---
+
+## Known Open Issues (updated 2026-09-03)
+
+- **Working tree is uncommitted**, still on `main`, no branch created
+  despite `vlm_client.py` and `base_client.py` being runtime code (should
+  have followed the "branch when it can break something" convention) —
+  9 files: `docs/guide/operator-guide.md`, `dry_run.launch.py`,
+  `dry_run_services.launch.py`, `vlm_dry_run.launch.py`, `options.py`,
+  both `example_of_usage_*.py` scripts, `base_client.py`, `vlm_client.py`,
+  `test_llm_client_providers.py`.
+- **ROBOAI-12 restart gate is not done.** `sort_hard` in `mode=LLM` is
+  verified clean (§1 above). Still needed before the gate can close:
+  `arith_hard` in `mode=LLM`, and both `sort_hard`/`arith_hard` in
+  `mode=VLM` now that the MIME-type fix (§2) is in place — the fix itself
+  is only verified via a direct `VLMClient` call, not a full plan +
+  real-robot execution yet.
+- The GUI camera-frame proxy readiness bug (§4) — not investigated, no
+  Jira issue filed yet.
+- Everything carried over from the 2026-07-22 "Known Open Issues" section
+  above is otherwise unchanged (not re-verified this session beyond what
+  §1 covers): the nudge-outside release-position problem, the
+  `VLM_REASONING_EFFORT` A/B test, the homography rewrite, and the
+  `docs/TODO.md` backlog.

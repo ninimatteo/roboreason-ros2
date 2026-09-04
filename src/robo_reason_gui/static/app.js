@@ -104,12 +104,21 @@ function toast(message, kind = 'info', timeout = 4000) {
 }
 
 // ---- helpers ----
+// `values` items are either a plain string (value === label, e.g. modes,
+// reasoning methods, provider names) or a {value, label} pair (model
+// dropdowns, since /api/options started tagging models with a measured
+// speed tier — see options.py's MODEL_SPEED_TIER/_labeled_models).
 function fillSelect(sel, values) {
   sel.innerHTML = '';
   values.forEach((v) => {
     const opt = document.createElement('option');
-    opt.value = v;
-    opt.textContent = v;
+    if (v && typeof v === 'object') {
+      opt.value = v.value;
+      opt.textContent = v.label;
+    } else {
+      opt.value = v;
+      opt.textContent = v;
+    }
     sel.appendChild(opt);
   });
 }

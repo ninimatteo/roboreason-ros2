@@ -58,7 +58,7 @@ def _dispense_all(agent, n_actions):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("reasoning_mode", ["fhp", "ffhp"])
-def test_fhp_ffhp_dispenses_full_plan_then_move_home(scripted_client, base_kwargs, reasoning_mode):
+def test_fhp_ffhp_dispenses_full_plan_then_idle(scripted_client, base_kwargs, reasoning_mode):
     scripted_client([
         "no relevant predicates",       # predict_predicates() raw response
         plan_response(EXPECTED_PLAN),   # plan_task() response
@@ -68,8 +68,13 @@ def test_fhp_ffhp_dispenses_full_plan_then_move_home(scripted_client, base_kwarg
     actions = _dispense_all(agent, len(EXPECTED_PLAN))
     assert [a.action_name for a in actions] == [p["action_name"] for p in EXPECTED_PLAN]
 
+    # 'idle', not 'move_home' — a bare move_home here used to slip past
+    # agent_runner.run_plan_loop's {'idle', 'end_of_simulation'} filter and
+    # get appended as a real, position-less final step (harmless in LLM
+    # mode, fatal in VLM mode's _deproject_plan). See cot_sc.py's identical
+    # fix.
     final = agent(user_request=SIMPLE_USER_REQUEST, environment_map=SIMPLE_SCENE_JSON)
-    assert final.action.action_name == "move_home"
+    assert final.action.action_name == "idle"
     assert final.end_of_simulation is True
 
 

@@ -133,7 +133,7 @@ export GROQ_API_KEY=gsk_...
 ros2 launch robo_reason_bringup dry_run_services.launch.py \
   use_mock_llm:=false \
   reasoning_method:=fhp \
-  model_name:=groq/qwen3-32b
+  model_name:=groq/openai-oss-120b
 ```
 
 In a second terminal:
@@ -262,7 +262,7 @@ Wait until `Robot ready to receive control commands` appears.
 ros2 launch robo_reason_bringup real_robot.launch.py \
   mode:=LLM \
   reasoning_method:=fhp \
-  model_name:=groq/qwen3-32b \
+  model_name:=groq/openai-oss-120b \
   temperature:=0.1
 ```
 
@@ -322,11 +322,49 @@ Select with `reasoning_method:=<value>`.
 
 ## Available Models
 
-> The old Groq lineup (`llama4-scout-17b`, `llama4-maverick-17b`, `llama3.3-70b`,
-> `llama3.1-8b`, `moonshotai-kimik2-32b`) has been **removed entirely** from
-> `ModelRegistry.GROQ_MODELS`. All launch-file defaults have been updated to
-> current model keys (`groq/qwen3.6-27b`/`groq/qwen3-32b`); if you have your
-> own scripts or `.env` files still referencing an old key, update them too.
+> **2026-09-03 catalog re-check.** Both provider catalogs drifted during the
+> six-week hardware pause. Groq dropped `qwen3-32b` (no replacement — it had
+> no vision anyway, use `openai-oss-120b`) and added a second vision model,
+> `qwen3.8-27b`. Nebius dropped `qwen3-2.5-70b` (`Qwen/Qwen2.5-VL-72B-Instruct`)
+> **entirely** — this was the benchmark's VLM-mode model. Two of the
+> surviving Nebius entries (`nvidia-cosmos3-33b`, `kimi-k2.6`) turned out to
+> be vision-capable too and moved into that section below; one brand-new
+> vision model (`minicpm-v-4.5`) was added. All launch-file defaults and
+> this table have been updated to current model keys; if you have your own
+> scripts or `.env` files still referencing an old key, update them too.
+>
+> **Verify against `https://api.tokenfactory.nebius.com/v1/models`**, not
+> `api.studio.nebius.com` — they are different hosts with different
+> catalogs, and only the former is what `base_client.py`'s nebius branch
+> actually calls.
+>
+> **`kimi-k2.6` is the default VLM-mode model for Nebius** (first entry in
+> `options.py`'s `VISION_MODELS['nebius']`) — `nvidia-cosmos3-33b` held that
+> slot until 2026-09-04, when it returned a live `409 - model is stopped`
+> on real hardware (a Nebius-side deployment state, not our bug; see the
+> 2026-09-04 note below) while `kimi-k2.6` ran `sort_hard` and `arith_hard`
+> clean back to back. `minicpm-v-4.5` is the third option. **None is a
+> verified equivalent** to the July benchmark's `qwen3-2.5-70b` (gone from
+> the catalog entirely) — different families, no shared trial data on this
+> task, and none matches its 72B scale either (`kimi-k2.6`: 1T-parameter
+> MoE, 32B active/token; `nvidia-cosmos3-33b`: 64B; `minicpm-v-4.5`: 8B,
+> smallest). Any new `mode=VLM` + Nebius trial is a fresh baseline, not
+> comparable to the July VLM arm's numbers.
+>
+> **Vision models now also work in `mode=LLM`** (text-only, no image) —
+> `options.py` used to hide them there; changed 2026-09-04 so they can be
+> compared 1:1 against text-only models on the same task.
+>
+> **2026-09-04 — every entry below live-tested** with an actual chat
+> completion, not just a catalog listing (which has lagged real
+> availability in both directions: `moonshotai/Kimi-K3` 404'd that morning,
+> reappeared and worked a few hours later the same day — this catalog
+> changes within a session, not just week to week). Four otherwise-valid
+> ids came back `409 - model is stopped` (a Nebius-side deployment/warm-up
+> state): `nemotron-3-nano-omni`, `llama-3.1-nemotron-ultra-253b`,
+> `qwen3-next-80b-thinking`, and `nvidia-cosmos3-33b` — kept in the table
+> below (the ids are real) but flagged; re-check live before relying on any
+> of them. Added `glm-5.3-flash`, new since the 09-03 check.
 
 ### Groq (fast, free tier available)
 
@@ -334,8 +372,8 @@ Select with `reasoning_method:=<value>`.
 |---|---|---|
 | `groq/openai-oss-20b` | `openai/gpt-oss-20b` | OpenAI OSS model |
 | `groq/openai-oss-120b` | `openai/gpt-oss-120b` | Largest OSS model on Groq |
-| `groq/qwen3-32b` | `qwen/qwen3-32b` | Strong reasoning, no vision |
 | `groq/qwen3.6-27b` | `qwen/qwen3.6-27b` | Vision enabled — use for VLM mode |
+| `groq/qwen3.8-27b` | `qwen/qwen3.8-27b` | Vision enabled, newer |
 
 ### Nebius (OpenAI-compatible API)
 
@@ -343,17 +381,54 @@ Set `NEBIUS_API_KEY` and use `nebius/` prefix.
 
 | `model_name` | API model ID | Notes |
 |---|---|---|
-| `nebius/qwen3-2.5-70b` | `Qwen/Qwen2.5-VL-72B-Instruct` | Vision enabled — use for VLM mode |
 | `nebius/google-gemma-27b` | `google/gemma-3-27b-it` | Good reasoning |
 | `nebius/nvidia-nemotron-30b` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Efficient |
 | `nebius/nvidia-nemotron-120b` | `nvidia/nemotron-3-super-120b-a12b` | Largest — planner default (`config.py`) |
-| `nebius/nvidia-cosmos3-33b` | `nvidia/Cosmos3-Super-Reasoner` | New reasoning model |
-| `nebius/kimi-k2.6` | `moonshotai/Kimi-K2.6` | High quality (renamed from `kimi-k2`) |
+| `nebius/openai-oss-120b` | `openai/gpt-oss-120b` | Now also hosted on Nebius |
+| `nebius/llama-3.3-70b` | `meta-llama/Llama-3.3-70B-Instruct` | |
+| `nebius/deepseek-v4-pro` | `deepseek-ai/DeepSeek-V4-Pro` | |
+| `nebius/deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash-0731` | |
+| `nebius/glm-5.1` | `zai-org/GLM-5.1` | |
+| `nebius/glm-5.2` | `zai-org/GLM-5.2` | |
+| `nebius/glm-5.3-flash` | `zai-org/GLM-5.3-Flash` | |
+| `nebius/hermes-4-405b` | `NousResearch/Hermes-4-405B` | |
+| `nebius/minimax-m3` | `MiniMaxAI/MiniMax-M3` | |
+| `nebius/nemotron-3-ultra-550b` | `nvidia/Nemotron-3-Ultra-550b-a55b` | |
+| `nebius/nemotron-3.5-lightning` | `nvidia/Nemotron-3_5-Lightning` | |
+| `nebius/nemotron-3-nano-omni` | `nvidia/Nemotron-3-Nano-Omni` | ⚠️ 409 "model is stopped" as of 2026-09-04 |
+| `nebius/llama-3.1-nemotron-ultra-253b` | `nvidia/Llama-3_1-Nemotron-Ultra-253B-v1` | ⚠️ 409 "model is stopped" as of 2026-09-04 |
+| `nebius/qwen3-235b` | `Qwen/Qwen3-235B-A22B-Instruct-2507` | |
+| `nebius/qwen3-30b` | `Qwen/Qwen3-30B-A3B-Instruct-2507` | |
+| `nebius/qwen3.5-397b` | `Qwen/Qwen3.5-397B-A17B` | |
+| `nebius/qwen3-next-80b-thinking` | `Qwen/Qwen3-Next-80B-A3B-Thinking` | ⚠️ 409 "model is stopped" as of 2026-09-04 |
+| `nebius/kimi-k2.7-code` | `moonshotai/Kimi-K2.7-Code` | |
 | `nebius/qwen3-embedding-8b` | `Qwen/Qwen3-Embedding-8B` | Embeddings, not for planning |
+| `nebius/kimi-k2.6` | `moonshotai/Kimi-K2.6` | Vision enabled, **default for VLM mode** — 1T MoE, 32B active/token |
+| `nebius/nvidia-cosmos3-33b` | `nvidia/Cosmos3-Super-Reasoner` | Vision enabled — 64B, physical-AI-reasoning. ⚠️ 409 "model is stopped" as of 2026-09-04 |
+| `nebius/minicpm-v-4.5` | `openbmb/MiniCPM-V-4_5` | Vision enabled — 8B, smallest |
 
-> For VLM mode, only vision-enabled models work: `groq/qwen3.6-27b` and
-> `nebius/qwen3-2.5-70b` (the GUI's model dropdown restricts VLM mode to these
-> automatically — see `robo_reason_gui/options.py`'s `VLM_ONLY_MODELS`).
+> For VLM mode, only vision-enabled models work: `groq/qwen3.6-27b`,
+> `groq/qwen3.8-27b`, `nebius/kimi-k2.6`, `nebius/nvidia-cosmos3-33b`,
+> `nebius/minicpm-v-4.5` (the GUI's model dropdown restricts VLM mode to
+> these automatically — see `robo_reason_gui/options.py`'s
+> `VISION_MODELS`). These same models also work in LLM mode (text-only,
+> see the note above) — everything else in the tables above is LLM-only.
+>
+> **Speed tiers.** The GUI's model dropdown now tags each entry `(fast)`,
+> `(medium)`, or `(slow)` — one live single-word chat-completion call per
+> model, 2026-09-04, not averaged over repeats (noisy, but the tiers are
+> wide enough to hold up as a first cut): fast <1s, medium 1-5s, slow >5s.
+> All 4 Groq models are fast (dedicated LPU hardware). On Nebius, fast:
+> `minicpm-v-4.5`, `qwen3-30b`, `qwen3-235b`, `openai-oss-120b`,
+> `hermes-4-405b`, `nvidia-nemotron-30b`, `deepseek-v4-pro`, `minimax-m3`,
+> `kimi-k2.7-code`, `nvidia-nemotron-120b`, `nemotron-3-ultra-550b`,
+> `nemotron-3.5-lightning`, `kimi-k2.6`; medium: `google-gemma-27b`,
+> `glm-5.2`, `llama-3.3-70b`, `qwen3.5-397b`; slow: `glm-5.1`
+> (7.1s), `deepseek-v4-flash` (10.5s), `glm-5.3-flash` (49.1s — an outlier
+> worth re-checking, possibly a cold-start rather than steady-state cost).
+> See `options.py`'s `MODEL_SPEED_TIER`. Untagged in the dropdown: the 4
+> models that were returning 409 "stopped" that day, and the
+> embeddings-only model (excluded from both dropdowns entirely).
 
 ---
 
@@ -467,7 +542,7 @@ Add a small positive `z_offset_m` (e.g. `0.01`) to lift deprojected points sligh
 All defaults are defined in `robo_reason_bringup/robo_reason_bringup/config.py` and can be overridden with `ROBOREASON_` prefixed environment variables:
 
 ```bash
-export ROBOREASON_MODEL_NAME=groq/qwen3-32b
+export ROBOREASON_MODEL_NAME=groq/openai-oss-120b
 export ROBOREASON_REASONING_METHOD=react
 export ROBOREASON_ROBOT_IP=192.168.2.61
 export ROBOREASON_Z_OFFSET_M=0.02
