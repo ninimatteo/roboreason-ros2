@@ -1048,3 +1048,104 @@ after `camera_services_node` restarts alongside a Stack restart.
   §1 covers): the nudge-outside release-position problem, the
   `VLM_REASONING_EFFORT` A/B test, the homography rewrite, and the
   `docs/TODO.md` backlog.
+
+---
+
+# Session 2026-09-04 — 3-arm benchmark rewrite, timing metrics, bbox scene schema
+
+## 1. Release geometry: the model cannot do `centre ± size/2`
+
+The `pp_hard` run that tried to release the red cube *through* the tray
+gave a clean quantitative signature. Tray footprint is
+x ∈ [0.24, 0.46], y ∈ [-0.45, -0.25]. The four release positions the
+model emitted sat at y = -0.21 or y = -0.49 — **all four outside the
+tray, all on the same axis**, while every x was inside. The model spread
+four cubes across a 28 cm band for a tray that is 20 cm deep.
+
+x correct + y wrong is not a perception or grounding failure. It is
+arithmetic on `centre ± size/2` applied to one axis and not the other.
+This is the same class of failure the Session 5 fixes addressed for
+heights, and it is the direct motivation for ROBOAI-19 (explicit
+`bounds` instead of `position` + `size` for placement zones).
+
+## 2. The height-lookup tolerance window is ~1 cm wide
+
+`_fix_release_height` resolves a release to a zone by point-in-footprint
+test. With zero tolerance, a release just outside the tray edge falls
+through to the table height and the arm drives into the tray rim.
+Adding `_HEIGHT_LOOKUP_TOLERANCE_M` fixes that — but the usable window
+is narrow:
+
+- **0.05 m breaks a previously-passing case**: a genuine table release
+  15 cm from the tray centre gets captured by the tray footprint and
+  released 8 cm too high.
+- **0.04 m** passes both the `pp_hard` case and that regression.
+
+So the safe window is roughly 1 cm. Worth remembering before anyone
+"rounds it up to 5 cm for margin" — that exact value is known to break.
+
+## 3. Paper limitation: LLM-side geometric patches are not symmetric
+
+Raised during the session and recorded on ROBOAI-28. There is a real
+distinction between two kinds of deterministic correction:
+
+- **General geometric laws** (Session 5: grasp height from table
+  surface, footprint matching) — these have a symmetric counterpart in
+  the VLM arm's depth compensation. Both arms get one.
+- **Heuristic thresholds tuned to observed failures** (§2's 4 cm) —
+  these exist only in the LLM arm and were chosen by looking at the data
+  they are evaluated on.
+
+The second kind advantages the LLM arm in a way the comparison is
+supposed to be measuring. It does not invalidate the study, but it must
+be declared as a limitation rather than left implicit, since the whole
+point of the three arms is to isolate visual grounding from
+ground-truth scene description.
+
+## 4. July→September behavioural drift came from an undeclared model convention
+
+Three bugs surfaced when the Nebius catalogue forced a model swap, all
+of which had been latent since July:
+
+- **MIME type**: `_encode_image` hard-coded `image/jpeg` for PNG bytes.
+  Nebius tightened validation and started returning 400. Fixed by
+  magic-byte sniffing in `vlm_client.py`.
+- **Terminal sentinel**: reasoning methods emitted
+  `action_name='move_home'` as their stop marker, which
+  `run_plan_loop`'s filter did not drop, so it leaked into executed
+  plans. Changed to `'idle'` across `cot_sc`, `fhp_ffhp`, `tot`,
+  `self_refine`.
+- **Deproject of unused fields**: the VLM planner deprojected every
+  pixel field on every action. Qwen (July) *omitted* unused JSON fields;
+  Kimi (September) *fills them with zeros*. Same code, different model
+  convention, different behaviour. Fixed with a per-action field map in
+  `vlm_planner_node.py`.
+
+The lesson is that "it worked in July" was partly luck: the pipeline
+depended on an undocumented output convention of one specific model.
+
+## 5. Nebius has two hosts and they carry different catalogues
+
+`api.tokenfactory.nebius.com` (what this code calls) and
+`api.studio.nebius.com` are **not** interchangeable. A model listed on
+one can 404 on the other, and the catalogue on tokenfactory changed
+within a single working day (`kimi-k3` appeared hours after being
+removed as unavailable). Always verify against the host in
+`base_client.py`, never against the studio docs.
+
+---
+
+## Known Open Issues (updated 2026-09-04)
+
+- **`feature/ROBOAI-19-bbox-scene-schema` is in a broken intermediate
+  state**: `scene_mock.json` is converted to `bounds`, none of its
+  consumers are. Uncommitted. Do not run trials from it.
+- **`targets.table` size looks wrong on `main`**: declared
+  `size [0.6, 1.2]` against a table that is 1.2 (x) × 0.8 (y) — x and y
+  appear swapped, and the zone claims to reach y = -1.20 against a
+  workspace limit of y = -0.80. Pre-existing, no Jira issue filed yet.
+- **3-arm benchmark collection is at 1 trial** and paused until
+  ROBOAI-19 lands, since the scene schema change makes earlier trials
+  non-comparable.
+- The GUI camera-frame proxy readiness bug from 2026-09-03 §4 is still
+  not investigated and still has no Jira issue.

@@ -300,4 +300,4 @@ Every planning run writes a timestamped folder under `DEBUG_DIR` (`debug/` by de
 
 ### Scene description (LLM mode)
 
-`scene_mock.json` in `robo_reason_task_interface/config/` provides the workspace geometry and object positions in the robot base frame. The VLM/VLM_LLM modes only read `workspace.table.surface_z` from it (for grasp geometry); object positions come from the camera.
+`scene_mock.json` in `robo_reason_task_interface/config/` provides the workspace geometry and object positions in the robot base frame. Two entry kinds, deliberately shaped differently: `objects.*` (things to pick) carry `position` — the grasp contact point — plus `size: [w, d, h]`; `targets.*` (placement zones) carry an explicit axis-aligned box `bounds: {x, y, z}` of `[min, max]` pairs, where `bounds.z[1]` is the zone's top surface. See the file's own `schema_notes` field. The VLM/VLM_LLM modes only read `workspace.table.surface_z` from it (for grasp geometry); object positions come from the camera.

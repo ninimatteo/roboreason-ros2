@@ -2,6 +2,7 @@
   "frame": "base_link",
   "units": "meters",
   "description": "UR5cb mounted on the short side of a rectangular table (1.2m x 0.8m). All positions in robot base frame. Table surface at z=0.0.",
+  "schema_notes": "Placement zones under 'targets' are given as explicit axis-aligned bounds: bounds.x is [x_min, x_max], and likewise for y and z. A release must land inside those ranges; bounds.z[1] is the zone's top surface, the height to release onto. Objects under 'objects' keep position+size instead, because a pick needs a single contact point rather than an area.",
   "robot": {
     "type": "UR5cb",
     "base_position": [0.0, 0.0, 0.0],
@@ -63,15 +64,21 @@
       "type": "zone",
       "color": "brown",
       "label": "tray",
-      "position": [0.35, -0.35, 0.05],
-      "size": [0.22, 0.20, 0.00]
+      "bounds": {
+        "x": [0.24, 0.46],
+        "y": [-0.45, -0.25],
+        "z": [0.05, 0.05]
+      }
     },
     "table": {
       "type": "zone",
       "color": "white",
       "label": "table",
-      "position": [-0.20, -0.60, -0.03],
-      "size": [0.6, 1.2, 0.01]
+      "bounds": {
+        "x": [-0.50, 0.10],
+        "y": [-1.20, 0.00],
+        "z": [-0.03, -0.02]
+      }
     }
   }
 }

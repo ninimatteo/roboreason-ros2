@@ -228,10 +228,11 @@ class LLMPlannerNode(Node):
         "release on top of another object" (release_position.z =
         target.position.z + target.size[2]) is wrong whenever the target
         is an objects.* entry, because an object's authored position.z is
-        a grasp contact point (see _fix_object_height), not a base the way
-        targets.* entries are documented to be — so adding size[2] to it
-        overshoots the target's true top by however far short of that
-        object's own top its grasp point falls.
+        a grasp contact point (see _fix_object_height), not a base — so
+        adding size[2] to it overshoots the target's true top by however
+        far short of that object's own top its grasp point falls. A
+        targets.* zone has no such ambiguity any more: its top surface is
+        stated outright as bounds.z[1] (scene_mock.json's schema_notes).
 
         Position (x/y): a freely-computed position (e.g. "arrange the rest
         in a line on the table") can drift into a *different* target
@@ -243,14 +244,17 @@ class LLMPlannerNode(Node):
         (plan_manager's distribute_zone_releases, keyed off a ~3cm radius)
         would ever flag as related to the tray's own, separate release.
         The two cases are told apart by how the position was produced:
-          - An *exact* echo of a target's or an (unmoved) object's own
-            registered (x, y) (see _TARGET_MATCH_EPS_M) means the LLM read
-            those coordinates straight out of the prompt/scene — an
-            intentional placement, whether into a target zone or stacked
-            on another object. Keep the position, use that entry's true
-            top.
+          - An *exact* echo of an entry's own registered centre (see
+            _TARGET_MATCH_EPS_M) means the LLM read those coordinates
+            straight out of the prompt/scene — an intentional placement,
+            whether into a target zone or stacked on another object. For
+            an objects.* entry that centre is its authored `position`;
+            for a targets.* zone it is the midpoint of its `bounds`,
+            which is exactly what the prompt tells the model to release
+            at (fhp_ffhp_prompts.py). Keep the position, use that
+            entry's true top.
           - Anything else that merely falls inside a *target zone's*
-            footprint (position ± size/2, padded by
+            footprint (bounds.x/bounds.y, padded by
             settings.ZONE_PLACEMENT_COLLISION_RADIUS_M) is a computed
             position that drifted somewhere it wasn't meant to be. Nudge
             it back out along whichever axis takes the smaller move, plus
@@ -276,8 +280,8 @@ class LLMPlannerNode(Node):
         on it. Among every entry whose footprint contains the (possibly
         nudged) point, the smallest one (by footprint area) wins, so a
         specific match always beats the generic table:
-          - A target zone (targets.*): its documented true top,
-            position.z + size[2].
+          - A target zone (targets.*): its declared top surface,
+            bounds.z[1].
           - Another object (objects.*): its *actual* true top, derived
             from table_surface_z + its size[2] — not its own position.z,
             for the reason above.
@@ -334,48 +338,87 @@ class LLMPlannerNode(Node):
         # known real cases (14 cm must match, 15 cm must not) leave only
         # a ~1 cm safe window — this is tuned to those two observations,
         # not a robust general solution. A differently-shaped spread the
-        # model produces next could still miss on either side. The real
-        # fix is ROBOAI-19 (explicit target bounding boxes instead of
-        # position+size), deliberately not done here — see the ROBOAI-25
-        # session discussion for why not mid-collection.
+        # model produces next could still miss on either side. ROBOAI-19
+        # (explicit target bounds) removed the *convention* guesswork
+        # here, but not this tolerance: a bounds-aware release *layout*
+        # that keeps every release inside the zone in the first place is
+        # ROBOAI-18, still open.
         _HEIGHT_LOOKUP_TOLERANCE_M = 0.04
 
-        def contains(x, y, entry, tol=margin):
-            pos = entry.get('position')
-            size = entry.get('size')
+        # Every footprint check below runs against a normalized
+        # (x_min, x_max, y_min, y_max) box rather than a raw scene entry,
+        # because the two entry kinds are authored differently and only
+        # one of them is a box already:
+        #   - targets.* declare their footprint outright as `bounds`
+        #     (ROBOAI-19) — read the corners, no arithmetic;
+        #   - objects.* keep position (a grasp contact point) + size,
+        #     deliberately, because a pick needs a single point rather
+        #     than an area, so their box is still derived.
+        def target_box(entry):
+            bounds = entry.get('bounds') or {}
+            bx, by = bounds.get('x'), bounds.get('y')
+            if not bx or not by:
+                return None
+            return min(bx), max(bx), min(by), max(by)
+
+        def object_box(entry):
+            pos, size = entry.get('position'), entry.get('size')
             if not pos or not size:
+                return None
+            return (pos[0] - size[0] / 2, pos[0] + size[0] / 2,
+                    pos[1] - size[1] / 2, pos[1] + size[1] / 2)
+
+        def target_top_z(entry):
+            """A zone's top surface — the height to release onto. Stated
+            outright by the schema (bounds.z[1]), no base+height sum."""
+            bounds_z = (entry.get('bounds') or {}).get('z')
+            return max(bounds_z) if bounds_z else table_surface_z
+
+        def object_top_z(entry):
+            """An object's *actual* top: measured up from the table, not
+            from its own position.z (a grasp contact point, not a base)."""
+            return table_surface_z + entry.get('size', [0, 0, 0])[2]
+
+        def contains(x, y, box, tol=margin):
+            if not box:
                 return False
-            half_x = size[0] / 2 + tol
-            half_y = size[1] / 2 + tol
-            return abs(pos[0] - x) <= half_x and abs(pos[1] - y) <= half_y
+            x_min, x_max, y_min, y_max = box
+            return (x_min - tol <= x <= x_max + tol
+                    and y_min - tol <= y <= y_max + tol)
 
-        def footprint_area(entry):
-            size = entry.get('size', [0, 0, 0])
-            return size[0] * size[1]
+        def footprint_area(box):
+            x_min, x_max, y_min, y_max = box
+            return (x_max - x_min) * (y_max - y_min)
 
-        def is_exact_echo(x, y, entry):
-            pos = entry.get('position')
-            return (pos and abs(pos[0] - x) < _TARGET_MATCH_EPS_M
-                    and abs(pos[1] - y) < _TARGET_MATCH_EPS_M)
+        def is_centre_echo(x, y, box):
+            if not box:
+                return False
+            x_min, x_max, y_min, y_max = box
+            return (abs((x_min + x_max) / 2 - x) < _TARGET_MATCH_EPS_M
+                    and abs((y_min + y_max) / 2 - y) < _TARGET_MATCH_EPS_M)
 
-        def nudge_outside(x, y, entry):
-            pos, size = entry['position'], entry['size']
-            half_x, half_y = size[0] / 2 + margin, size[1] / 2 + margin
-            escape_x = half_x - abs(x - pos[0])
-            escape_y = half_y - abs(y - pos[1])
+        def nudge_outside(x, y, box):
+            """Push (x, y) just past the nearer padded edge of `box`, along
+            whichever axis takes the smaller move."""
+            x_min, x_max, y_min, y_max = box
+            escape_x = min(x - (x_min - margin), (x_max + margin) - x)
+            escape_y = min(y - (y_min - margin), (y_max + margin) - y)
             if escape_x <= escape_y:
-                sign = -1.0 if x < pos[0] else 1.0
-                return pos[0] + sign * (half_x + clearance), y
-            sign = -1.0 if y < pos[1] else 1.0
-            return x, pos[1] + sign * (half_y + clearance)
+                if x < (x_min + x_max) / 2:
+                    return x_min - margin - clearance, y
+                return x_max + margin + clearance, y
+            if y < (y_min + y_max) / 2:
+                return x, y_min - margin - clearance
+            return x, y_max + margin + clearance
 
         def resolve(x, y, moved_origins):
-            # Exact echo of a target's own position -> intentional target
-            # placement (e.g. "release into the tray").
+            # Exact echo of a target zone's own centre -> intentional target
+            # placement (e.g. "release into the tray"). The zone has no
+            # `position` any more; its centre is the midpoint of its bounds,
+            # which is what the prompt instructs the model to release at.
             for entry in targets:
-                if is_exact_echo(x, y, entry):
-                    pos, size = entry['position'], entry['size']
-                    return x, y, pos[2] + size[2]
+                if is_centre_echo(x, y, target_box(entry)):
+                    return x, y, target_top_z(entry)
             # Exact echo of an (unmoved) object's own position ->
             # intentional stack (e.g. "stack the red cube on the blue
             # cube" — this is the SAME kind of intentional exact-position
@@ -384,11 +427,11 @@ class LLMPlannerNode(Node):
             # release itself to be misread as "drifted into the table's
             # footprint" and nudged away, breaking the stack entirely.
             for entry in objects:
-                pos = entry.get('position')
-                if not pos or any(contains(ox, oy, entry) for ox, oy in moved_origins):
+                box = object_box(entry)
+                if not box or any(contains(ox, oy, box) for ox, oy in moved_origins):
                     continue
-                if is_exact_echo(x, y, entry):
-                    return x, y, table_surface_z + entry.get('size', [0, 0, 0])[2]
+                if is_centre_echo(x, y, box):
+                    return x, y, object_top_z(entry)
 
             # Only nudge away from a target whose surface sits meaningfully
             # above the bare table (a real physical obstacle, like the
@@ -403,29 +446,29 @@ class LLMPlannerNode(Node):
             # match — mirroring the priority used for final height below.
             obstacle_matches = sorted(
                 (
-                    (footprint_area(entry), entry) for entry in targets
-                    if contains(x, y, entry)
-                    and (entry['position'][2] + entry['size'][2] - table_surface_z)
-                    > _NUDGE_HEIGHT_THRESHOLD_M
+                    (footprint_area(box), box, entry)
+                    for entry, box in ((e, target_box(e)) for e in targets)
+                    if box and contains(x, y, box)
+                    and (target_top_z(entry) - table_surface_z) > _NUDGE_HEIGHT_THRESHOLD_M
                 ),
                 key=lambda t: t[0],
             )
             if obstacle_matches:
-                entry = obstacle_matches[0][1]
+                _, box, entry = obstacle_matches[0]
                 self.get_logger().info(
                     f"[LLMPlannerNode] release: ({x:.3f}, {y:.3f}) drifted into "
                     f"{entry.get('label', 'a target')}'s footprint — nudging clear"
                 )
-                x, y = nudge_outside(x, y, entry)
+                x, y = nudge_outside(x, y, box)
 
             candidates = []  # (footprint_area, surface_z)
             for entry in targets:
-                if contains(x, y, entry, tol=_HEIGHT_LOOKUP_TOLERANCE_M):
-                    pos, size = entry['position'], entry['size']
-                    candidates.append((footprint_area(entry), pos[2] + size[2]))
+                box = target_box(entry)
+                if contains(x, y, box, tol=_HEIGHT_LOOKUP_TOLERANCE_M):
+                    candidates.append((footprint_area(box), target_top_z(entry)))
             for entry in objects:
-                pos = entry.get('position')
-                if not pos:
+                box = object_box(entry)
+                if not box:
                     continue
                 # Every object already picked up earlier in this same plan
                 # (including the one currently held) is no longer resting
@@ -433,12 +476,10 @@ class LLMPlannerNode(Node):
                 # them would be a stale false positive. Tight (default)
                 # tolerance here on purpose: this is "was this exact spot
                 # vacated", not the height-lookup match below it.
-                if any(contains(ox, oy, entry) for ox, oy in moved_origins):
+                if any(contains(ox, oy, box) for ox, oy in moved_origins):
                     continue
-                if contains(x, y, entry, tol=_HEIGHT_LOOKUP_TOLERANCE_M):
-                    candidates.append(
-                        (footprint_area(entry), table_surface_z + entry.get('size', [0, 0, 0])[2])
-                    )
+                if contains(x, y, box, tol=_HEIGHT_LOOKUP_TOLERANCE_M):
+                    candidates.append((footprint_area(box), object_top_z(entry)))
             if not candidates:
                 return x, y, table_surface_z
             return x, y, min(candidates, key=lambda c: c[0])[1]
@@ -489,8 +530,18 @@ class LLMPlannerNode(Node):
             return {'task_summary': 'No objects/targets found', 'plan': []}
 
         obj_pos = first_obj['position']
-        tgt_pos = first_target['position']
         obj_height = first_obj.get('size', [0, 0, 0.05])[2]
+
+        # targets.* are axis-aligned bounds (see scene_mock.json's
+        # schema_notes): aim at the middle of the zone's footprint, onto
+        # its top surface bounds.z[1].
+        bounds = first_target.get('bounds') or {}
+        try:
+            tgt_x = (bounds['x'][0] + bounds['x'][1]) / 2
+            tgt_y = (bounds['y'][0] + bounds['y'][1]) / 2
+            tgt_top_z = max(bounds['z'])
+        except (KeyError, IndexError, TypeError):
+            return {'task_summary': 'Target zone has no usable bounds', 'plan': []}
 
         plan = [
             {'step': 1, 'action_name': 'approach',
@@ -498,10 +549,10 @@ class LLMPlannerNode(Node):
             {'step': 2, 'action_name': 'pick',
              'target_position': obj_pos, 'grasp_axis': 'z', 'come_back': True},
             {'step': 3, 'action_name': 'approach',
-             'target_position': [tgt_pos[0], tgt_pos[1], tgt_pos[2] + 0.1],
+             'target_position': [tgt_x, tgt_y, tgt_top_z + 0.1],
              'offset': 0.0, 'approach_direction': 'z'},
             {'step': 4, 'action_name': 'release',
-             'release_position': [tgt_pos[0], tgt_pos[1], tgt_pos[2] + obj_height / 2],
+             'release_position': [tgt_x, tgt_y, tgt_top_z + obj_height / 2],
              'come_back': False},
             {'step': 5, 'action_name': 'move_home'},
         ]

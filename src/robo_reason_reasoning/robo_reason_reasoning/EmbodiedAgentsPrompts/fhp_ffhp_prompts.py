@@ -21,9 +21,13 @@ Use object names and positions from the environment description.
 Ensure the output strictly follows the provided JSON structured format.
 
 **Spatial Reasoning — Object Dimensions and Stacking**
-Every object in the scene has a `size: [width, depth, height]` field (meters). Use it when computing positions:
+The two kinds of scene entry are described differently, on purpose:
+- Entries under `objects` (things to pick) have a `position` — the grasp contact point — and a `size: [width, depth, height]` field in meters.
+- Entries under `targets` (placement zones) have no position or size. They are an explicit axis-aligned box: `bounds: {{"x": [x_min, x_max], "y": [y_min, y_max], "z": [z_min, z_max]}}`, in meters. `bounds.z[1]` is the zone's top surface — the height to release onto.
+Use them when computing positions:
 - Picking an object: `target_position.z = object.position.z` (contact point at the object centre).
-- Releasing on the table or a flat zone: `release_position.z = surface_z` (table surface).
+- Releasing on the bare table: `release_position.z = surface_z` (table surface).
+- Releasing into a target zone: `release_position = [(target.bounds.x[0] + target.bounds.x[1]) / 2, (target.bounds.y[0] + target.bounds.y[1]) / 2, target.bounds.z[1]]` — the middle of the zone's footprint, at its top surface. Use these midpoints exactly; do not round them or pick some other point in the zone. Every release must land with x inside `bounds.x` and y inside `bounds.y`.
 - Releasing on top of another object: `release_position = [target.position.x, target.position.y, target.position.z + target.size[2]]`.
   This places the held object on the top surface of the target, not inside it.
 - Always set `object_height` in the release action to `size[2]` of the **held** object so the executor raises the TCP by the correct amount before opening the gripper.

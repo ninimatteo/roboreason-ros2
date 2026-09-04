@@ -58,7 +58,8 @@ def plan_response(actions: list) -> str:
 # one red cube to pick, one blue box to place it in.
 SIMPLE_SCENE_JSON = json.dumps({
     "objects": [{"label": "red_cube", "position": [0.30, 0.10, 0.03], "size": [0.05, 0.05, 0.05]}],
-    "targets": [{"label": "blue_box", "position": [0.50, -0.10, 0.02]}],
+    "targets": [{"label": "blue_box",
+                 "bounds": {"x": [0.43, 0.57], "y": [-0.17, -0.03], "z": [0.00, 0.02]}}],
 })
 
 SIMPLE_USER_REQUEST = "Pick the red cube and place it in the blue box"

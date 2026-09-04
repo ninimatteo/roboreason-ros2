@@ -260,19 +260,22 @@ class VLMLLMPlannerNode(Node):
         capped by TCP_CLAMP_CLEARANCE_M so tall objects are gripped nearer
         their top instead of driving the rigid TCP clamp into the object.
 
-        Targets get the same depth-informed treatment for an analogous
-        reason: the LLM stacking formula (release_position.z =
-        target.position.z + target.size[2] — see fhp_ffhp_prompts.py)
-        expects position.z to be a *base* reference and size[2] the height
-        to reach the top surface, matching scene_mock.json's convention.
-        The VLM's size[2] guess for a target is not depth-grounded, so
-        using it verbatim while also using the (already-correct, real)
-        deprojected top_z as position.z would double-count the target's
-        height. Instead we derive the real height from depth (surface_z -
-        top_z, no MIN_OBJECT_HEIGHT_M floor — a flat zone marked directly on
-        the table should read ~0 height, not be lifted) and set
-        position.z = top_z - height, so position.z + size[2] reconstructs
-        the true measured top surface.
+        Targets no longer need that treatment at all. Since ROBOAI-19 a
+        targets.* zone is an explicit axis-aligned box — bounds.x/y/z,
+        with bounds.z[1] the top surface to release onto — so the real,
+        depth-measured top_z is simply written there directly and the
+        downstream LLM reads it verbatim. There is no base-plus-height
+        arithmetic left to double-count (the earlier
+        position.z + size[2] reconstruction, and the bug it caused, are
+        described in docs/reference/grasp-geometry-pipeline.md's "Known
+        pitfall"), and the VLM's un-depth-grounded size[2] guess for a
+        target is dropped entirely rather than corrected. bounds.z[0] is
+        set to the table surface the zone rests on (or top_z itself when
+        the zone reads at or below the table — a flat zone marked
+        directly on the table is a legitimate ~0-height zone, not
+        something to lift). The VLM's size[0]/size[1] guesses still set
+        the x/y footprint, since scene grounding returns pixel centres,
+        not pixel bboxes.
         """
         try:
             base = json.loads(scene_json) if scene_json else {}
@@ -336,17 +339,28 @@ class VLMLLMPlannerNode(Node):
             key = self._unique_key(tgt.label, used_keys, 'target')
             top_z = pt.z
             size = list(tgt.size)
-            position_z = top_z
+            # bounds.z[1] IS the deprojected top surface — the one number
+            # here that is actually depth-measured. bounds.z[0] is only a
+            # base marker (the table the zone sits on, or the top itself
+            # for a zone at/below the table), never consumed downstream.
+            base_z = top_z
             if table_surface_z is not None:
-                height = max(top_z - table_surface_z, 0.0)
-                size[2] = height
-                position_z = top_z - height
+                base_z = min(table_surface_z, top_z)
+            # x/y footprint is still centre ± the VLM's blind size guess:
+            # scene grounding returns a pixel_center, not a pixel bbox
+            # (DetectedTarget in extraction_classes.py), so there are no
+            # real corners to deproject. size[0] (width) is mapped to the
+            # world x axis and size[1] (depth) to y.
+            half_w, half_d = size[0] / 2, size[1] / 2
             targets[key] = {
                 'type': tgt.type,
                 'color': tgt.color,
                 'label': tgt.label,
-                'position': [pt.x, pt.y, position_z],
-                'size': size,
+                'bounds': {
+                    'x': [pt.x - half_w, pt.x + half_w],
+                    'y': [pt.y - half_d, pt.y + half_d],
+                    'z': [base_z, top_z],
+                },
             }
 
         base['objects'] = objects
