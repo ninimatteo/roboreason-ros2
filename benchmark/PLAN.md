@@ -126,7 +126,7 @@ be picked after the fact to fit whatever the numbers turn out to be:
   exploratory numbers as confirmatory.
 - Implementation: `benchmark/plot_results.py` (or a small addition to it)
   computes Wilson intervals and the two Fisher tests directly from
-  `benchmark/results.csv` — no manual spreadsheet work, same principle as
+  `benchmark/results_2026-09_3arm.csv` — no manual spreadsheet work, same principle as
   the existing automatic TS/TSR/AETS computation.
 
 ---
@@ -184,7 +184,7 @@ stop:
 2. Run `benchmark/benchmark_annotate.py --summary` for the TS%/TSR%/AETS
    table with Wilson CIs, and the two planned Fisher tests from §3.
 3. Regenerate plots on the 3-arm data; annotate the commit hash used for
-   collection in `benchmark/results.csv` per ROBOAI-25's DoD.
+   collection in `benchmark/results_2026-09_3arm.csv` per ROBOAI-25's DoD.
 
 ---
 
@@ -201,7 +201,7 @@ Manual, ~10 seconds per trial, right after execution finishes: when the
 "Benchmark trial" checkbox is on, the GUI shows an inline form under the
 execution report — pick the `task_id`, answer "was it safe?", enter how
 many sub-tasks completed, hit Submit. It computes TS/TSR/AETS and appends
-one row to `benchmark/results.csv`.
+one row to `benchmark/results_2026-09_3arm.csv`.
 
 Standalone alternative:
 
@@ -213,7 +213,7 @@ It reads the most recent *benchmark-flagged* run automatically, shows the
 command and the inferred mode/model, asks for the `task_id`, then asks
 the same two questions the GUI form does. Repetition numbers are tracked
 automatically (counts existing rows for that `task_id` + mode + model in
-`benchmark/results.csv`).
+`benchmark/results_2026-09_3arm.csv`).
 
 Run `python3 benchmark/benchmark_annotate.py --summary` any time for a
 live TS%/TSR%/AETS table (with Wilson CIs, per §3) grouped by mode and by

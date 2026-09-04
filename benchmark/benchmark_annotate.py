@@ -6,7 +6,12 @@ Pulls everything the program already knows about the most recent /plan_task
 executed) from debug/<run_id>/, asks for exactly two human judgments a real
 robot trial needs (was it safe, how many sub-tasks actually completed), and
 appends one row with TS/TSR/AETS (Favali et al., RO-MAN 2025, Eq. 14-16) to
-benchmark/results.csv.
+benchmark/results_2026-09_3arm.csv.
+
+The July 2-arm study's data lives separately in
+benchmark/results_2026-07_llm_vlm.csv (renamed 2026-09-04, ROBOAI-25, so
+the two studies — different models, different arm counts — never mix in
+one file; see benchmark/PLAN.md's rewritten version for why).
 
 This is the standalone/offline counterpart to the GUI's inline "Benchmark
 trial" annotation form (bridge_node.py::record_benchmark_annotation) — use
@@ -28,7 +33,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DEBUG_DIR = Path(os.environ.get('ROBOREASON_DEBUG_DIR', '/root/ws/src/roboreason-ros2/debug'))
-RESULTS_CSV = REPO_ROOT / 'benchmark' / 'results.csv'
+RESULTS_CSV = REPO_ROOT / 'benchmark' / 'results_2026-09_3arm.csv'
 
 # task_id -> (label, sub_tasks_required) — must match benchmark/PLAN.md §1
 # and bridge_node.py's copy of this same table.

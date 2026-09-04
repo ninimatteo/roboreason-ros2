@@ -44,7 +44,7 @@
     "white_cube": {
       "type": "cube",
       "color": "white",
-      "position": [0.0, -0.4, -0.01],
+      "position": [-0.1, -0.7, -0.01],
       "size": [0.045, 0.045, 0.045],
       "state": "on_table",
       "graspable": true
@@ -52,7 +52,7 @@
     "orange_cube": {
       "type": "cube",
       "color": "orange",
-      "position": [-0.1, -0.7, -0.01],
+      "position": [0.0, -0.4, -0.01],
       "size": [0.045, 0.045, 0.045],
       "state": "on_table",
       "graspable": true

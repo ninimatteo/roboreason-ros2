@@ -676,8 +676,13 @@ class GuiBridgeNode(Node):
         # this project, see CLAUDE.md) keeps it at that real source path
         # rather than copying it into install/, so this resolves correctly
         # even when imported via the installed package.
+        # 2026-09-04 (ROBOAI-25): the September 3-arm study writes to its
+        # own file, not the renamed benchmark/results_2026-07_llm_vlm.csv
+        # (the July 2-arm study, different models) — keeps the two from
+        # ever mixing in one CSV. Mirror any rename here in
+        # benchmark/benchmark_annotate.py's RESULTS_CSV too.
         repo_root = Path(__file__).resolve().parents[3]
-        return repo_root / 'benchmark' / 'results.csv'
+        return repo_root / 'benchmark' / 'results_2026-09_3arm.csv'
 
     def _next_benchmark_repetition(self, results_csv: Path, task_id: str, model_label: str) -> int:
         if not results_csv.exists():
