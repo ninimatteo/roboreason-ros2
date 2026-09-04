@@ -98,3 +98,59 @@ def test_zone_slot_offset_wraps_into_a_new_row_when_line_is_full():
 
     dx, dy = _zone_slot_offset(0.06, 4)
     assert dx != 0.0  # 5th occupant wraps into row 1 (along x)
+
+
+# --- targets-aware (ROBOAI-19 bounds) spacing ---
+
+def _tray_targets(x_min=0.24, x_max=0.46, y_min=-0.43, y_max=-0.12):
+    return {'tray': {'bounds': {'x': [x_min, x_max], 'y': [y_min, y_max], 'z': [0.05, 0.05]}}}
+
+
+def test_four_releases_at_a_zone_centre_all_stay_inside_its_bounds():
+    # Same shape as the real bug report: 4 cubes, LLM releases all of them
+    # at the tray's exact centre (0.35, -0.275), tray is 0.22 x 0.31 m.
+    center = [0.35, -0.275, 0.05]
+    plan = [_release(list(center)) for _ in range(4)]
+    result = distribute_zone_releases(plan, _tray_targets())
+
+    positions = [tuple(step['release_position'][:2]) for step in result]
+    assert len(set(positions)) == 4, "all four releases must end up at distinct spots"
+    for x, y in positions:
+        assert 0.24 <= x <= 0.46, f"x={x} escaped the tray"
+        assert -0.43 <= y <= -0.12, f"y={y} escaped the tray"
+
+
+def test_zone_unaware_call_keeps_old_unbounded_behaviour():
+    # Same 4-release scenario, but without a targets registry (e.g. a
+    # VLM/VLM_LLM plan) — must match the pre-ROBOAI-19 behaviour exactly.
+    center = [0.35, -0.275, 0.05]
+    plan = [_release(list(center)) for _ in range(4)]
+    result = distribute_zone_releases(plan)
+
+    positions = [tuple(step['release_position'][:2]) for step in result]
+    assert len(set(positions)) == 4
+    # unbounded growth is free to leave the tray's footprint — that's the
+    # exact behaviour this test locks in as "unchanged when targets is omitted"
+    assert any(not (0.24 <= x <= 0.46 and -0.43 <= y <= -0.12) for x, y in positions)
+
+
+def test_release_outside_any_zone_is_unaffected_by_targets_arg():
+    # A collision far from the tray must behave identically whether or not
+    # a targets registry is passed, since _find_zone_bounds won't match it.
+    plan = [_release([0.55, -0.20, 0.06]) for _ in range(2)]
+    with_targets = distribute_zone_releases([dict(s) for s in plan], _tray_targets())
+    without_targets = distribute_zone_releases([dict(s) for s in plan])
+    assert with_targets[1]['release_position'] == without_targets[1]['release_position']
+
+
+def test_zone_too_small_for_extra_slots_falls_back_to_unbounded_growth():
+    # A zone barely bigger than one item can't offer a second in-bounds
+    # slot — must not raise, and must still separate the releases (by
+    # escaping the zone) rather than leaving them collided.
+    tiny = {'cup': {'bounds': {'x': [0.10, 0.13], 'y': [-0.10, -0.07], 'z': [0.02, 0.02]}}}
+    center = [0.115, -0.085, 0.02]
+    plan = [_release(list(center)) for _ in range(2)]
+    result = distribute_zone_releases(plan, tiny)
+
+    positions = [tuple(step['release_position'][:2]) for step in result]
+    assert len(set(positions)) == 2

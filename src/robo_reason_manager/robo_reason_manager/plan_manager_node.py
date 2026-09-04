@@ -96,18 +96,22 @@ class PlanManagerNode(Node):
         try:
             plan_data = json.loads(request.plan_json)
             plan = normalize_plan(plan_data.get('plan', []))
-            plan = distribute_zone_releases(plan)
         except Exception as e:
             response.success = False
             response.error_message = f'Invalid plan_json: {e}'
             return response
 
         try:
+            scene_data = json.loads(request.scene_json)
             world_state = WorldState(request.scene_json)
         except Exception as e:
             response.success = False
             response.error_message = f'Invalid scene_json: {e}'
             return response
+
+        # Keeps the spacing grid inside a matched target zone's own known
+        # bounds (ROBOAI-19) instead of growing past it unbounded.
+        plan = distribute_zone_releases(plan, scene_data.get('targets', {}))
 
         # Validate
         validator = PlanValidator()
