@@ -1,0 +1,2 @@
+timestamp,run_id,task_id,difficulty,model_label,reasoning_method,model_name,repetition,command,num_planned_steps,steps_executed,safety_ok,TS,sub_tasks_completed,sub_tasks_required,TSR,AETS,planning_duration_s,execution_duration_s,total_duration_s,notes
+2026-09-04T13:34:28,20260904-153208-84192655,pp_easy,easy,LLM,cot_sc,nebius/kimi-k2.6,1,Pick the red cube and place it on the brown tray.,5,5,True,1,1,1,1.0,0.2,,29.85,,

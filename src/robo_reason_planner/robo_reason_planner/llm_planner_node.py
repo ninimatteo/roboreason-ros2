@@ -309,14 +309,44 @@ class LLMPlannerNode(Node):
         # above it (like a tray) is worth nudging a drifted release away
         # from.
         _NUDGE_HEIGHT_THRESHOLD_M = 0.03
+        # Wider than `margin`, deliberately — used only when deciding which
+        # zone/object's HEIGHT a release should use (the `candidates` loops
+        # in resolve() below), never for the nudge/spacing checks above
+        # them. Observed on hardware (ROBOAI-25, pp_hard, 2026-09-04): the
+        # model spread 4 same-size cubes onto the tray at ±14 cm from its
+        # center, 1 cm past the tray's `margin`-padded footprint on every
+        # release, so none of them matched — every release silently fell
+        # back to table_surface_z, 8 cm below the tray's real top, and the
+        # gripper drove down into the tray trying to release "at the
+        # table" while still positioned over it. The two directions of
+        # error aren't symmetric: missing a raised zone's height is
+        # dangerous (releases too low, into whatever's actually there);
+        # using a zone's height for a point that's really just on the
+        # table is not (releases a little higher than strictly needed) —
+        # so this tolerance is wide on purpose, erring toward "assume the
+        # raised thing is still there."
+        #
+        # 0.04 m, not more: re-tested against the same session's sort_hard
+        # data (a genuine "arrange on the table" release 15 cm from the
+        # tray's center, which must NOT match it) showed 0.05 m already
+        # pulls that point into the tray's footprint too, flipping a
+        # correct table release into an incorrect elevated one. The two
+        # known real cases (14 cm must match, 15 cm must not) leave only
+        # a ~1 cm safe window — this is tuned to those two observations,
+        # not a robust general solution. A differently-shaped spread the
+        # model produces next could still miss on either side. The real
+        # fix is ROBOAI-19 (explicit target bounding boxes instead of
+        # position+size), deliberately not done here — see the ROBOAI-25
+        # session discussion for why not mid-collection.
+        _HEIGHT_LOOKUP_TOLERANCE_M = 0.04
 
-        def contains(x, y, entry):
+        def contains(x, y, entry, tol=margin):
             pos = entry.get('position')
             size = entry.get('size')
             if not pos or not size:
                 return False
-            half_x = size[0] / 2 + margin
-            half_y = size[1] / 2 + margin
+            half_x = size[0] / 2 + tol
+            half_y = size[1] / 2 + tol
             return abs(pos[0] - x) <= half_x and abs(pos[1] - y) <= half_y
 
         def footprint_area(entry):
@@ -390,7 +420,7 @@ class LLMPlannerNode(Node):
 
             candidates = []  # (footprint_area, surface_z)
             for entry in targets:
-                if contains(x, y, entry):
+                if contains(x, y, entry, tol=_HEIGHT_LOOKUP_TOLERANCE_M):
                     pos, size = entry['position'], entry['size']
                     candidates.append((footprint_area(entry), pos[2] + size[2]))
             for entry in objects:
@@ -400,10 +430,12 @@ class LLMPlannerNode(Node):
                 # Every object already picked up earlier in this same plan
                 # (including the one currently held) is no longer resting
                 # at its original scene position — matching against any of
-                # them would be a stale false positive.
+                # them would be a stale false positive. Tight (default)
+                # tolerance here on purpose: this is "was this exact spot
+                # vacated", not the height-lookup match below it.
                 if any(contains(ox, oy, entry) for ox, oy in moved_origins):
                     continue
-                if contains(x, y, entry):
+                if contains(x, y, entry, tol=_HEIGHT_LOOKUP_TOLERANCE_M):
                     candidates.append(
                         (footprint_area(entry), table_surface_z + entry.get('size', [0, 0, 0])[2])
                     )
