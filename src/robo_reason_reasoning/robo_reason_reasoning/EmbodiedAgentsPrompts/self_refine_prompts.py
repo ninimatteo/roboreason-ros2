@@ -7,6 +7,20 @@ _LLM_INITIAL_SOLUTION_PROMPT = """Your task is to plan a sequence of actions to 
 **Skills Library** A list of available skills and actions you can use: \n{skills}
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
 
+**Spatial Reasoning — Object Dimensions and Stacking**
+The two kinds of scene entry are described differently, on purpose:
+- Entries under `objects` (things to pick) have a `position` — the grasp contact point — and a `size: [width, depth, height]` field in meters.
+- Entries under `targets` (placement zones) have no position or size. They are an explicit axis-aligned box: `bounds: {{"x": [x_min, x_max], "y": [y_min, y_max], "z": [z_min, z_max]}}`, in meters. `bounds.z[1]` is the zone's top surface — the height to release onto.
+Use them when computing positions:
+- Picking an object: `target_position.z = object.position.z` (contact point at the object centre).
+- Releasing on the bare table: `release_position.z = surface_z` (table surface).
+- Releasing into a target zone: `release_position = [(target.bounds.x[0] + target.bounds.x[1]) / 2, (target.bounds.y[0] + target.bounds.y[1]) / 2, target.bounds.z[1]]` — the middle of the zone's footprint, at its top surface. Use these midpoints exactly; do not round them or pick some other point in the zone. Every release must land with x inside `bounds.x` and y inside `bounds.y`.
+- Releasing on top of another object: `release_position = [target.position.x, target.position.y, target.position.z + target.size[2]]`.
+  This places the held object on the top surface of the target, not inside it.
+- Always set `object_height` in the release action to `size[2]` of the **held** object so the executor raises the TCP by the correct amount before opening the gripper.
+- Always set `grasp_width` in the pick action to `size[0]` of the object being grasped so the executor selects the correct gripper finger-aperture offset.
+- The `approach` before a release should use the same x, y, z as the release position — the executor adds the offset automatically.
+
 **JSON Output schema**:
 ```json
 {{"plan": [
@@ -161,6 +175,20 @@ Your task is to refine a plan based on the feedback provided. Use the feedback t
 **Environment Description** The physical information about the environment: \n{environment_map}
 **Skills Library** A list of available skills and actions you can use: \n{skills}
 **User Request** The request of the user that is the goal you have to achieve: \n{user_request}
+
+**Spatial Reasoning — Object Dimensions and Stacking**
+The two kinds of scene entry are described differently, on purpose:
+- Entries under `objects` (things to pick) have a `position` — the grasp contact point — and a `size: [width, depth, height]` field in meters.
+- Entries under `targets` (placement zones) have no position or size. They are an explicit axis-aligned box: `bounds: {{"x": [x_min, x_max], "y": [y_min, y_max], "z": [z_min, z_max]}}`, in meters. `bounds.z[1]` is the zone's top surface — the height to release onto.
+Use them when computing positions:
+- Picking an object: `target_position.z = object.position.z` (contact point at the object centre).
+- Releasing on the bare table: `release_position.z = surface_z` (table surface).
+- Releasing into a target zone: `release_position = [(target.bounds.x[0] + target.bounds.x[1]) / 2, (target.bounds.y[0] + target.bounds.y[1]) / 2, target.bounds.z[1]]` — the middle of the zone's footprint, at its top surface. Use these midpoints exactly; do not round them or pick some other point in the zone. Every release must land with x inside `bounds.x` and y inside `bounds.y`.
+- Releasing on top of another object: `release_position = [target.position.x, target.position.y, target.position.z + target.size[2]]`.
+  This places the held object on the top surface of the target, not inside it.
+- Always set `object_height` in the release action to `size[2]` of the **held** object so the executor raises the TCP by the correct amount before opening the gripper.
+- Always set `grasp_width` in the pick action to `size[0]` of the object being grasped so the executor selects the correct gripper finger-aperture offset.
+- The `approach` before a release should use the same x, y, z as the release position — the executor adds the offset automatically.
 
 **Initial Solution**:
 {initial_solution}
