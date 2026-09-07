@@ -15,6 +15,7 @@ DEBUG_DIR for the durable, per-run alternative.
 """
 import csv
 import json
+import os
 import shutil
 import threading
 import time
@@ -75,6 +76,48 @@ _CSV_FIELDS = [
     'temperature', 'success', 'num_steps', 'error', 'planning_duration_s',
 ]
 _csv_lock = threading.Lock()
+
+
+def _ensure_csv_header(path: Path, fields: list) -> None:
+    """Make sure `path` starts with a header row exactly matching `fields`.
+
+    Creates the file with that header if it doesn't exist yet. If it does
+    exist but its header has drifted from `fields` (e.g. a field was added
+    here after the file was first created — this is what silently broke
+    planning_duration_s until ROBOAI-29), migrates it in place: every
+    existing row is padded/truncated to the new column count and the file
+    is rewritten atomically (temp file + rename), so a concurrent append
+    from another process can't observe a half-written file.
+
+    Never raises — this is debug-only logging plumbing and must not be
+    able to take down the caller (see save_terminal_logs for the same
+    rule); on any read/write error the caller's own append still runs and
+    surfaces whatever's actually wrong.
+    """
+    if not path.exists():
+        try:
+            with open(path, 'w', newline='') as f:
+                csv.writer(f).writerow(fields)
+        except OSError:
+            pass
+        return
+    try:
+        with open(path, newline='') as f:
+            reader = csv.reader(f)
+            existing_header = next(reader, None)
+            if existing_header == fields:
+                return
+            rows = list(reader)
+        n = len(fields)
+        fixed_rows = [r[:n] + [''] * (n - len(r)) for r in rows]
+        tmp_path = path.with_name(path.name + '.tmp')
+        with open(tmp_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(fields)
+            writer.writerows(fixed_rows)
+        os.replace(tmp_path, path)
+    except OSError:
+        pass
 
 
 class DebugRun:
@@ -188,9 +231,6 @@ class DebugRun:
             'planning_duration_s': planning_duration_s,
         }
         with _csv_lock:
-            is_new = not csv_path.exists()
+            _ensure_csv_header(csv_path, _CSV_FIELDS)
             with open(csv_path, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
-                if is_new:
-                    writer.writeheader()
-                writer.writerow(row)
+                csv.DictWriter(f, fieldnames=_CSV_FIELDS).writerow(row)

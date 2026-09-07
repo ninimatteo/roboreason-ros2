@@ -91,6 +91,48 @@ BENCHMARK_RESULTS_FIELDS = [
 ]
 
 
+def _ensure_csv_header(path: Path, fields: list) -> None:
+    """Make sure `path` starts with a header row exactly matching `fields`.
+
+    Creates the file with that header if it doesn't exist yet. If it does
+    exist but its header has drifted from `fields` (e.g. a field was added
+    here after the file was first created — this is what silently broke
+    planning_duration_s until ROBOAI-29), migrates it in place: every
+    existing row is padded/truncated to the new column count and the file
+    is rewritten atomically (temp file + rename), so a concurrent append
+    from another process can't observe a half-written file.
+
+    Never raises — this is debug-only logging plumbing and must not be
+    able to take down a real execute_command()/plan call; on any
+    read/write error the caller's own append still runs and surfaces
+    whatever's actually wrong.
+    """
+    if not path.exists():
+        try:
+            with open(path, 'w', newline='') as f:
+                csv.writer(f).writerow(fields)
+        except OSError:
+            pass
+        return
+    try:
+        with open(path, newline='') as f:
+            reader = csv.reader(f)
+            existing_header = next(reader, None)
+            if existing_header == fields:
+                return
+            rows = list(reader)
+        n = len(fields)
+        fixed_rows = [r[:n] + [''] * (n - len(r)) for r in rows]
+        tmp_path = path.with_name(path.name + '.tmp')
+        with open(tmp_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(fields)
+            writer.writerows(fixed_rows)
+        os.replace(tmp_path, path)
+    except OSError:
+        pass
+
+
 def _summary_row_for(debug_dir: Path, run_id: str) -> dict:
     """Looks up this run's row in debug/summary.csv, written by DebugRun
     (debug_recorder.py) directly from the planner node that ran it — the
@@ -670,12 +712,9 @@ class GuiBridgeNode(Node):
 
             csv_path = Path(settings.DEBUG_DIR) / 'benchmark_summary.csv'
             fields = ['run_id', 'executed', 'num_steps_executed', 'error', 'is_benchmark', 'execution_duration_s']
-            is_new = not csv_path.exists()
+            _ensure_csv_header(csv_path, fields)
             with open(csv_path, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=fields)
-                if is_new:
-                    writer.writeheader()
-                writer.writerow(outcome)
+                csv.DictWriter(f, fieldnames=fields).writerow(outcome)
         except Exception as exc:
             self.get_logger().warn(f'[GuiBridgeNode] failed to record execution outcome: {exc}')
 
@@ -799,12 +838,9 @@ class GuiBridgeNode(Node):
 
         try:
             results_csv.parent.mkdir(parents=True, exist_ok=True)
-            is_new = not results_csv.exists()
+            _ensure_csv_header(results_csv, BENCHMARK_RESULTS_FIELDS)
             with open(results_csv, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=BENCHMARK_RESULTS_FIELDS)
-                if is_new:
-                    writer.writeheader()
-                writer.writerow(row)
+                csv.DictWriter(f, fieldnames=BENCHMARK_RESULTS_FIELDS).writerow(row)
         except OSError as exc:
             return {'ok': False, 'error': f'Failed to write {results_csv}: {exc}'}
 
