@@ -17,6 +17,23 @@ this plan. Two changes from that version:
 2. **The statistical criterion is declared here, before any trial runs**,
    not chosen after looking at the numbers — see §4.
 
+**Addendum 2026-09-07.** Collection for this cycle runs on
+`feature/ROBOAI-19-bbox-scene-schema`, not `main` — ROBOAI-19 (the
+`targets.*` bounds schema migration) is verified working on real hardware
+but still formally In Review, not yet merged. Running the campaign on
+this branch doubles as an extended real-hardware review of that change:
+if it holds up across all 180 trials, that's stronger evidence than a
+manual look at the diff. Record the branch alongside the commit hash in
+the DoD's "commit hash used for collection" step (§5).
+
+This does **not** relax the code-freeze rule, it just moves which branch
+it applies to: if a bug in ROBOAI-19's code surfaces mid-collection, stop
+the campaign immediately, fix it on this same branch (not on `main`), and
+restart collection from rep 1 rather than resuming — a fix partway
+through means the arms are no longer running the same code version, which
+is exactly what the freeze exists to prevent. Only merge to `main` once
+the full 180-trial run completes clean.
+
 ---
 
 ## 0. What's different from the paper (read this first)
@@ -208,8 +225,10 @@ stop:
    reasoning as before: most likely to need care in the sub-task check).
 2. Run `benchmark/benchmark_annotate.py --summary` for the TS%/TSR%/AETS
    table with Wilson CIs, and the two planned Fisher tests from §3.
-3. Regenerate plots on the 3-arm data; annotate the commit hash used for
-   collection in `benchmark/results_2026-09_3arm.csv` per ROBOAI-25's DoD.
+3. Regenerate plots on the 3-arm data; annotate the branch and commit
+   hash used for collection (`feature/ROBOAI-19-bbox-scene-schema`, see
+   the 2026-09-07 addendum above) in `benchmark/results_2026-09_3arm.csv`
+   per ROBOAI-25's DoD.
 
 ---
 
