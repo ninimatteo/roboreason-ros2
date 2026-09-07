@@ -1,4 +1,4 @@
-# Benchmark Plan — LLM vs VLM vs VLM_LLM Reasoning-Method Evaluation
+# Benchmark Plan — LLM vs VLM Reasoning-Method Evaluation
 
 Adapted from the taxonomy and metrics in *"LLM-Based Reasoning for Robotic
 Planning: Robustness to Task and Environmental Complexity"* (Favali,
@@ -22,7 +22,7 @@ this plan. Two changes from that version:
 `targets.*` bounds schema migration) is verified working on real hardware
 but still formally In Review, not yet merged. Running the campaign on
 this branch doubles as an extended real-hardware review of that change:
-if it holds up across all 180 trials, that's stronger evidence than a
+if it holds up across the full run, that's stronger evidence than a
 manual look at the diff. Record the branch alongside the commit hash in
 the DoD's "commit hash used for collection" step (§5).
 
@@ -32,7 +32,26 @@ the campaign immediately, fix it on this same branch (not on `main`), and
 restart collection from rep 1 rather than resuming — a fix partway
 through means the arms are no longer running the same code version, which
 is exactly what the freeze exists to prevent. Only merge to `main` once
-the full 180-trial run completes clean.
+the full run completes clean.
+
+**Addendum 2026-09-07 (second).** `VLM_LLM` is dropped from this cycle —
+two arms, `LLM` and `VLM`, not three. Not a software defect: a real
+object in the camera's field of view (a loose cardboard flap propped at
+an angle on a tray-like container, off to the side of the workspace) has
+no usable depth at that viewing angle, and the VLM's scene-grounding step
+correctly, repeatedly detects it as a candidate target — `_deproject_points`
+then fails outright on it ("No valid depth at u=..., v=..."), taking down
+the whole `VLM_LLM` plan. Physical setup issue, not something a code fix
+resolves; out of scope to chase further this cycle. Three `VLM_LLM` trials
+already completed cleanly before this started recurring (`pp_easy`,
+`pp_hard`, `sort_easy` in `benchmark/results_2026-09_3arm.csv`) — left in
+place as partial data, not deleted.
+
+`benchmark/results_2026-09_3arm.csv` keeps its `_3arm` name despite the
+scope drop, for continuity with the rows already in it — not worth a
+rename mid-collection (every reader/writer of that path would need
+updating in lockstep). Read `_3arm` as "this cycle's results file", not
+as a live claim about arm count.
 
 ---
 
@@ -88,18 +107,16 @@ the arithmetic right in the first place) — eyeball/measure, don't
 overthink precision; this is a planning-logic benchmark, not a metrology
 one.
 
-**6 conditions × 10 reps × 3 modes = 180 trials.**
+**6 conditions × 10 reps × 2 modes = 120 trials** (see the 2026-09-07
+addendum above — `VLM_LLM` dropped from this cycle).
 
 ---
 
-## 2. Model (single, unified across all three arms)
+## 2. Model (single, unified across both arms)
 
-`nebius/kimi-k2.6` for **every** call in all three modes — the LLM
-planning call, the VLM direct-grounding call, and both halves of
-`VLM_LLM` (the scene-grounding call and the subsequent LLM planning
-call). Concretely: `Settings.MODEL_NAME` and `Settings.VLM_MODEL_NAME`
-both set to `nebius/kimi-k2.6`, and the GUI's "Grounding provider/model"
-fields (used by `mode=VLM_LLM`) set to the same.
+`nebius/kimi-k2.6` for **every** call in both modes — the LLM planning
+call and the VLM direct-grounding call. Concretely: `Settings.MODEL_NAME`
+and `Settings.VLM_MODEL_NAME` both set to `nebius/kimi-k2.6`.
 
 Why this model: verified clean on real hardware in both text-only and
 image modes during ROBOAI-12 (`sort_hard` and `arith_hard`, no errors).
@@ -107,7 +124,7 @@ image modes during ROBOAI-12 (`sort_hard` and `arith_hard`, no errors).
 for LLM, `groq/qwen3.6-27b` for VLM) — this study is a fresh baseline, not
 an extension of July's results.
 
-**Reasoning method: `cot_sc`, fixed across all 180 trials** (matches
+**Reasoning method: `cot_sc`, fixed across all 120 trials** (matches
 July — a model×method interaction isn't part of this study).
 
 **Timing note:** `kimi-k2.6` is measurably slower than July's models —
@@ -128,21 +145,19 @@ be picked after the fact to fit whatever the numbers turn out to be:
   because it isn't needlessly conservative here.
 - **One planned hypothesis test, not an exploratory sweep of all pairwise
   comparisons:** two-sided Fisher's exact test on `arith_hard` TSR,
-  comparing `VLM` against `VLM_LLM` — this is the actual hypothesis
-  ROBOAI-25 is testing (does hybrid grounding recover arithmetic
-  performance toward the LLM arm's level). A second planned test, same
-  method, compares `LLM` against `VLM_LLM` on the same condition.
+  comparing `LLM` against `VLM` — this is the actual hypothesis ROBOAI-25
+  is testing (does grounding modality — an exact text description of the
+  scene versus reading it back out of an image — affect performance on
+  the task that leans hardest on correct object-identity reasoning).
   Significance threshold α = 0.05, stated here in advance.
-- **Everything else (the other 5 conditions, any other pairwise arm
-  comparison) is reported descriptively with its Wilson CI, not
-  hypothesis-tested.** With three arms × six conditions there are enough
-  possible pairwise comparisons that testing all of them would need a
-  multiple-comparison correction severe enough to be nearly powerless at
-  n=10 — better to commit to the two comparisons that matter for the
-  paper's actual claim and report the rest as description, not dress up
-  exploratory numbers as confirmatory.
+- **Everything else (the other 5 conditions) is reported descriptively
+  with its Wilson CI, not hypothesis-tested.** With two arms there's
+  only one possible pairwise comparison per condition; committing to a
+  single one (the condition that matters most for the paper's actual
+  claim) keeps the test properly confirmatory instead of an exploratory
+  sweep across all six dressed up as one.
 - Implementation: `benchmark/plot_results.py` (or a small addition to it)
-  computes Wilson intervals and the two Fisher tests directly from
+  computes the Wilson intervals and the Fisher test directly from
   `benchmark/results_2026-09_3arm.csv` — no manual spreadsheet work, same principle as
   the existing automatic TS/TSR/AETS computation.
 
@@ -181,51 +196,49 @@ not estimated:
 All three land in `benchmark/results_2026-09_3arm.csv` alongside TS/TSR/AETS.
 Expect `planning_duration_s` to be the more interesting one across arms —
 `kimi-k2.6` was observed at ~1-2 min per VLM-mode `cot_sc` call during
-ROBOAI-12 testing, and `VLM_LLM` pays for two model calls (grounding then
-planning) where `VLM` pays for one — worth a look even outside the two
-planned statistical tests in §3.
+ROBOAI-12 testing — worth a look even outside the planned statistical
+test in §3.
 
 ---
 
 ## 5. Step-by-step
 
-### Day 0 — today, if there's time (setup + coarse pass across all 3 arms)
+### Day 0 — today, if there's time (setup + coarse pass across both arms)
 
 1. Confirm the physical scene matches the task matrix: 4 cubes (blue, red,
    white, orange) on the table, tray present.
 2. Confirm `MODEL_NAME`, `VLM_MODEL_NAME`, and the GUI's grounding
    provider/model are all set to `nebius/kimi-k2.6`; `reasoning_method`
-   is `cot_sc` in every panel that has one (planning and, for `VLM_LLM`,
-   grounding).
-3. **Coarse pass — 1 rep of all 6 conditions, all 3 modes (18 runs).**
+   is `cot_sc` in every panel that has one.
+3. **Coarse pass — 1 rep of all 6 conditions, both modes (12 runs).**
    Goal: catch a broken prompt or a systematic crash before committing to
    10 reps of it. Annotate each run immediately with
    `benchmark/benchmark_annotate.py` (see §6) — don't batch it, you'll
    forget the visual state. At `kimi-k2.6`'s observed pace, budget this
-   coarse pass at roughly 30-45 min for the VLM/VLM_LLM cells alone.
+   coarse pass at roughly 20-30 min for the VLM cells alone.
 4. If a prompt is ambiguous/broken, fix the wording here (update this doc
    too) — cheap now, expensive after 50+ more trials with the old
    wording.
 
-At the end of Day 0 you have n=1 across the entire 6×3 matrix — a thin
+At the end of Day 0 you have n=1 across the entire 6×2 matrix — a thin
 but complete preliminary result set if the remaining time falls through.
 
-### Day 1 (Monday 7) — bulk collection, cheapest task first, all 3 modes
+### Day 1 (Monday 7) — bulk collection, cheapest task first, both modes
 
 Backfill reps 2-10 per mode, in this order, so each *finished*
 task×mode cell is a complete, immediately-usable dataset if you have to
 stop:
 
-1. `pp_easy` / `pp_hard` — all 3 modes, reps 2-10.
-2. `sort_easy` / `sort_hard` — all 3 modes, reps 2-10.
+1. `pp_easy` / `pp_hard` — both modes, reps 2-10.
+2. `sort_easy` / `sort_hard` — both modes, reps 2-10.
 
 ### Day 2 (Tuesday 8) — finish collection + analysis
 
-1. `arith_easy` / `arith_hard` — all 3 modes, reps 2-10 (kept last, same
+1. `arith_easy` / `arith_hard` — both modes, reps 2-10 (kept last, same
    reasoning as before: most likely to need care in the sub-task check).
 2. Run `benchmark/benchmark_annotate.py --summary` for the TS%/TSR%/AETS
-   table with Wilson CIs, and the two planned Fisher tests from §3.
-3. Regenerate plots on the 3-arm data; annotate the branch and commit
+   table with Wilson CIs, and the planned Fisher test from §3.
+3. Regenerate plots on the collected data; annotate the branch and commit
    hash used for collection (`feature/ROBOAI-19-bbox-scene-schema`, see
    the 2026-09-07 addendum above) in `benchmark/results_2026-09_3arm.csv`
    per ROBOAI-25's DoD.
