@@ -191,7 +191,6 @@ class VLMLLMPlannerNode(Node):
         debug_path = self._save_debug_frame(image_path, detected, task_dir)
         if debug_path is not None:
             run.save_debug_image(str(debug_path))
-        shutil.rmtree(task_dir, ignore_errors=True)
 
         # 3. Batch-deproject pixel centers → world [x, y, z] and assemble the
         #    generated scene JSON (workspace/robot copied unmodified from
@@ -203,6 +202,12 @@ class VLMLLMPlannerNode(Node):
         self.get_logger().info(f'[VLMLLMPlannerNode] Saved generated scene → {generated_scene_path}')
         run.log(f'Saved generated scene -> {generated_scene_path}')
         run.save_generated_scene(str(generated_scene_path))
+
+        # task_dir's contents (raw frame, debug overlay, generated scene)
+        # have all been copied into run.dir by now — safe to clean up.
+        # Must stay alive until here: generated_scene.json is written into
+        # this same directory above, after the frame/overlay are done with.
+        shutil.rmtree(task_dir, ignore_errors=True)
 
         # 4. Standard LLM planning, grounded on the generated scene JSON.
         reasoning_method = self.get_parameter('reasoning_method').value
