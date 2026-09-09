@@ -100,8 +100,13 @@ is the index; the short version:
   end). `audit-2026-07-08.md` is the read-only code audit whose safety findings
   are tracked as Jira bugs.
 - `docs/paper/` — LaTeX sources for anything that becomes a PDF. `report/` is
-  the technical report, `planning/` the three candidate paper outlines (outline
-  B is the one being written; A and C are recorded but not pursued).
+  the technical report, `planning/` the three candidate paper outlines,
+  `draft/` the ICRA submission draft itself (`main.tex` + `sections/` +
+  `images/`, IEEE conference format). **Outline A is the one being written**
+  as of 2026-09-09 (switched from B: B's central claim, a VLM-specific
+  arithmetic collapse, didn't replicate on the September rerun's unified
+  model — see ROBOAI-27 and `session-context.md`). C is recorded but not
+  pursued.
 - `docs/archive/` — kept but unmaintained, excluded from git.
 - `benchmark/PLAN.md` — the benchmark protocol, and `benchmark/results.csv` the
   data behind it.

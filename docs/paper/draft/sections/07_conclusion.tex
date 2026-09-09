@@ -1,0 +1,18 @@
+We diagnosed a recurring class of geometry-grounding failures in LLM/VLM
+robot planning, drawn from six sessions of real-hardware deployment, and
+showed that its structural cause -- a model computing a physical quantity
+that a sensor, a paired action, or real multi-body contact already
+determines -- is invisible to symbolic and scripted simulation by
+construction, including a directly comparable prior taxonomy-driven
+benchmark. Replacing model-computed geometry with a deterministic
+grounding layer closes five of the six bugs we diagnosed; a 120-trial
+real-hardware evaluation with that layer in place, using a single unified
+model for both grounding modalities, shows the sixth -- a multi-object
+placement collision -- as the dominant residual failure, occurring in
+both the LLM and VLM pipelines regardless of which one grounded the
+scene. We argue that a geometry-grounding audit is a necessary complement
+to task-complexity benchmarking for any LLM/VLM planner headed to
+physical hardware, and leave closing the sixth bug's dynamic,
+trajectory-level half, a controlled hardware ablation isolating the
+grounding layer's quantitative effect, and a depth-verified treatment of
+grasp width, as the most direct next steps.

@@ -1,0 +1,86 @@
+\textbf{Implication for evaluation practice.} If the argument of this
+paper is correct, symbolic and scripted simulation is necessary but not
+sufficient for validating an LLM/VLM robot planner: it can validate
+reasoning strategy, task decomposition, and high-level correctness, but by
+construction cannot exercise the geometry-grounding failure class of
+\S\ref{sec:taxonomy}, because it never asks the model to compute a
+quantity a physical sensor could contradict. We suggest that a
+geometry-grounding audit -- identifying every numeric quantity a planning
+prompt asks the model to compute itself, and asking whether a sensor or a
+paired action already determines that quantity more reliably -- belongs
+alongside task-complexity benchmarking as a standard step before hardware
+deployment, independent of which reasoning strategy or foundation model is
+used.
+
+\textbf{What the missing ablation would add.} \S\ref{sec:validation} is
+explicit that our deterministic grounding layer is validated
+retrospectively, against replayed real-hardware failures and a unit
+regression suite, rather than through a live controlled A/B comparison
+on hardware. A live ablation -- re-running the task conditions that
+originally surfaced these bugs with the grounding layer enabled versus
+disabled -- would let us report a quantitative safety/success delta
+attributable to the fix specifically, rather than inferring its
+necessity from the failures it was designed to close. Two scopes are
+designed but neither is run at the time of writing: a restricted version
+(LLM-only, the two release-geometry fixes specifically, roughly half a
+day including trials) and a complete one (both modalities, the full
+taxonomy including the safety-critical TCP-offset/grasp-width path,
+roughly two days). We flag the restricted version as the most direct
+next step, since it targets the mechanism the evaluation of
+\S\ref{sec:evaluation} actually implicates.
+
+\textbf{Case 6 remains the largest open item.} Everything else in this
+paper is either closed (five of six bugs) or bounded by a controlled
+comparison we can eventually run (the ablation above). Case 6 is
+neither: it is a trajectory-level, multi-body contact problem, and
+\S\ref{sec:zone-spacing}'s static-spacing mitigation, while a genuine
+improvement over an unbounded layout, does not touch the dynamic half of
+the problem at all. Closing it plausibly needs one of (a) a
+motion-planning-level check of the approach trajectory against
+already-placed objects' known footprints, not just their final target
+positions, or (b) a settle-time verification step after each release,
+before the next pick begins, so a displaced neighbor is caught and
+corrected rather than compounding into the next release. We have not
+implemented or evaluated either.
+
+\textbf{Generalizability.} Our evidence comes from one manipulator (UR5cb),
+one gripper (OnRobot RG2), one camera rig, and one reasoning strategy.
+Deliberately, it comes from a \emph{single} underlying model
+(\code{kimi-k2.6}) used for both the LLM and VLM arm, rather than one
+model per modality -- an earlier configuration with modality-specific
+models is what originally produced the now-non-replicating
+value-mapping-reasoning finding of \S\ref{sec:computation-not-perception},
+which in hindsight looks like it was at least partly a model-identity
+confound rather than a pure grounding-modality effect. We do not claim
+that the specific six bugs of Table~\ref{tab:taxonomy} recur verbatim on
+different hardware; we claim that the \emph{structural pattern} --
+geometry computed by a model rather than measured or derived from a
+paired action, and multiple real bodies sharing space over time -- is a
+property of the architecture (asking an LLM/VLM to output numeric
+geometry at all, and placing more than one object in a shared zone), not
+of this particular robot, and should be audited for on any comparable
+deployment.
+
+\textbf{Grasp width remains unverified.} Of the quantities in
+\S\ref{sec:grounding-layer}, grasp width is the one our system still
+cannot cross-check against depth in every case: a single top-down depth
+sample determines an object's height unambiguously, but not its
+left-right extent. Our best-effort edge-inset sampling
+(\S\ref{sec:grounding-layer}) reduces, but does not eliminate, this gap;
+a depth-informed rectification of the camera view before grounding is a
+natural next step we have not yet completed.
+
+\textbf{Reliability of operator-supplied labels.} Our semi-automatic
+evaluation protocol (\S\ref{sec:evaluation}) depends on a single
+operator's real-time judgment of safety and sub-task completion for each
+trial. We did not measure inter-rater reliability with a second, blinded
+annotator on a subsample of trials, which would strengthen confidence in
+the reported TS/TSR numbers independent of the geometry-grounding
+argument this paper makes. This is not a hypothetical risk: an early pass
+over this cycle's data marked every trial safe regardless of outcome,
+caught only by cross-checking the safety label against the free-text
+operator note recorded for the same trial, and corrected before the
+numbers in \S\ref{sec:evaluation} were computed. We report the incident
+as a concrete illustration of exactly the reliability concern this
+paragraph raises, not as a suggestion that it recurs undetected
+elsewhere in this dataset.

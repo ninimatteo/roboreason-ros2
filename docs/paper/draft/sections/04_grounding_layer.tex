@@ -1,0 +1,114 @@
+\subsection{Design principle}
+
+The fix for five of the six bugs in Table~\ref{tab:taxonomy} follows the
+same rule: \emph{pull geometric arithmetic out of the model and into code
+wherever the answer is computable from a sensor measurement or a paired
+action already in the plan, and leave the model responsible only for the
+symbolic decision of what to do and where, not how much}. The model still
+chooses which object to pick, which zone to release into, and in what
+order; a deterministic post-processing layer then overwrites the specific
+numeric fields most exposed to the failure modes of
+\S\ref{sec:taxonomy}, using only information already available at plan
+time (the paired pick action, measured depth, and the scene's registered
+target geometry). The sixth bug (Case 6, \S\ref{sec:case-collision}) is
+not a scalar this rule can simply overwrite -- it is a trajectory-level,
+time-dependent contact problem -- and is addressed separately, and only
+partially, below.
+
+\subsection{Object and release height}
+\label{sec:fix-height}
+
+Given a generated plan, \code{fix\_object\_height} recomputes every
+release step's \code{object\_height} as the true vertical distance from
+the paired pick's actual grasp contact point to the table surface --
+$\height - \descent$ in the notation of \S\ref{sec:case-grasp-mismatch}
+-- rather than accepting whatever height value the model reported. This
+directly closes Case 1: the release-lift amount is now derived from the
+\emph{same} descent the executor actually commanded during the pick,
+which by construction cannot disagree with itself, instead of from a
+separate, independently-computed model output that could.
+
+\code{fix\_release\_height} performs the analogous correction for the
+release \emph{position}. Two design choices matter here. First, matching
+a release against the scene's registered targets is done by
+\textbf{footprint containment} ($\text{position} \pm \text{size}/2$)
+rather than point-distance to a target's registered center -- Case 3 in
+Table~\ref{tab:taxonomy} showed that point-distance matching misses valid
+placements inside a target zone that is tens of centimeters wide.
+Second, a release position that \emph{exactly echoes} a target's or
+object's own registered coordinates is treated as intentional (a
+deliberate stack or placement) and left untouched; a position that merely
+\emph{drifted} into a zone's footprint without echoing it is nudged back
+outside, along whichever axis requires the smaller correction, but only
+when that zone's surface sits meaningfully above the bare table -- nudging
+away from the near-table-height generic ``table'' zone would otherwise
+push objects off the table's edge trying to escape a zone that legitimately
+contains most of the workspace.
+
+\subsection{Width-aware TCP offset}
+
+Because the gripper's fingers pivot, the flange-to-contact distance for a
+given commanded width is not constant. We measure this relationship at
+three representative widths (fully closed, mid-open, fully open) and
+interpolate piecewise-linearly between them at plan time, setting the
+executor's tool transform per-pick from the plan's reported grasp width
+and resetting it to a default mid-open value after release. Pick descent
+is additionally capped at (calibrated offset $-$ clamp clearance), so
+that tall objects are gripped nearer their top rather than driving the
+gripper's rigid mounting body into them -- this closes Case 5.
+
+\subsection{Zone-aware spacing: a partial mitigation for Case 6}
+\label{sec:zone-spacing}
+
+For a target zone that receives multiple releases in one plan, we lay out
+occupants on a grid centered on the zone's anchor point and clamped to
+its registered bounds, falling back to an unbounded grid only when no
+known zone matches. This closes the \emph{static} half of Case 6: final
+release positions inside a zone no longer overlap, and no longer overflow
+a zone smaller than the model's own (unclamped) spacing guess would have
+produced. It does not close the \emph{dynamic} half -- the arm's approach
+trajectory to the $n$-th release is not checked against the
+already-placed $(n-1)$-th object's footprint, and a released object's
+small residual motion is not constrained at all. \S\ref{sec:evaluation}
+reports this as still the dominant failure mode; \S\ref{sec:discussion}
+returns to what closing the dynamic half would require.
+
+\subsection{Best-effort grasp-width sampling}
+
+For the VLM pipeline, grasp width is estimated by deprojecting a detected
+bounding box's left and right edge pixels to measure real-world distance.
+Sampling directly on the object's silhouette boundary is the single worst
+location for valid depth, since boundary pixels are the most exposed to
+occlusion and parallax error; a single failed sample previously aborted
+the entire batched deprojection call, crashing an otherwise valid plan
+over a parameter -- grasp width -- that does not affect whether the
+\emph{pick} and \emph{release} coordinates themselves are safe. We fixed
+this by (i) sampling slightly inset from the raw silhouette edge rather
+than on it, landing on the object's surface instead of its boundary, and
+(ii) isolating width estimation into its own best-effort call that
+degrades to the model's own width guess on failure instead of aborting
+the plan. This closes Case 4 without requiring width to be
+depth-verified in every case -- an open limitation we return to in
+\S\ref{sec:discussion}.
+
+\subsection{Validation}
+\label{sec:validation}
+
+Each fix in this section was developed and iterated against real,
+previously-failing production runs: the per-run debug artifacts our
+system records for every planning call (raw model response, active
+configuration, and, in VLM modes, the captured camera frame) let us
+replay the exact inputs that produced a given hardware failure and
+confirm that the corrected pipeline now produces the hand-derived
+expected geometry for that same input, rather than validating only
+against synthetic test cases. This retrospective replay, together with a
+unit-level regression suite (45/45 passing across all reasoning-method
+implementations at the time of writing), gives us confidence that each
+fix addresses its diagnosed root cause. \textbf{A live, controlled
+hardware A/B ablation} -- re-running the task conditions that originally
+surfaced these bugs with the deterministic grounding layer enabled versus
+disabled, and reporting the resulting effect on task safety and success
+directly -- is designed but had not yet been executed at the time of
+writing; \S\ref{sec:evaluation} instead reports the residual failure
+distribution \emph{with} the fix in place, and \S\ref{sec:discussion}
+discusses what the missing controlled comparison would add.

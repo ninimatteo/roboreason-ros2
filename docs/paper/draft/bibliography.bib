@@ -1,0 +1,311 @@
+% =====================================================================
+% Shared bibliography for the three RoboReason ROS2 / ICRA 2027 papers
+% (main_A_sim_to_real_gap.tex, main_B_llm_vs_vlm_benchmark.tex,
+% main_C_systems_paper.tex). Not every entry is cited by every paper --
+% each main file only pulls in what it actually \cite{}s.
+%
+% Entries marked [Sim] / [RAS] below are the two direct sibling papers
+% (Favali, Sabattini & Villani, DISMI, UniMoRe) this project's outlines
+% differentiate against -- see docs/paper_planning/00_foundation.md.
+% =====================================================================
+
+% --------------------------------------------------------------------
+% [Sim] and [RAS] -- the two direct sibling papers
+% --------------------------------------------------------------------
+
+@unpublished{favaliRoboReasonLab,
+  title   = {{RoboReason Lab}: An Accessible Simulation Framework for Foundation Models in Robotics},
+  author  = {Favali, Filippo and Sabattini, Lorenzo and Villani, Valeria},
+  note    = {Manuscript, Department of Sciences and Methods for Engineering (DISMI), University of Modena and Reggio Emilia. Code: \url{https://github.com/filippofavali/RoboReason-Lab}. TODO(authors): update with final venue/identifier once available.},
+  year    = {2026}
+}
+
+@article{favaliRAS,
+  title   = {{LLM}-Based Reasoning for Robotic Planning: Robustness to Task and Environmental Complexity},
+  author  = {Favali, Filippo and Sabattini, Lorenzo and Villani, Valeria},
+  journal = {Robotics and Autonomous Systems},
+  year    = {2026},
+  note    = {In press. TODO(authors): update volume/pages once assigned.}
+}
+
+% --------------------------------------------------------------------
+% LLM / VLM planning and reasoning strategies
+% --------------------------------------------------------------------
+
+@article{kim2024survey,
+  title   = {A survey on integration of large language models with intelligent robots},
+  author  = {Kim, Yeseung and Kim, Dohyun and Choi, Jieun and Park, Jisang and Oh, Nayoung and Park, Daehyung},
+  journal = {Intelligent Service Robotics},
+  volume  = {17},
+  number  = {5},
+  pages   = {1091--1107},
+  year    = {2024}
+}
+
+@article{li2024embodied,
+  title   = {Embodied agent interface: Benchmarking {LLM}s for embodied decision making},
+  author  = {Li, Manling and Zhao, Shiyu and Wang, Qineng and Wang, Kangrui and Zhou, Yu and Srivastava, Sanjana and Gokmen, Cem and Lee, Tony and Li, Li E and Zhang, Ruohan and others},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {37},
+  pages   = {100428--100534},
+  year    = {2024}
+}
+
+@article{wang2025robotics,
+  title   = {Large language models for robotics: Opportunities, challenges, and perspectives},
+  author  = {Wang, Jiaqi and Shi, Enze and Hu, Huawen and Ma, Chong and Liu, Yiheng and Wang, Xuhui and Yao, Yincheng and Liu, Xuan and Ge, Bao and Zhang, Shu},
+  journal = {Journal of Automation and Intelligence},
+  volume  = {4},
+  number  = {1},
+  pages   = {52--64},
+  year    = {2025}
+}
+
+@article{ahn2022saycan,
+  title   = {Do as {I} can, not as {I} say: Grounding language in robotic affordances},
+  author  = {Ahn, Michael and Brohan, Anthony and Brown, Noah and Chebotar, Yevgen and Cortes, Omar and David, Byron and Finn, Chelsea and Fu, Chuyuan and Gopalakrishnan, Keerthana and Hausman, Karol and others},
+  journal = {arXiv preprint arXiv:2204.01691},
+  year    = {2022}
+}
+
+@inproceedings{huang2022zeroshot,
+  title     = {Language models as zero-shot planners: Extracting actionable knowledge for embodied agents},
+  author    = {Huang, Wenlong and Abbeel, Pieter and Pathak, Deepak and Mordatch, Igor},
+  booktitle = {International Conference on Machine Learning},
+  pages     = {9118--9147},
+  year      = {2022},
+  organization = {PMLR}
+}
+
+@article{billard2025roadmap,
+  title   = {A roadmap for {AI} in robotics},
+  author  = {Billard, Aude and Albu-Schaeffer, Alin and Beetz, Michael and Burgard, Wolfram and Corke, Peter and Ciocarlie, Matei and Dahiya, Ravinder and Kragic, Danica and Goldberg, Ken and Nagai, Yukie and others},
+  journal = {Nature Machine Intelligence},
+  volume  = {7},
+  number  = {6},
+  pages   = {818--824},
+  year    = {2025}
+}
+
+@article{wei2022cot,
+  title   = {Chain-of-thought prompting elicits reasoning in large language models},
+  author  = {Wei, Jason and Wang, Xuezhi and Schuurmans, Dale and Bosma, Maarten and Xia, Fei and Chi, Ed and Le, Quoc V and Zhou, Denny and others},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {35},
+  pages   = {24824--24837},
+  year    = {2022}
+}
+
+@article{berti2025emergent,
+  title   = {Emergent abilities in large language models: A survey},
+  author  = {Berti, Leonardo and Giorgi, Flavio and Kasneci, Gjergji},
+  journal = {arXiv preprint arXiv:2503.05788},
+  year    = {2025}
+}
+
+@inproceedings{yao2022react,
+  title     = {{ReAct}: Synergizing reasoning and acting in language models},
+  author    = {Yao, Shunyu and Zhao, Jeffrey and Yu, Dian and Du, Nan and Shafran, Izhak and Narasimhan, Karthik R and Cao, Yuan},
+  booktitle = {The Eleventh International Conference on Learning Representations},
+  year      = {2022}
+}
+
+@article{yao2023tot,
+  title   = {Tree of thoughts: Deliberate problem solving with large language models},
+  author  = {Yao, Shunyu and Yu, Dian and Zhao, Jeffrey and Shafran, Izhak and Griffiths, Tom and Cao, Yuan and Narasimhan, Karthik},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {36},
+  pages   = {11809--11822},
+  year    = {2023}
+}
+
+@article{madaan2023selfrefine,
+  title   = {Self-refine: Iterative refinement with self-feedback},
+  author  = {Madaan, Aman and Tandon, Niket and Gupta, Prakhar and Hallinan, Skyler and Gao, Luyu and Wiegreffe, Sarah and Alon, Uri and Dziri, Nouha and Prabhumoye, Shrimai and Yang, Yiming and others},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {36},
+  pages   = {46534--46594},
+  year    = {2023}
+}
+
+@inproceedings{zhou2024isrllm,
+  title     = {{ISR-LLM}: Iterative self-refined large language model for long-horizon sequential task planning},
+  author    = {Zhou, Zhehua and Song, Jiayang and Yao, Kunpeng and Shu, Zhan and Ma, Lei},
+  booktitle = {2024 IEEE International Conference on Robotics and Automation (ICRA)},
+  pages     = {2081--2088},
+  year      = {2024},
+  organization = {IEEE}
+}
+
+@article{huang2024planningsurvey,
+  title   = {Understanding the planning of {LLM} agents: A survey},
+  author  = {Huang, Xu and Liu, Weiwen and Chen, Xiaolong and Wang, Xingmei and Wang, Hao and Lian, Defu and Wang, Yasheng and Tang, Ruiming and Chen, Enhong},
+  journal = {CoRR},
+  year    = {2024}
+}
+
+@article{wang2022selfconsistency,
+  title   = {Self-consistency improves chain of thought reasoning in language models},
+  author  = {Wang, Xuezhi and Wei, Jason and Schuurmans, Dale and Le, Quoc and Chi, Ed and Narang, Sharan and Chowdhery, Aakanksha and Zhou, Denny},
+  journal = {arXiv preprint arXiv:2203.11171},
+  year    = {2022}
+}
+
+@article{lin2023text2motion,
+  title   = {Text2motion: From natural language instructions to feasible plans},
+  author  = {Lin, Kevin and Agia, Christopher and Migimatsu, Toki and Pavone, Marco and Bohg, Jeannette},
+  journal = {Autonomous Robots},
+  volume  = {47},
+  number  = {8},
+  pages   = {1345--1365},
+  year    = {2023}
+}
+
+% --------------------------------------------------------------------
+% VLA / end-to-end and vision-language grounding
+% --------------------------------------------------------------------
+
+@article{brohan2023rt2,
+  title   = {{RT-2}: Vision-language-action models transfer web knowledge to robotic control},
+  author  = {Brohan, Anthony and Brown, Noah and Carbajal, Justice and Chebotar, Yevgen and Chen, Xi and Choromanski, Krzysztof and Ding, Tianli and Driess, Danny and Dubey, Avinava and Finn, Chelsea and others},
+  journal = {arXiv preprint arXiv:2307.15818},
+  year    = {2023}
+}
+
+@inproceedings{driess2023palme,
+  title     = {{PaLM-E}: An embodied multimodal language model},
+  author    = {Driess, Danny and Xia, Fei and Sajjadi, Mehdi S M and Lynch, Corey and Chowdhery, Aakanksha and Ichter, Brian and Wahid, Ayzaan and Tompson, Jonathan and Vuong, Quan and Yu, Tianhe and others},
+  booktitle = {International Conference on Machine Learning},
+  year      = {2023},
+  organization = {PMLR}
+}
+
+@article{huang2023voxposer,
+  title   = {{VoxPoser}: Composable {3D} value maps for robotic manipulation with language models},
+  author  = {Huang, Wenlong and Wang, Chen and Zhang, Ruohan and Li, Yunzhu and Wu, Jiajun and Fei-Fei, Li},
+  journal = {arXiv preprint arXiv:2307.05973},
+  year    = {2023},
+  note    = {Conference on Robot Learning (CoRL) 2023}
+}
+
+@inproceedings{liang2023codeaspolicies,
+  title     = {Code as policies: Language model programs for embodied control},
+  author    = {Liang, Jacky and Huang, Wenlong and Xia, Fei and Xu, Peng and Hausman, Karol and Ichter, Brian and Florence, Pete and Zeng, Andy},
+  booktitle = {2023 IEEE International Conference on Robotics and Automation (ICRA)},
+  pages     = {9493--9500},
+  year      = {2023},
+  organization = {IEEE}
+}
+
+@article{huang2022innermonologue,
+  title   = {Inner monologue: Embodied reasoning through planning with language models},
+  author  = {Huang, Wenlong and Xia, Fei and Xiao, Ted and Chan, Harris and Liang, Jacky and Florence, Pete and Zeng, Andy and Tompson, Jonathan and Mordatch, Igor and Chebotar, Yevgen and Sermanet, Pierre and Brown, Noah and Jackson, Tomas and Luu, Linda and Levine, Sergey and Hausman, Karol and Ichter, Brian},
+  journal = {arXiv preprint arXiv:2207.05608},
+  year    = {2022}
+}
+
+@inproceedings{singh2023progprompt,
+  title     = {{ProgPrompt}: Generating situated robot task plans using large language models},
+  author    = {Singh, Ishika and Blukis, Valts and Mousavian, Arsalan and Goyal, Ankit and Xu, Danfei and Tremblay, Jonathan and Fox, Dieter and Thomason, Jesse and Garg, Animesh},
+  booktitle = {2023 IEEE International Conference on Robotics and Automation (ICRA)},
+  pages     = {11523--11530},
+  year      = {2023},
+  organization = {IEEE}
+}
+
+% --------------------------------------------------------------------
+% Sim-to-real transfer
+% --------------------------------------------------------------------
+
+@inproceedings{zhao2020simtoreal,
+  title     = {Sim-to-real transfer in deep reinforcement learning for robotics: A survey},
+  author    = {Zhao, Wenshuai and Queralta, Jorge Pena and Westerlund, Tomi},
+  booktitle = {2020 IEEE Symposium Series on Computational Intelligence (SSCI)},
+  pages     = {737--744},
+  year      = {2020},
+  organization = {IEEE}
+}
+
+% --------------------------------------------------------------------
+% Simulation platforms and physics engines (cited for [Sim]-style
+% architecture/related-work discussion)
+% --------------------------------------------------------------------
+
+@inproceedings{todorov2012mujoco,
+  title     = {{MuJoCo}: A physics engine for model-based control},
+  author    = {Todorov, Emanuel and Erez, Tom and Tassa, Yuval},
+  booktitle = {2012 IEEE/RSJ International Conference on Intelligent Robots and Systems},
+  pages     = {5026--5033},
+  year      = {2012},
+  organization = {IEEE}
+}
+
+@inproceedings{koenig2004gazebo,
+  title     = {Design and use paradigms for {Gazebo}, an open-source multi-robot simulator},
+  author    = {Koenig, Nathan and Howard, Andrew},
+  booktitle = {2004 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) (IEEE Cat. No. 04CH37566)},
+  volume    = {3},
+  pages     = {2149--2154},
+  year      = {2004},
+  organization = {IEEE}
+}
+
+@inproceedings{rohmer2013coppeliasim,
+  title     = {{CoppeliaSim} (formerly {V-REP}): A versatile and scalable robot simulation framework},
+  author    = {Rohmer, E. and Singh, S. P. N. and Freese, M.},
+  booktitle = {Proc. of The International Conference on Intelligent Robots and Systems (IROS)},
+  year      = {2013},
+  note      = {\url{www.coppeliarobotics.com}}
+}
+
+@article{collins2021physics,
+  title   = {A review of physics simulators for robotic applications},
+  author  = {Collins, Jack and Chand, Shelvin and Vanderkop, Anthony and Howard, David},
+  journal = {IEEE Access},
+  volume  = {9},
+  pages   = {51416--51431},
+  year    = {2021}
+}
+
+% --------------------------------------------------------------------
+% Foundation model releases (cited when naming specific models used)
+% --------------------------------------------------------------------
+
+@article{grattafiori2024llama3,
+  title   = {The {Llama 3} herd of models},
+  author  = {Grattafiori, Aaron and Dubey, Abhimanyu and Jauhri, Abhinav and Pandey, Abhinav and Kadian, Abhishek and Al-Dahle, Ahmad and Letman, Aiesha and Mathur, Akhil and Schelten, Alan and Vaughan, Alex and others},
+  journal = {arXiv preprint arXiv:2407.21783},
+  year    = {2024}
+}
+
+@article{kimiteam2025k2,
+  title   = {Kimi k2: Open agentic intelligence},
+  author  = {{Kimi Team} and Bai, Yifan and Bao, Yiping and Charles, Y and Chen, Cheng and Chen, Guanduo and Chen, Haiting and Chen, Huarong and Chen, Jiahao and Chen, Ningxin and others},
+  journal = {arXiv preprint arXiv:2507.20534},
+  year    = {2025}
+}
+
+@article{yang2025qwen3,
+  title   = {Qwen3 technical report},
+  author  = {Yang, An and Li, Anfeng and Yang, Baosong and Zhang, Beichen and Hui, Binyuan and Zheng, Bo and Yu, Bowen and Gao, Chang and Huang, Chengen and Lv, Chenxu and others},
+  journal = {arXiv preprint arXiv:2505.09388},
+  year    = {2025}
+}
+
+@article{agarwal2025gptoss,
+  title   = {gpt-oss-120b \& gpt-oss-20b model card},
+  author  = {Agarwal, Sandhini and Ahmad, Lama and Ai, Jason and Altman, Sam and Applebaum, Andy and Arbus, Edwin and Arora, Rahul K and Bai, Yu and Baker, Bowen and Bao, Haiming and others},
+  journal = {arXiv preprint arXiv:2508.10925},
+  year    = {2025}
+}
+
+% --------------------------------------------------------------------
+% ROS2 concurrency / robotics systems background
+% --------------------------------------------------------------------
+
+@article{fang2025oss,
+  title   = {{AI} robotics open source {R\&D} survey: Foundation models, datasets, simulation, and benchmarks platforms (2023--2025)},
+  author  = {Fang, Xinmin and Tao, Lingfeng and Li, Zhengxiong},
+  journal = {Authorea Preprints},
+  year    = {2025}
+}

@@ -1,0 +1,80 @@
+Large language models (LLMs) and vision-language models (VLMs) are
+increasingly used as high-level planners for robotic manipulation,
+translating a natural-language instruction and a scene observation into a
+sequence of executable skills~\cite{kim2024survey, wang2025robotics,
+ahn2022saycan, huang2022zeroshot}. A large and fast-growing body of work
+validates these planners in simulation: scripted physics engines such as
+CoppeliaSim~\cite{rohmer2013coppeliasim} or MuJoCo~\cite{todorov2012mujoco},
+or, further still, purely symbolic environments in which the ``scene'' is a
+hand-authored text description and perception is a proxy that returns
+whatever the experiment designer wrote down~\cite{favaliRAS}. Symbolic and
+scripted validation is valuable -- it is fast, reproducible, and lets a
+researcher isolate the reasoning strategy from perception and control. But
+it has a structural blind spot: an object's height, its grasp width, and
+the vertical distance a gripper must travel to release it safely are never
+actually \emph{measured} in these environments. They are simply asserted,
+correctly, by construction.
+
+On real hardware, none of these quantities are given. They must be
+computed, from noisy depth, from a calibrated but imperfect camera, or from
+a hand-authored scene file that may or may not match the physical table it
+describes. Over six development sessions deploying an LLM/VLM planning
+stack on a real UR5cb manipulator with an OnRobot RG2 gripper and a
+calibrated RGB-D camera, we observed a recurring and costly pattern: when a
+planning prompt asks the model to compute a piece of manipulation geometry
+itself -- a release height, a stacking height, a grasp width -- that
+computation is often wrong, in ways that are silent until the arm
+physically drops, crushes, or misses an object. The failures are not
+random. They cluster around a single, identifiable root cause: the model
+is asked to reason about a physical quantity that a sensor, not language,
+should determine.
+
+This paper makes that observation precise and actionable. We diagnose six
+recurring geometry-grounding bugs from production hardware logs (\S
+\ref{sec:taxonomy}), show that they share a common structural cause across
+two independently-implemented planning pipelines (a static-scene LLM
+planner and a camera-grounded VLM planner), and close five of them by
+removing geometric arithmetic from the model's output entirely, replacing
+it with a deterministic grounding layer that computes the same quantities
+from paired pick/release actions and measured depth
+(\S\ref{sec:grounding-layer}). The sixth -- a multi-object placement
+collision -- we diagnose but have not yet closed, and it turns out to be
+the dominant one: a 120-trial real-hardware benchmark (\S\ref{sec:evaluation})
+shows it as the residual failure distribution once the other five are
+fixed, occurring in \emph{both} the LLM and VLM pipelines regardless of
+which one grounded the scene -- direct evidence that the failure tracks
+the geometry-grounding architecture, not the choice of grounding
+modality.
+
+Our central argument is that this failure class is not a peculiarity of
+our codebase, but a structural consequence of validating LLM/VLM robot
+planners in simulation. We make this argument concretely against a direct,
+comparable prior work: Favali et al.~\cite{favaliRAS} propose a rigorous
+taxonomy of task and environment complexity and a benchmarking framework
+for LLM-based robotic planning, evaluated in a symbolic simulator where
+ground truth is always exactly known. Their framework is, by design,
+incapable of producing the failure mode this paper documents, because
+their simulated agent never computes a grasp height that a physical sensor
+could contradict. We do not consider this a weakness of their study --
+their methodology is sound for the question it asks -- but we argue that a
+geometry-grounding audit of the kind we perform here is a necessary
+complement to any symbolic or scripted benchmark before an LLM/VLM planner
+is deployed on real hardware.
+
+The contributions of this paper are threefold:
+\begin{itemize}[nosep]
+  \item A taxonomy of six recurring real-hardware geometry-grounding
+    bugs, diagnosed from production debug logs across six development
+    sessions on a real manipulator (\S\ref{sec:taxonomy}).
+  \item A deterministic grounding layer that closes five of the six,
+    removing model-computed geometric arithmetic from the
+    planning-critical path, together with an evaluation of its effect
+    (\S\ref{sec:grounding-layer}).
+  \item A 120-trial real-hardware benchmark, methodologically anchored to
+    a directly comparable symbolic-simulation study~\cite{favaliRAS} and
+    using a single unified model for both grounding modalities, showing
+    that the sixth, still-open bug -- multi-object placement collision --
+    is the dominant residual failure in \emph{both} arms, and what that
+    implies for evaluating LLM/VLM robot planners before hardware
+    deployment (\S\ref{sec:evaluation}).
+\end{itemize}
