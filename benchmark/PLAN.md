@@ -53,6 +53,24 @@ rename mid-collection (every reader/writer of that path would need
 updating in lockstep). Read `_3arm` as "this cycle's results file", not
 as a live claim about arm count.
 
+**Addendum 2026-09-09 (ROBOAI-31).** 10 of this cycle's TS values were
+wrong: `benchmark_annotate.py` asks "Was the trial safe (no
+collision/damage)?", and July's collection answered it consistently
+(cube-cube collision in the note → `TS=0`; grasp failure/drop with no
+contact → `TS=1`, verified against every July row in both categories).
+September answered "safe" for every one of its 123 trials, including 10
+whose own `notes` field describes a collision in the same language July
+marked unsafe. Fixed by applying July's rule to those 10 `run_id`s
+specifically (`TS`/`safety_ok` flipped, nothing else touched — see
+ROBOAI-31 for the full list and evidence). Post-fix: LLM TS 98.3%, VLM
+85.0% overall, VLM dropping to 50%/60% on `sort_hard`/`arith_hard` — a
+real LLM-vs-VLM safety gap that the mislabeling had been erasing.
+`benchmark_annotate.py`'s prompt wording is fine (matches the metric's own
+definition); this was an annotation-time inconsistency, not a metric
+problem, and not a case for dropping TS — it's still what makes this
+study comparable to Favali et al.'s numbers (§4 below cites the same
+Eq. 14-16).
+
 ---
 
 ## 0. What's different from the paper (read this first)

@@ -1190,6 +1190,35 @@ including 4 new bounds-aware `distribute_zone_releases` cases), and a
 live hardware trial ("Put all the cubes on the brown tray.", 4 cubes) —
 all four landed inside the tray.
 
+## 7. ROBOAI-28/ROBOAI-31: statistical rigor on the September benchmark, and a real TS mislabeling it uncovered
+
+`benchmark/plot_results.py` now implements the criterion `PLAN.md` §3
+declared before the September data was seen: every reported TS%/TSR%
+carries a 95% Wilson score interval (pooled successes/n per cell — TS is
+exact binomial, TSR pools `sub_tasks_completed`/`sub_tasks_required`
+across trials), and the one planned hypothesis test — two-sided Fisher's
+exact on `arith_hard` full-trial success, LLM vs VLM, α=0.05 — is
+implemented, binarized per trial rather than pooling the 4 sub-tasks
+(those aren't independent draws within one trial). Result: LLM 6/10 vs
+VLM 4/10, p=0.66, not significant.
+
+Checking the CI widths against the underlying `notes` field surfaced a
+real annotation bug, not a statistics one: September's `TS` was `1` for
+all 123 rows, including 10 whose own note describes a cube-cube collision
+in the same wording July's collection had consistently marked `TS=0` for
+(verified against every July row in both categories — collision-in-note
+→ `TS=0`, grasp-failure/drop-with-no-contact → `TS=1`, no exceptions).
+Fixed by applying July's rule to those 10 `run_id`s in
+`results_2026-09_3arm.csv` (`TS`/`safety_ok` only, nothing else touched —
+full list on ROBOAI-31). Changes the headline safety numbers materially:
+LLM 98.3% vs VLM 85.0% overall, VLM down to 50%/60% on
+`sort_hard`/`arith_hard` — a real LLM-vs-VLM safety gap the mislabeling
+had been hiding, not a rounding correction.
+
+`TS` stays as a metric (matches Favali et al. RO-MAN 2025 Eq. 14-16,
+needed for direct comparability per outline B) — this was an annotation
+inconsistency at collection time, not a reason to drop it.
+
 ---
 
 ## Known Open Issues (updated 2026-09-04)
@@ -1201,10 +1230,12 @@ all four landed inside the tray.
   40 cm overshoot), narrowed by the user's own hardware calibration
   alongside the bounds migration, but not eliminated. No Jira issue
   filed yet.
-- **3-arm benchmark collection is at 1 trial**, paused since the
-  ROBOAI-19 schema change makes earlier trials non-comparable. ROBOAI-19
-  is now verified on hardware and in Jira review, but not yet merged to
-  `main` — collection stays paused until it lands there.
+- ~~3-arm benchmark collection is at 1 trial, paused~~ — **resolved**:
+  collection completed 2026-09-09 as a 2-arm study (LLM/VLM, VLM_LLM
+  dropped mid-cycle, see `PLAN.md`'s 2026-09-07 addenda), n=10 per cell,
+  120 trials. Statistical treatment (Wilson CI + planned Fisher test) and
+  a TS annotation fix landed in ROBOAI-28/ROBOAI-31 (§7 above).
+  ROBOAI-19 is still not merged to `main` at time of writing.
 - **`_fix_release_height`, `_mock_plan`, and `_build_generated_scene`
   (`llm_planner_node.py`, `vlm_llm_planner_node.py`) have zero automated
   test coverage**, despite being the most-corrected geometry code in the
