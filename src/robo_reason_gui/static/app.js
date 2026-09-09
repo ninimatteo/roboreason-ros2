@@ -35,6 +35,17 @@ const selVlmProvider = document.getElementById('sel-vlm-provider');
 const selVlmModel = document.getElementById('sel-vlm-model');
 const inpVlmTemp = document.getElementById('inp-vlm-temp');
 
+// VLM-only pixel-grounding format toggle (point click vs bounding box —
+// see vlm_planner_node's grounding_mode param / VLM_GROUNDING_MODE setting).
+const pixelGroundingFields = document.getElementById('pixel-grounding-fields');
+const selGroundingMode = document.getElementById('sel-grounding-mode');
+
+// Groq/Qwen3 <think> control for VLM grounding calls — applies to both the
+// direct VLM planner and the VLM_LLM scene-grounding call (see
+// VLM_REASONING_EFFORT in config.py).
+const reasoningEffortFields = document.getElementById('reasoning-effort-fields');
+const selReasoningEffort = document.getElementById('sel-reasoning-effort');
+
 const cfgApply = document.getElementById('cfg-apply');
 const cfgResult = document.getElementById('cfg-result');
 
@@ -93,12 +104,21 @@ function toast(message, kind = 'info', timeout = 4000) {
 }
 
 // ---- helpers ----
+// `values` items are either a plain string (value === label, e.g. modes,
+// reasoning methods, provider names) or a {value, label} pair (model
+// dropdowns, since /api/options started tagging models with a measured
+// speed tier — see options.py's MODEL_SPEED_TIER/_labeled_models).
 function fillSelect(sel, values) {
   sel.innerHTML = '';
   values.forEach((v) => {
     const opt = document.createElement('option');
-    opt.value = v;
-    opt.textContent = v;
+    if (v && typeof v === 'object') {
+      opt.value = v.value;
+      opt.textContent = v.label;
+    } else {
+      opt.value = v;
+      opt.textContent = v;
+    }
     sel.appendChild(opt);
   });
 }
@@ -189,6 +209,17 @@ async function pollCamera() {
   }
 }
 
+// ---- benchmark tasks (fetched once) — see bridge_node.py::BENCHMARK_TASKS ----
+let benchmarkTasks = {};
+async function loadBenchmarkTasks() {
+  try {
+    benchmarkTasks = await (await fetch('/api/benchmark/tasks')).json();
+  } catch (_err) {
+    // Non-fatal — the annotation form just won't have a task dropdown if
+    // this fails; benchmark/benchmark_annotate.py still works offline.
+  }
+}
+
 // ---- options (fetched once) ----
 async function loadOptions() {
   try {
@@ -244,6 +275,12 @@ function currentConfig() {
       ? `${selVlmProvider.value}/${selVlmModel.value}`
       : '';
     config.vlm_temperature = parseFloat(inpVlmTemp.value);
+  }
+  if ((selMode.value || 'LLM').toUpperCase() === 'VLM') {
+    config.grounding_mode = selGroundingMode.value;
+  }
+  if (['VLM', 'VLM_LLM'].includes((selMode.value || 'LLM').toUpperCase())) {
+    config.reasoning_effort = selReasoningEffort.value;
   }
   return config;
 }
@@ -326,6 +363,19 @@ function syncGroundingVisibility() {
   groundingFields.hidden = (selMode.value || 'LLM').toUpperCase() !== 'VLM_LLM';
 }
 
+// The pixel-grounding mode (point/bbox) toggle only applies to VLM (the
+// direct pixel-click pipeline, see vlm_planner_node).
+function syncPixelGroundingVisibility() {
+  pixelGroundingFields.hidden = (selMode.value || 'LLM').toUpperCase() !== 'VLM';
+}
+
+// The reasoning-effort toggle applies to both VLM (direct grounding) and
+// VLM_LLM (scene-grounding call) — anywhere a VLM client is used.
+function syncReasoningEffortVisibility() {
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  reasoningEffortFields.hidden = mode !== 'VLM' && mode !== 'VLM_LLM';
+}
+
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
 // different model subsets), then also sync the camera toggle.
 function syncModelsByMode() {
@@ -338,6 +388,8 @@ function syncModelsByMode() {
   fillSelect(selModel, map[selProvider.value] || []);
   syncCameraToggle();
   syncGroundingVisibility();
+  syncPixelGroundingVisibility();
+  syncReasoningEffortVisibility();
 }
 selMode.addEventListener('change', syncModelsByMode);
 
@@ -486,6 +538,8 @@ function renderDriver(status) {
   const busy = state === 'connecting';
   driverStart.disabled = busy || state === 'connected';
   driverStop.disabled = state === 'stopped';
+  driverReconnect.disabled = busy;
+  headerReconnect.disabled = busy;
 
   // Reflect resolved IPs (defaults included) without clobbering an active edit.
   const p = status.params || {};
@@ -653,13 +707,13 @@ async function pollHealth() {
     });
   } catch (err) {
     robotLed.className = 'led led-red';
-    robotLed.className = 'led led-red';
   }
 }
 
 // ---- chat ----
 const chatForm = document.getElementById('chat-form');
 const chatInput = document.getElementById('chat-input');
+const chatBenchmark = document.getElementById('chat-benchmark');
 const chatSend = document.getElementById('chat-send');
 const chatHistory = document.getElementById('chat-history');
 const chatClear = document.getElementById('chat-clear');
@@ -765,6 +819,95 @@ function setPlanState(label, kind) {
   planState.className = 'badge ' + (kind || 'badge-off');
 }
 
+// Inline "was this trial safe / how many sub-tasks completed" form, shown
+// under a chat block's execution report when the "Benchmark trial" checkbox
+// was on for that command — see benchmark/PLAN.md §5 and
+// bridge_node.py::record_benchmark_annotation (the offline equivalent is
+// benchmark/benchmark_annotate.py).
+function renderBenchmarkForm(container, runId) {
+  const wrap = el('div', 'benchmark-form');
+  wrap.appendChild(el('div', 'label', 'Benchmark annotation'));
+
+  const taskSelect = document.createElement('select');
+  Object.entries(benchmarkTasks).forEach(([taskId, info]) => {
+    const opt = document.createElement('option');
+    opt.value = taskId;
+    opt.textContent = `${taskId} — ${info.label} (required: ${info.sub_tasks_required})`;
+    taskSelect.appendChild(opt);
+  });
+
+  const safetySelect = document.createElement('select');
+  [['true', 'Safe'], ['false', 'Unsafe']].forEach(([value, text]) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = text;
+    safetySelect.appendChild(opt);
+  });
+
+  const completedInput = document.createElement('input');
+  completedInput.type = 'number';
+  completedInput.min = '0';
+  completedInput.value = '0';
+  completedInput.className = 'benchmark-completed';
+
+  function syncMaxCompleted() {
+    const info = benchmarkTasks[taskSelect.value];
+    const max = info ? info.sub_tasks_required : 0;
+    completedInput.max = String(max);
+    if (Number(completedInput.value) > max) completedInput.value = String(max);
+  }
+  taskSelect.addEventListener('change', syncMaxCompleted);
+  syncMaxCompleted();
+
+  const notesInput = document.createElement('input');
+  notesInput.type = 'text';
+  notesInput.placeholder = 'notes (optional)';
+  notesInput.className = 'benchmark-notes';
+
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'button';
+  submitBtn.textContent = 'Log trial';
+
+  const row1 = el('div', 'benchmark-row');
+  row1.append(taskSelect, safetySelect);
+  const row2 = el('div', 'benchmark-row');
+  row2.append(completedInput, notesInput, submitBtn);
+  wrap.append(row1, row2);
+  container.appendChild(wrap);
+
+  submitBtn.addEventListener('click', async () => {
+    submitBtn.disabled = true;
+    let result;
+    try {
+      result = await postJSON('/api/benchmark/annotate', {
+        run_id: runId,
+        task_id: taskSelect.value,
+        safety_ok: safetySelect.value === 'true',
+        sub_tasks_completed: Number(completedInput.value),
+        notes: notesInput.value,
+      });
+    } catch (err) {
+      wrap.appendChild(el('div', 'error', 'Request failed: ' + err));
+      submitBtn.disabled = false;
+      return;
+    }
+    if (result.ok) {
+      taskSelect.disabled = true;
+      safetySelect.disabled = true;
+      completedInput.disabled = true;
+      notesInput.disabled = true;
+      wrap.appendChild(el(
+        'div', 'label',
+        `Logged rep ${result.repetition}: TS=${result.TS} TSR=${result.TSR} AETS=${result.AETS}`
+      ));
+      toast('Benchmark trial logged', 'info');
+    } else {
+      wrap.appendChild(el('div', 'error', 'Failed: ' + result.error));
+      submitBtn.disabled = false;
+    }
+  });
+}
+
 function setStepState(li, state) {
   if (!li) return;
   li.className = 'plan-step ' + state;
@@ -773,10 +916,14 @@ function setStepState(li, state) {
 // A log line looks like "[Step 2] pick -> OK" — mark that step done.
 function applyLogLine(stepEls, line) {
   const m = line.match(/\[Step\s+(\S+?)\]/);
-  if (m) setStepState(stepEls[m[1]], 'done');
+  if (m && line.includes('-> OK')) setStepState(stepEls[m[1]], 'done');
 }
 
 async function sendCommand(command) {
+  // Read once so plan and execute always agree on it for this submission,
+  // even if the operator toggles the checkbox mid-request.
+  const isBenchmark = chatBenchmark.checked;
+
   // The chat holds only the request + the execution report (request #5); the
   // animated plan lives in its own panel.
   const block = el('div', 'msg pending');
@@ -790,7 +937,7 @@ async function sendCommand(command) {
   // 1. Plan.
   let planData;
   try {
-    planData = await postJSON('/api/plan', { command });
+    planData = await postJSON('/api/plan', { command, is_benchmark: isBenchmark });
   } catch (err) {
     block.className = 'msg failed';
     block.appendChild(el('div', 'error', 'Request failed: ' + err));
@@ -832,7 +979,7 @@ async function sendCommand(command) {
   chatEstop.disabled = false;
   let execData;
   try {
-    execData = await postJSON('/api/execute', { plan_json: planData.plan_json });
+    execData = await postJSON('/api/execute', { plan_json: planData.plan_json, is_benchmark: isBenchmark });
   } catch (err) {
     block.className = 'msg failed';
     status.remove();
@@ -860,6 +1007,9 @@ async function sendCommand(command) {
     block.appendChild(el('div', 'label', 'execution report'));
     block.appendChild(el('pre', 'report', execData.report || '(no report)'));
     setPlanState('done', 'badge-on');
+    if (isBenchmark && planData.run_id) {
+      renderBenchmarkForm(block, planData.run_id);
+    }
   }
   scrollIntoView(block);
 }
@@ -881,6 +1031,7 @@ chatForm.addEventListener('submit', async (e) => {
 });
 
 loadOptions();
+loadBenchmarkTasks();
 pollHealth();
 pollStack();
 pollDriver();

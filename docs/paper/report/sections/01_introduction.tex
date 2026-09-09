@@ -1,0 +1,97 @@
+\section{Introduction}
+\label{sec:introduction}
+
+\subsection{Purpose of this report}
+
+This document consolidates the working history of RoboReason ROS2 into a
+single reference, written at a natural pause point (a planned one-month
+break before resuming in September 2026). Its two goals are:
+
+\begin{enumerate}[nosep]
+  \item Preserve \emph{why} decisions were made, not just what the code
+    currently does -- the git log and the code itself already answer
+    ``what''; this report exists mainly to answer ``why'', which decays
+    fastest from memory.
+  \item Give a concrete, prioritized starting point for the next working
+    session, so the first hours back are spent on the highest-value item
+    rather than re-deriving context.
+\end{enumerate}
+
+Two companion documents remain the canonical low-level references and are
+not duplicated here in full: \texttt{docs/SESSION\_CONTEXT.md} (a detailed,
+append-only session log with exact file-by-file change tables) and
+\texttt{docs/TODO.md} (the raw backlog). This report synthesizes both into a
+narrative and adds the benchmark study, timeline, and roadmap framing that
+neither file provides on its own.
+
+\subsection{Project goal}
+
+Given a natural-language instruction and a workspace containing a small set
+of known object types (currently four colored cubes and a tray, on a table
+within reach of a UR5cb arm), produce and execute a safe, correct sequence of
+pick-and-place actions -- without hand-coding task-specific logic per
+instruction. The system should degrade gracefully across three axes of task
+difficulty that recur throughout this report and the benchmark study:
+
+\begin{itemize}[nosep]
+  \item \textbf{Task length} -- a single pick-and-place vs.\ a multi-object
+    sequence.
+  \item \textbf{Specificity} -- referring to an object directly (``the red
+    cube'') vs.\ by a shared, ambiguous class (``the cubes'') or via a
+    computed reference (an arithmetic condition on a stated value mapping).
+  \item \textbf{Affordance / perception load} -- whether object positions are
+    already known (LLM mode, static scene) or must be perceived from a live
+    camera frame (VLM mode).
+\end{itemize}
+
+\subsection{From VLA to LLM/VLM: the architectural pivot}
+
+Documents predating this repository's git history (found in the sibling
+\texttt{robotic-ai/docs} directory: \emph{Robot AI -- Technical Steps},
+\emph{Vision-Language-Action (VLA) Models in Robotics}, \emph{VLA Future
+Directions}) describe an earlier plan built around end-to-end
+Vision-Language-Action models. That direction was abandoned before the
+current repository's initial commit. It is documented here for completeness
+and explicitly \textbf{not} as a currently accurate description of the
+system -- those files should not be consulted for architecture questions
+about the present codebase.
+
+The system that actually exists is a classical planning pipeline with
+foundation models substituting for a hand-written planner and, in VLM mode, a
+hand-written perception module:
+
+\begin{center}
+\begin{tabular}{@{}p{3.2cm}p{5.6cm}p{5.6cm}@{}}
+\toprule
+\textbf{Layer} & \textbf{VLA approach (abandoned)} & \textbf{Current LLM/VLM approach} \\
+\midrule
+Perception $\to$ action & Single end-to-end network, pixels + language $\to$
+  low-level action & Foundation VLM $\to$ structured JSON plan of named
+  skills; skills executed by hand-written trajectory code \\
+Training & Requires task-specific demonstration data and fine-tuning &
+  Zero-shot / prompted use of off-the-shelf hosted models \\
+Debuggability & Opaque -- a wrong action has no intermediate artifact to
+  inspect & Every plan step, pixel grounding, and deprojection is logged to
+  \texttt{debug/<run\_id>/} and independently inspectable \\
+Geometry correctness & Learned implicitly from data & Computed
+  deterministically in Python wherever the model's own arithmetic proved
+  unreliable (Section~\ref{sec:tech-decisions}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Physical setup}
+
+\begin{itemize}[nosep]
+  \item \textbf{Arm}: Universal Robots UR5cb, controlled via the standard
+    \texttt{ur\_robot\_driver} action/controller interface.
+  \item \textbf{Gripper}: OnRobot RG2, driven via digital I/O (URScript
+    socket control was tried and replaced early in the project history, see
+    commit \texttt{92d0ead}).
+  \item \textbf{Camera}: Orbbec RGB-D camera, used for VLM-mode scene capture
+    and ChArUco-based extrinsic calibration (board-to-base transform).
+  \item \textbf{Workspace}: a table within the arm's reach, a tray as a
+    placement target, and (as of the current physical setup, changed during
+    Session 5) four cubes of identical shape distinguished only by color --
+    blue, red, white, orange.
+\end{itemize}

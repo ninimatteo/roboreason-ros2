@@ -41,5 +41,3 @@ def tcp_offset_z_for_width(width_m: Optional[float]) -> float:
         if w0 <= width_m <= w1:
             t = (width_m - w0) / (w1 - w0)
             return z0 + t * (z1 - z0)
-
-    return settings.TCP_OFFSET_Z

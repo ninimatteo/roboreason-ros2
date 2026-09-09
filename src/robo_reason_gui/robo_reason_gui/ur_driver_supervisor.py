@@ -101,11 +101,9 @@ class UrDriverSupervisor:
         self._proc = None
         self._worker = None
         self._stop_event = threading.Event()
-        # Set by _pump_output as soon as an ERROR_MARKERS line appears for the
-        # current attempt, so _await_ready can abort immediately instead of
-        # waiting out the full READY_TIMEOUT_S on an attempt that has already
-        # announced it failed (e.g. "Failed to connect", "connection refused").
-        self._error_event = threading.Event()
+        # error_event is created fresh per _spawn() call and passed explicitly to
+        # _pump_output and _await_ready so a previous attempt's pump thread can
+        # never signal the new attempt's await loop (stale event race).
         self._state = 'stopped'
         self._attempt = 0
         self._reverse_connected = False  # pendant seen on the reverse interface
@@ -235,14 +233,15 @@ class UrDriverSupervisor:
             self._set_state('connecting')
             self._log(f"attempt {attempt}/{self.MAX_ATTEMPTS}: {' '.join(command)}")
 
-            proc = self._spawn(command)
-            if proc is None:
+            result = self._spawn(command)
+            if result is None:
                 self._record_attempt(attempt, 'spawn-failed', started, 'Popen failed')
                 if self._backoff():
                     continue
                 break
+            proc, attempt_error = result
 
-            outcome = self._await_ready(proc)
+            outcome = self._await_ready(proc, attempt_error)
             duration = time.monotonic() - started
 
             if outcome == 'ready':
@@ -292,11 +291,11 @@ class UrDriverSupervisor:
         with self._lock:
             self._proc = proc
             self._reverse_connected = False  # fresh process: pendant not yet up
-        self._error_event.clear()
-        threading.Thread(target=self._pump_output, args=(proc,), daemon=True).start()
-        return proc
+        attempt_error = threading.Event()
+        threading.Thread(target=self._pump_output, args=(proc, attempt_error), daemon=True).start()
+        return proc, attempt_error
 
-    def _pump_output(self, proc):
+    def _pump_output(self, proc, error_event):
         """Drain driver stdout into the ring buffer, tagging known markers."""
         for raw in iter(proc.stdout.readline, ''):
             line = raw.rstrip('\n')
@@ -305,14 +304,14 @@ class UrDriverSupervisor:
                 tag = 'OK '
             elif any(m in line for m in ERROR_MARKERS):
                 tag = 'ERR '
-                self._error_event.set()
+                error_event.set()
             if REVERSE_INTERFACE_MARKER in line:
                 self._reverse_connected = True
             elif REVERSE_DROPPED_MARKER in line:
                 self._reverse_connected = False
             self._logs.append({'t': time.strftime('%H:%M:%S'), 'line': f'{tag}{line}'})
 
-    def _await_ready(self, proc) -> str:
+    def _await_ready(self, proc, error_event) -> str:
         """Wait for readiness. Returns ready|exited|error|timeout|stopped.
 
         Bails out as soon as an ERROR_MARKERS line is seen instead of waiting
@@ -327,7 +326,7 @@ class UrDriverSupervisor:
                 return 'exited'
             if self._safe_ready():
                 return 'ready'
-            if self._error_event.is_set():
+            if error_event.is_set():
                 return 'error'
             time.sleep(self.READY_POLL_S)
         return 'timeout'

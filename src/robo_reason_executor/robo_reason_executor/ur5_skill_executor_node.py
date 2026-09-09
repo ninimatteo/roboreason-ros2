@@ -29,6 +29,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
+from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from robo_reason_bringup.config import settings
@@ -339,7 +340,21 @@ class UR5SkillExecutorNode(Node):
                 self.get_logger().error('[UR5SkillExecutorNode] Trajectory goal timed out.')
                 return False
 
-        return result_holder[0] is not None
+        r = result_holder[0]
+        if r is None:
+            self.get_logger().error('[UR5SkillExecutorNode] Trajectory goal was rejected.')
+            return False
+        if r.status != GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().error(
+                f'[UR5SkillExecutorNode] Trajectory did not succeed (status={r.status}).'
+            )
+            return False
+        if r.result.error_code != FollowJointTrajectory.Result.SUCCESSFUL:
+            self.get_logger().error(
+                f'[UR5SkillExecutorNode] Trajectory controller error (error_code={r.result.error_code}).'
+            )
+            return False
+        return True
 
     def _move_linear(self, target_xyz: list, R=None,
                      duration_sec: float = 2.0, steps: int = 40, goal_handle=None) -> bool:
@@ -447,11 +462,18 @@ class UR5SkillExecutorNode(Node):
         req.fun = _IO_FUN_DIGITAL_OUT
         req.pin = _GRIPPER_PIN
         req.state = state
+        future = self._set_io_client.call_async(req)
         done = threading.Event()
-        self._set_io_client.call_async(req).add_done_callback(lambda f: done.set())
-        done.wait(timeout=5.0)
+        future.add_done_callback(lambda f: done.set())
+        if not done.wait(timeout=5.0):
+            self.get_logger().error('[UR5SkillExecutorNode] Gripper IO timed out.')
+            return False
         time.sleep(2.0)  # wait for gripper motion to complete
-        return True
+        try:
+            return future.result().success
+        except Exception as exc:
+            self.get_logger().error(f'[UR5SkillExecutorNode] Gripper IO failed: {exc}')
+            return False
 
     def _gripper_close(self, force: float = 40.0) -> bool:
         """Close the gripper (pin HIGH). Force threshold is set in gripper_thread.script."""
@@ -482,12 +504,20 @@ class UR5SkillExecutorNode(Node):
 
     def _execute_skill_callback(self, goal_handle):
         skill_name = goal_handle.request.skill_name.lower()
-        skill_args = json.loads(goal_handle.request.skill_args_json)
-
-        self.get_logger().info(f'[UR5SkillExecutorNode] {skill_name.upper()} args={skill_args}')
 
         feedback = ExecuteSkill.Feedback()
         result = ExecuteSkill.Result()
+
+        try:
+            skill_args = json.loads(goal_handle.request.skill_args_json)
+        except json.JSONDecodeError as exc:
+            self.get_logger().error(f'[UR5SkillExecutorNode] Malformed skill_args_json: {exc}')
+            goal_handle.abort()
+            result.success = False
+            result.error_message = f'malformed skill_args_json: {exc}'
+            return result
+
+        self.get_logger().info(f'[UR5SkillExecutorNode] {skill_name.upper()} args={skill_args}')
 
         try:
             self._dispatch_skill(skill_name, skill_args, goal_handle, feedback)

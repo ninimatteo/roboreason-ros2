@@ -1,6 +1,7 @@
 """Chain-of-Thought Self-Consistency (CoT-SC) — adapted for UR5 from RoboReason-Lab."""
 import json
 from collections import Counter, namedtuple
+from concurrent.futures import ThreadPoolExecutor
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
 from robo_reason_reasoning.extraction_classes import UR5Action
@@ -53,13 +54,13 @@ class CoTSC(ReasoningMethod):
             image=image
         )
         try:
-            parsed = json.loads(self._strip_json_fence(resp))
+            parsed = json.loads(self._extract_json(resp))
             # LLMs sometimes return the plan as a bare array instead of
             # {"plan": [...]}.  Accept both shapes.
             if isinstance(parsed, list):
                 return parsed
             return parsed.get('plan', [])
-        except (json.JSONDecodeError, AttributeError):
+        except (ValueError, json.JSONDecodeError, AttributeError):
             return []
 
     def aggregate_plans(self, plans: list) -> list:
@@ -87,7 +88,36 @@ class CoTSC(ReasoningMethod):
 
         if (user_req != self.user_request and not self.task_plan) or force_replan:
             self.set_user_request(user_req)
-            plans = [self.generate_plan(env_map, user_req, image=image) for _ in range(self.k)]
+            # The k samples are independent LLM/VLM calls — run them concurrently
+            # instead of sequentially. Each call is a blocking HTTP request that
+            # releases the GIL while waiting on the network, so a thread pool
+            # turns the total wall-clock cost from ~k x (one call) into ~1 x
+            # (the slowest call), which is what keeps CoT-SC's latency in the
+            # same ballpark as single-call methods like FHP instead of a
+            # multiple of it.
+            with ThreadPoolExecutor(max_workers=self.k) as pool:
+                plans = list(pool.map(
+                    lambda _: self.generate_plan(env_map, user_req, image=image),
+                    range(self.k),
+                ))
+
+            if not any(plans):
+                # Every one of the k samples failed to parse as JSON — almost
+                # always the model exhausting its token budget on internal
+                # reasoning before emitting the final plan (see max_tokens /
+                # REQUEST_TIMEOUT_S in config.py), not a legitimate "no
+                # actions needed" answer. Raise instead of silently falling
+                # through to the move_home fallback below, which used to
+                # masquerade a total generation failure as a confident,
+                # successful plan.
+                raise RuntimeError(
+                    f"CoT-SC: all {self.k} sampled plans for \"{user_req}\" came back "
+                    "empty (none parsed as valid JSON). The model likely ran out of "
+                    "its max_tokens budget mid-reasoning before emitting the final "
+                    "plan — try raising max_tokens/REQUEST_TIMEOUT_S or a less "
+                    "reasoning-heavy model."
+                )
+
             most_common = self.aggregate_plans(plans)
             self.task_plan = self.select_consistent_plan(plans, most_common)
             self._verbose_print('CoT-SC trace', {
@@ -97,11 +127,18 @@ class CoTSC(ReasoningMethod):
             })
 
         if self.task_plan:
-            action = UR5Action(**self.task_plan[0])
+            action = self._build_action(self.task_plan[0])
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 
+        # 'idle' (not 'move_home') so agent_runner.run_plan_loop's filter
+        # (action_name in {'idle', 'end_of_simulation'}) correctly drops this
+        # bare termination sentinel instead of appending it as a real plan
+        # step with no target_position/release_position — was reaching
+        # _deproject_plan in VLM mode as a step 0-deprojected to (0,0),
+        # raising "No valid depth at u=0, v=0"; harmless-looking but silently
+        # present in LLM mode too (a no-op trailing move_home).
         return self._output(
-            action=UR5Action(action_name='move_home', score=1.0),
+            action=UR5Action(action_name='idle', score=1.0),
             end_of_simulation=True,
         )

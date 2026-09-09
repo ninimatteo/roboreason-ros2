@@ -22,7 +22,7 @@ Two-terminal usage (recommended):
 
 Parameters:
   reasoning_method        fhp | ffhp | react | cot_sc | tot | always_act | self_refine (default: fhp)
-  model_name              groq/qwen3.6-27b | nebius/qwen3-2.5-70b | etc. (default: groq/qwen3.6-27b)
+  model_name              groq/qwen3.6-27b | nebius/kimi-k2.6 | etc. (default: groq/qwen3.6-27b)
   temperature             LLM temperature (default: 0.1)
   images_dir              Path to folder with .png mock frames (default: /root/ws/src/mock_frames)
   include_task_interface  Launch the CLI node in this process (default: false)

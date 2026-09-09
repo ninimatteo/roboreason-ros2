@@ -9,6 +9,20 @@ Inputs:
 **User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
 **Previous plan**: {previous_thought}
 
+**Spatial Reasoning — Object Dimensions and Stacking**
+The two kinds of scene entry are described differently, on purpose:
+- Entries under `objects` (things to pick) have a `position` — the grasp contact point — and a `size: [width, depth, height]` field in meters.
+- Entries under `targets` (placement zones) have no position or size. They are an explicit axis-aligned box: `bounds: {{"x": [x_min, x_max], "y": [y_min, y_max], "z": [z_min, z_max]}}`, in meters. `bounds.z[1]` is the zone's top surface — the height to release onto.
+Use them when computing positions:
+- Picking an object: `target_position.z = object.position.z` (contact point at the object centre).
+- Releasing on the bare table: `release_position.z = surface_z` (table surface).
+- Releasing into a target zone: `release_position = [(target.bounds.x[0] + target.bounds.x[1]) / 2, (target.bounds.y[0] + target.bounds.y[1]) / 2, target.bounds.z[1]]` — the middle of the zone's footprint, at its top surface. Use these midpoints exactly; do not round them or pick some other point in the zone. Every release must land with x inside `bounds.x` and y inside `bounds.y`.
+- Releasing on top of another object: `release_position = [target.position.x, target.position.y, target.position.z + target.size[2]]`.
+  This places the held object on the top surface of the target, not inside it.
+- Always set `object_height` in the release action to `size[2]` of the **held** object so the executor raises the TCP by the correct amount before opening the gripper.
+- Always set `grasp_width` in the pick action to `size[0]` of the object being grasped so the executor selects the correct gripper finger-aperture offset.
+- The `approach` before a release should use the same x, y, z as the release position — the executor adds the offset automatically.
+
 **JSON Output schema**:
 ```json
 {{"plan": [
@@ -25,7 +39,7 @@ Inputs:
 Generate a plan that is feasible and aligns with the user's request. Think step by step, starting from the current state of the environment and the user's request.
 """
 
-_VLM_PLAN_GENERATION_PROMPT = """
+_VLM_PLAN_GENERATION_PROMPT_POINT = """
 Your task is to plan a sequence of actions to achieve the user's request.
 Inputs:
 **Environment Description** Infer from image
@@ -65,6 +79,50 @@ pixel coordinate you output must satisfy 0 <= x < {pixels_width} and 0 <= y < {p
 Generate a plan that is feasible and aligns with the user's request. Think step by step, starting from what you see in the image and the user's request.
 """
 
+_VLM_PLAN_GENERATION_PROMPT_BBOX = """
+Your task is to plan a sequence of actions to achieve the user's request.
+Inputs:
+**Environment Description** Infer from image
+**Skills Library** A list of available skills and actions you can use: \n{skills}
+**User Request** The request of the user that is the goal you have to achieve with your plan: \n{user_request}
+**Previous plan**: {previous_thought}
+
+**Spatial Reasoning — Pixel Bounding Boxes**
+You are working in pixel space. The depth camera back-projects the center of a bounding box to a
+3D point on the visible surface, so a tight box around an object gives its top-surface 3D position
+plus its real-world footprint. The image you are given is {pixels_width} pixels wide and
+{pixels_height} pixels tall — every pixel coordinate you output must satisfy
+0 <= x < {pixels_width} and 0 <= y < {pixels_height}.
+- `target_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  object to grasp. Do not include background or neighboring objects inside the box.
+- `release_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  target surface or object to stack on. Its deprojected center z is already the top surface —
+  do NOT add any z offset manually.
+- Always set `object_height` to your visual estimate of the held object's real-world height
+  in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
+  The executor raises the TCP by this amount so the object bottom lands on the surface.
+- Always set `grasp_width` to your visual estimate of the object's real-world width in meters as a
+  fallback (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup) — the executor prefers
+  deriving the width from your bounding box directly, but still needs this field populated.
+- The `approach` before a release must use the same [x_min, y_min, x_max, y_max] box as the
+  release position.
+
+**JSON Output schema**:
+```json
+{{"plan": [
+    {{
+    {action_placeholder1}
+    }},
+    ...,
+    {{
+    {action_placeholder1}
+    }}
+]
+}}
+```
+Generate a plan that is feasible and aligns with the user's request. Think step by step, starting from what you see in the image and the user's request.
+"""
+
 _LLM_ACTION_GENERATION_PROMPT = """
 Your task is to generate a set of possible actions for the next step to achieve the user's request. You might already have a plan so far.
 You must use the JSON output schema provided.
@@ -73,6 +131,20 @@ Inputs:
 **Environment Description** The physical information about the environment: \n{environment_map}
 **User Request** The request of the user that is the goal you have to achieve: \n{user_request}
 **Number of actions to generate in this step**: You must generate a list of {num_actions} single actions (diversified in type of action and/or parameters) according to a tree of thoughts approach.
+
+**Spatial Reasoning — Object Dimensions and Stacking**
+The two kinds of scene entry are described differently, on purpose:
+- Entries under `objects` (things to pick) have a `position` — the grasp contact point — and a `size: [width, depth, height]` field in meters.
+- Entries under `targets` (placement zones) have no position or size. They are an explicit axis-aligned box: `bounds: {{"x": [x_min, x_max], "y": [y_min, y_max], "z": [z_min, z_max]}}`, in meters. `bounds.z[1]` is the zone's top surface — the height to release onto.
+Use them when computing positions:
+- Picking an object: `target_position.z = object.position.z` (contact point at the object centre).
+- Releasing on the bare table: `release_position.z = surface_z` (table surface).
+- Releasing into a target zone: `release_position = [(target.bounds.x[0] + target.bounds.x[1]) / 2, (target.bounds.y[0] + target.bounds.y[1]) / 2, target.bounds.z[1]]` — the middle of the zone's footprint, at its top surface. Use these midpoints exactly; do not round them or pick some other point in the zone. Every release must land with x inside `bounds.x` and y inside `bounds.y`.
+- Releasing on top of another object: `release_position = [target.position.x, target.position.y, target.position.z + target.size[2]]`.
+  This places the held object on the top surface of the target, not inside it.
+- Always set `object_height` in the release action to `size[2]` of the **held** object so the executor raises the TCP by the correct amount before opening the gripper.
+- Always set `grasp_width` in the pick action to `size[0]` of the object being grasped so the executor selects the correct gripper finger-aperture offset.
+- The `approach` before a release should use the same x, y, z as the release position — the executor adds the offset automatically.
 
 Think step by step, starting from the current state of the environment, the user request, and the plan so far.
 **Plan so far**: The plan you proposed and validated so far \n{previous_thought}
@@ -95,7 +167,7 @@ What are the possible actions you can take for the next step? Consider 'move_hom
 ```
 """
 
-_VLM_ACTION_GENERATION_PROMPT = """
+_VLM_ACTION_GENERATION_PROMPT_POINT = """
 Your task is to generate a set of possible actions for the next step to achieve the user's request. You might already have a plan so far.
 You must use the JSON output schema provided.
 Inputs:
@@ -119,6 +191,56 @@ pixel coordinate you output must satisfy 0 <= x < {pixels_width} and 0 <= y < {p
   width in meters (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup). The executor uses
   this to select the correct gripper finger-aperture offset.
 - The `approach` before a release must use the same [x, y] pixel as the release position.
+
+Think step by step, starting from what you see in the image, the user request, and the plan so far.
+**Plan so far**: The plan you proposed and validated so far \n{previous_thought}
+
+What are the possible actions you can take for the next step? Consider 'move_home' as a valid action if you think no further action is needed.
+
+**JSON Output schema**:
+```json
+{{
+"sampled_actions": [
+    {{
+    {action_placeholder1}
+    }},
+    ...,
+    {{
+    {eos_action_placeholder}
+    }}
+    ]
+}}
+```
+"""
+
+_VLM_ACTION_GENERATION_PROMPT_BBOX = """
+Your task is to generate a set of possible actions for the next step to achieve the user's request. You might already have a plan so far.
+You must use the JSON output schema provided.
+Inputs:
+**Skills Library** A list of available skills and actions you can use: \n{skills}
+**Environment Description** Infer from image
+**User Request** The request of the user that is the goal you have to achieve: \n{user_request}
+**Number of actions to generate in this step**: You must generate a list of {num_actions} single actions (diversified in type of action and/or parameters) according to a tree of thoughts approach.
+
+**Spatial Reasoning — Pixel Bounding Boxes**
+You are working in pixel space. The depth camera back-projects the center of a bounding box to a
+3D point on the visible surface, so a tight box around an object gives its top-surface 3D position
+plus its real-world footprint. The image you are given is {pixels_width} pixels wide and
+{pixels_height} pixels tall — every pixel coordinate you output must satisfy
+0 <= x < {pixels_width} and 0 <= y < {pixels_height}.
+- `target_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  object to grasp. Do not include background or neighboring objects inside the box.
+- `release_position`: [x_min, y_min, x_max, y_max] — the tightest pixel bounding box around the
+  target surface or object to stack on. Its deprojected center z is already the top surface —
+  do NOT add any z offset manually.
+- Always set `object_height` to your visual estimate of the held object's real-world height
+  in meters (e.g. 0.05 for a small block, 0.08 for a medium block, 0.10 for a cup, 0.15 for a bottle).
+  The executor raises the TCP by this amount so the object bottom lands on the surface.
+- Always set `grasp_width` to your visual estimate of the object's real-world width in meters as a
+  fallback (e.g. 0.03 for a thin block, 0.06 for a cube, 0.08 for a cup) — the executor prefers
+  deriving the width from your bounding box directly, but still needs this field populated.
+- The `approach` before a release must use the same [x_min, y_min, x_max, y_max] box as the
+  release position.
 
 Think step by step, starting from what you see in the image, the user request, and the plan so far.
 **Plan so far**: The plan you proposed and validated so far \n{previous_thought}
@@ -332,11 +454,13 @@ class ToTPrompts:
         )
 
     @staticmethod
-    def get_vlm_prompts() -> tuple:
+    def get_vlm_prompts(grounding_mode: str = 'point') -> tuple:
         """Return (plan_gen, action_gen, thought_eval, batch_eval, sorting) for VLM mode."""
+        plan_gen = _VLM_PLAN_GENERATION_PROMPT_BBOX if grounding_mode == 'bbox' else _VLM_PLAN_GENERATION_PROMPT_POINT
+        action_gen = _VLM_ACTION_GENERATION_PROMPT_BBOX if grounding_mode == 'bbox' else _VLM_ACTION_GENERATION_PROMPT_POINT
         return (
-            _VLM_PLAN_GENERATION_PROMPT,
-            _VLM_ACTION_GENERATION_PROMPT,
+            plan_gen,
+            action_gen,
             _VLM_THOUGHT_EVALUATION_PROMPT,
             _VLM_THOUGHTS_BATCH_EVALUATION_PROMPT,
             _VLM_THOUGHT_SORTING_PROMPT,

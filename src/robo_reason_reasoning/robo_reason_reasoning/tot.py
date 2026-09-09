@@ -1,5 +1,4 @@
 """Tree of Thoughts (ToT) reasoning method — adapted for UR5 from RoboReason-Lab."""
-import json
 from collections import namedtuple
 
 # pyrefly: ignore [missing-import]
@@ -66,7 +65,7 @@ class TreeOfThought(ReasoningMethod):
             temperature=1.5, top_p=0.4, force_json=True,
             image=image
         )
-        return json.loads(self._strip_json_fence(resp)).get('sampled_actions', [])
+        return self._parse_json_response(resp, context='_generate_action_thought').get('sampled_actions', [])
 
     def _evaluate_thought(self, thought, environment_map: str, user_request: str, image=None) -> int:
         _, _, thought_evaluation_prompt, _, _ = self._select_prompts(ToTPrompts)
@@ -87,9 +86,9 @@ class TreeOfThought(ReasoningMethod):
             image=image
         )
         score = 0
-        data = json.loads(self._strip_json_fence(resp))
+        data = self._parse_json_response(resp, context='_evaluate_thought')
         for key in ('user_request_consistency', 'environment_feasibility', 'embodiment_feasibility'):
-            score += self._scores_map.get(data.get(key, '').strip().lower(), 0)
+            score += self._scores_map.get(str(data.get(key, '')).strip().lower(), 0)
         return score
 
     def _retrieve_chain(self, thought_id: str, tree: Tree, db: dict) -> list:
@@ -112,6 +111,9 @@ class TreeOfThought(ReasoningMethod):
         tree.create_node("Tree of Thoughts", "0-0")
         db = {}
         best_ids = ['none']
+        # (score, chain) of the best-scoring idle/move_home candidate seen so
+        # far across all iterations, if any.
+        best_terminal = None
 
         for iteration in range(self.t):
             for idx, parent_id in enumerate(best_ids):
@@ -129,7 +131,7 @@ class TreeOfThought(ReasoningMethod):
                     previous_thought=chain,
                     num_actions=self.k,
                     image=image
-                )
+                )[:self.k]
                 for i, thought in enumerate(new_thoughts):
                     tid = f'{iteration+1}-{self.k * idx + i + 1}'
                     db[tid] = thought
@@ -151,16 +153,43 @@ class TreeOfThought(ReasoningMethod):
                     evaluated.append((tid, score))
 
             evaluated.sort(key=lambda x: x[1], reverse=True)
-            best_ids = [e[0] for e in evaluated[:self.b]]
 
-            # Early exit if EoS action found
-            for tid in best_ids:
-                if isinstance(db[tid], dict) and db[tid].get('action_name', '').lower() in ('idle', 'move_home'):
-                    chain = self._retrieve_chain(tid, tree, db)
-                    return chain[:-1], tree
+            # Split this iteration's candidates into live (non-terminal)
+            # branches to keep expanding and idle/move_home candidates that
+            # represent a *complete* plan. Only a terminal candidate's own
+            # branch is finished — other, still-live beam candidates must
+            # keep being explored for the remaining iteration budget rather
+            # than the whole search bailing out because one candidate looked
+            # done (the previous bug: any single idle/move_home candidate in
+            # the top-b beam ended the search immediately, discarding live
+            # sibling branches and unused iteration budget).
+            non_terminal = []
+            terminal = []
+            for tid, score in evaluated:
+                thought = db[tid]
+                if isinstance(thought, dict) and thought.get('action_name', '').lower() in ('idle', 'move_home'):
+                    terminal.append((tid, score))
+                else:
+                    non_terminal.append((tid, score))
 
+            if terminal:
+                tid, score = terminal[0]
+                if best_terminal is None or score > best_terminal[0]:
+                    best_terminal = (score, self._retrieve_chain(tid, tree, db)[:-1])
+
+            if not non_terminal:
+                # Nothing left to expand — the search has genuinely run out
+                # of live branches, regardless of remaining budget.
+                break
+
+            best_ids = [e[0] for e in non_terminal[:self.b]]
             self._verbose_print(f'Iteration {iteration+1} best', {'best_ids': best_ids})
 
+        if best_terminal is not None:
+            return best_terminal[1], tree
+
+        if not best_ids:
+            raise RuntimeError('ToT: model returned no candidate actions — cannot build a plan.')
         chain = self._retrieve_chain(best_ids[0], tree, db)
         return chain, tree
 
@@ -181,11 +210,12 @@ class TreeOfThought(ReasoningMethod):
             self._verbose_print('ToT final plan', {'plan': self.task_plan})
 
         if self.task_plan:
-            action = UR5Action(**self.task_plan[0])
+            action = self._build_action(self.task_plan[0])
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 
+        # 'idle', see cot_sc.py's identical fix for why.
         return self._output(
-            action=UR5Action(action_name='move_home'),
+            action=UR5Action(action_name='idle'),
             end_of_simulation=True,
         )

@@ -2,6 +2,7 @@
   "frame": "base_link",
   "units": "meters",
   "description": "UR5cb mounted on the short side of a rectangular table (1.2m x 0.8m). All positions in robot base frame. Table surface at z=0.0.",
+  "schema_notes": "Placement zones under 'targets' are given as explicit axis-aligned bounds: bounds.x is [x_min, x_max], and likewise for y and z. A release must land inside those ranges; bounds.z[1] is the zone's top surface, the height to release onto. Objects under 'objects' keep position+size instead, because a pick needs a single contact point rather than an area.",
   "robot": {
     "type": "UR5cb",
     "base_position": [0.0, 0.0, 0.0],
@@ -16,69 +17,68 @@
       "height": 0.76,
       "surface_z": -0.03,
       "corner_near_robot": [0.04, 0.024, 0.00],
-      "corner_far": [0.04, -0.80, 0.00]
+      "corner_far": [0.0, -0.80, 0.00]
     },
     "limits": {
-      "x": [-0.80, 0.80],
+      "x": [-0.60, 0.60],
       "y": [-0.80, 0.00],
       "z": [-0.03, 0.55]
     }
   },
   "objects": {
-    "black_indented_cube": {
+    "blue_cube": {
       "type": "cube",
-      "color": "black",
-      "position": [-0.2, -0.5, 0.03],
-      "size": [0.05, 0.05, 0.045],
+      "color": "blue",
+      "position": [-0.2, -0.5, -0.01],
+      "size": [0.045, 0.045, 0.045],
       "state": "on_table",
       "graspable": true
     },
-    "black_exagon": {
-      "type": "exagon",
-      "color": "black",
-      "position": [-0.3, -0.6, 0.03],
-      "size": [0.05, 0.05, 0.045],
+    "red_cube": {
+      "type": "cube",
+      "color": "red",
+      "position": [-0.3, -0.6, -0.01],
+      "size": [0.045, 0.045, 0.045],
       "state": "on_table",
       "graspable": true
     },
-    "black_extruded_tower_on_cubic_base": {
-      "type": "two part appearance: a cube body topped by a tall hollow square tube",
-      "color": "black",
-      "position": [0.0, -0.4, 0.03],
-      "size": [0.05, 0.05, 0.045],
+    "white_cube": {
+      "type": "cube",
+      "color": "white",
+      "position": [-0.1, -0.7, -0.01],
+      "size": [0.045, 0.045, 0.045],
       "state": "on_table",
       "graspable": true
     },
-    "black_cylinder": {
-      "type": "cylinder",
-      "color": "black",
-      "position": [-0.1, -0.7, 0.03],
-      "size": [0.05, 0.05, 0.05],
+    "orange_cube": {
+      "type": "cube",
+      "color": "orange",
+      "position": [0.0, -0.4, -0.01],
+      "size": [0.045, 0.045, 0.045],
       "state": "on_table",
       "graspable": true
     }
   },
   "targets": {
-    "brown_box": {
+    "brown_top": {
       "type": "zone",
-      "color": "white",
-      "label": "A",
-      "position": [0.55, -0.20, 0.05],
-      "size": [0.15, 0.15, 0.01]
-    },
-    "white_box": {
-      "type": "zone",
-      "color": "white",
-      "label": "B",
-      "position": [0.55, -0.50, 0.05],
-      "size": [0.15, 0.15, 0.01]
+      "color": "brown",
+      "label": "tray",
+      "bounds": {
+        "x": [0.24, 0.46],
+        "y": [-0.43, -0.12],
+        "z": [0.05, 0.05]
+      }
     },
     "table": {
       "type": "zone",
       "color": "white",
       "label": "table",
-      "position": [0.0, -0.8, 0.02],
-      "size": [0.8, 1.2, 0.01]
+      "bounds": {
+        "x": [-0.40, 0.40],
+        "y": [-0.85, -0.20],
+        "z": [-0.03, -0.02]
+      }
     }
   }
 }

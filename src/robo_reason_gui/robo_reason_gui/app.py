@@ -12,10 +12,12 @@ from robo_reason_gui.options import get_options
 
 class CommandRequest(BaseModel):
     command: str
+    is_benchmark: bool = False
 
 
 class ExecuteRequest(BaseModel):
     plan_json: str
+    is_benchmark: bool = False
 
 
 class ConfigRequest(BaseModel):
@@ -26,6 +28,8 @@ class ConfigRequest(BaseModel):
     use_mock_llm: Optional[bool] = None
     vlm_model_name: Optional[str] = None
     vlm_temperature: Optional[float] = None
+    grounding_mode: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class StackRequest(BaseModel):
@@ -38,11 +42,21 @@ class StackRequest(BaseModel):
     use_mock_llm: Optional[bool] = None
     vlm_model_name: Optional[str] = None
     vlm_temperature: Optional[float] = None
+    grounding_mode: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class DriverRequest(BaseModel):
     robot_ip: Optional[str] = None
     reverse_ip: Optional[str] = None
+
+
+class BenchmarkAnnotationRequest(BaseModel):
+    run_id: str
+    task_id: str
+    safety_ok: bool
+    sub_tasks_completed: int
+    notes: str = ''
 
 
 def create_app(bridge, supervisor, driver, camera=None):
@@ -77,11 +91,11 @@ def create_app(bridge, supervisor, driver, camera=None):
     def plan(req: CommandRequest):
         # Sync route -> FastAPI runs it in a threadpool, so the blocking
         # planning round-trip does not stall the event loop.
-        return bridge.plan_command(req.command)
+        return bridge.plan_command(req.command, is_benchmark=req.is_benchmark)
 
     @app.post('/api/execute')
     def execute(req: ExecuteRequest):
-        return bridge.execute_command(req.plan_json)
+        return bridge.execute_command(req.plan_json, is_benchmark=req.is_benchmark)
 
     @app.post('/api/execute/cancel')
     def execute_cancel():
@@ -94,6 +108,18 @@ def create_app(bridge, supervisor, driver, camera=None):
     def config(req: ConfigRequest):
         # Live-retune the running planner (B2) — no relaunch.
         return bridge.set_planner_config(req.model_dump())
+
+    @app.get('/api/benchmark/tasks')
+    def benchmark_tasks():
+        # Single source of truth for the GUI's benchmark annotation form
+        # dropdown — see BENCHMARK_TASKS in bridge_node.py.
+        return bridge.get_benchmark_tasks()
+
+    @app.post('/api/benchmark/annotate')
+    def benchmark_annotate(req: BenchmarkAnnotationRequest):
+        return bridge.record_benchmark_annotation(
+            req.run_id, req.task_id, req.safety_ok, req.sub_tasks_completed, req.notes
+        )
 
     @app.get('/api/stack')
     def stack_status():
@@ -166,7 +192,13 @@ def create_app(bridge, supervisor, driver, camera=None):
         queue = bridge.add_log_subscriber()
         try:
             while True:
-                line = await queue.get()
+                try:
+                    line = await asyncio.wait_for(queue.get(), timeout=20.0)
+                except asyncio.TimeoutError:
+                    # Keepalive: send_json raises WebSocketDisconnect on stale clients,
+                    # clearing the subscriber queue that would otherwise leak indefinitely.
+                    await ws.send_json({'ping': True})
+                    continue
                 await ws.send_json({'log': line})
         except WebSocketDisconnect:
             pass

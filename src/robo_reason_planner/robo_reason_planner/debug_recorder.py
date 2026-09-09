@@ -15,6 +15,7 @@ DEBUG_DIR for the durable, per-run alternative.
 """
 import csv
 import json
+import os
 import shutil
 import threading
 import time
@@ -72,9 +73,51 @@ def _now() -> datetime:
 
 _CSV_FIELDS = [
     'timestamp', 'run_id', 'mode', 'command', 'reasoning_method', 'model_name',
-    'temperature', 'success', 'num_steps', 'error',
+    'temperature', 'success', 'num_steps', 'error', 'planning_duration_s',
 ]
 _csv_lock = threading.Lock()
+
+
+def _ensure_csv_header(path: Path, fields: list) -> None:
+    """Make sure `path` starts with a header row exactly matching `fields`.
+
+    Creates the file with that header if it doesn't exist yet. If it does
+    exist but its header has drifted from `fields` (e.g. a field was added
+    here after the file was first created — this is what silently broke
+    planning_duration_s until ROBOAI-29), migrates it in place: every
+    existing row is padded/truncated to the new column count and the file
+    is rewritten atomically (temp file + rename), so a concurrent append
+    from another process can't observe a half-written file.
+
+    Never raises — this is debug-only logging plumbing and must not be
+    able to take down the caller (see save_terminal_logs for the same
+    rule); on any read/write error the caller's own append still runs and
+    surfaces whatever's actually wrong.
+    """
+    if not path.exists():
+        try:
+            with open(path, 'w', newline='') as f:
+                csv.writer(f).writerow(fields)
+        except OSError:
+            pass
+        return
+    try:
+        with open(path, newline='') as f:
+            reader = csv.reader(f)
+            existing_header = next(reader, None)
+            if existing_header == fields:
+                return
+            rows = list(reader)
+        n = len(fields)
+        fixed_rows = [r[:n] + [''] * (n - len(r)) for r in rows]
+        tmp_path = path.with_name(path.name + '.tmp')
+        with open(tmp_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(fields)
+            writer.writerows(fixed_rows)
+        os.replace(tmp_path, path)
+    except OSError:
+        pass
 
 
 class DebugRun:
@@ -159,10 +202,18 @@ class DebugRun:
             (self.dir / 'error.txt').write_text(error)
         (self.dir / 'logs.txt').write_text('\n'.join(self._logs))
 
-        num_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
-        self._append_summary_row(success, num_steps, error)
+        # Wall-clock time from DebugRun construction (right as the planner
+        # node started handling this /plan_task call) to here (the plan is
+        # fully formed, response.json about to be written) — this is what
+        # "how long until the robot starts moving" actually is in this
+        # architecture: execution can't begin until the whole plan is back,
+        # there's no streaming/partial execution.
+        planning_duration_s = round((_now() - self._started).total_seconds(), 3)
 
-    def _append_summary_row(self, success: bool, num_steps, error) -> None:
+        num_steps = len(response.get('plan', [])) if isinstance(response, dict) else None
+        self._append_summary_row(success, num_steps, error, planning_duration_s)
+
+    def _append_summary_row(self, success: bool, num_steps, error, planning_duration_s) -> None:
         root = Path(settings.DEBUG_DIR)
         root.mkdir(parents=True, exist_ok=True)
         csv_path = root / 'summary.csv'
@@ -177,11 +228,9 @@ class DebugRun:
             'success': success,
             'num_steps': num_steps if num_steps is not None else '',
             'error': (error or '').splitlines()[0][:300] if error else '',
+            'planning_duration_s': planning_duration_s,
         }
         with _csv_lock:
-            is_new = not csv_path.exists()
+            _ensure_csv_header(csv_path, _CSV_FIELDS)
             with open(csv_path, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
-                if is_new:
-                    writer.writeheader()
-                writer.writerow(row)
+                csv.DictWriter(f, fieldnames=_CSV_FIELDS).writerow(row)

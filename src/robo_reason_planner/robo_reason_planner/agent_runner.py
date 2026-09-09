@@ -1,4 +1,7 @@
 """Shared planning loop used by both the LLM and VLM planner nodes."""
+import logging as _logging
+
+_log = _logging.getLogger(__name__)
 
 
 def run_plan_loop(agent, observation: dict, max_steps: int = 25) -> list:
@@ -19,5 +22,7 @@ def run_plan_loop(agent, observation: dict, max_steps: int = 25) -> list:
 
         if result.end_of_simulation:
             break
+    else:
+        _log.warning("plan_loop exhausted max_steps=%d without end_of_simulation", max_steps)
 
     return steps

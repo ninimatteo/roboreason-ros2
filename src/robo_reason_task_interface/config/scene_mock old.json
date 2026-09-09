@@ -1,0 +1,77 @@
+{
+  "frame": "base_link",
+  "units": "meters",
+  "description": "UR5cb mounted on the short side of a rectangular table (1.2m x 0.8m). All positions in robot base frame. Table surface at z=0.0.",
+  "robot": {
+    "type": "UR5cb",
+    "base_position": [0.0, 0.0, 0.0],
+    "holding": null,
+    "home_joints": [-1.5708, -1.5708, -1.5708, -1.5708, 1.5708, 0.0]
+  },
+  "workspace": {
+    "table": {
+      "type": "rectangular_table",
+      "length_x": 1.2,
+      "width_y": 0.8,
+      "height": 0.76,
+      "surface_z": -0.03,
+      "corner_near_robot": [0.04, 0.024, 0.00],
+      "corner_far": [0.04, -0.80, 0.00]
+    },
+    "limits": {
+      "x": [-0.80, 0.80],
+      "y": [-0.80, 0.00],
+      "z": [-0.03, 0.55]
+    }
+  },
+  "objects": {
+    "black_indented_cube": {
+      "type": "cube",
+      "color": "black",
+      "position": [-0.2, -0.5, 0.00],
+      "size": [0.05, 0.05, 0.045],
+      "state": "on_table",
+      "graspable": true
+    },
+    "black_exagon": {
+      "type": "exagon",
+      "color": "black",
+      "position": [-0.3, -0.6, 0.00],
+      "size": [0.05, 0.05, 0.045],
+      "state": "on_table",
+      "graspable": true
+    },
+    "black_extruded_tower_on_cubic_base": {
+      "type": "two part appearance: a cube body topped by a tall hollow square tube",
+      "color": "black",
+      "position": [0.0, -0.4, 0.00],
+      "size": [0.05, 0.05, 0.045],
+      "state": "on_table",
+      "graspable": true
+    },
+    "black_cylinder": {
+      "type": "cylinder",
+      "color": "black",
+      "position": [-0.1, -0.7, 0.00],
+      "size": [0.05, 0.05, 0.05],
+      "state": "on_table",
+      "graspable": true
+    }
+  },
+  "targets": {
+    "brown_top": {
+      "type": "zone",
+      "color": "brown",
+      "label": "tray",
+      "position": [0.35, -0.45, 0.05],
+      "size": [0.22, 0.32, 0.00]
+    },
+    "table": {
+      "type": "zone",
+      "color": "white",
+      "label": "table",
+      "position": [0.0, -0.8, -0.01],
+      "size": [0.8, 1.2, 0.01]
+    }
+  }
+}

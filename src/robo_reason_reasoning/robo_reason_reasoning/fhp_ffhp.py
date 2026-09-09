@@ -72,7 +72,10 @@ class FHP(ReasoningMethod):
             force_json=True, 
             image=image
         )
-        return json.loads(self._strip_json_fence(raw))['plan']
+        parsed = self._parse_json_response(raw, context='plan_task')
+        if isinstance(parsed, list):
+            return parsed
+        return parsed['plan']
 
     def __call__(self, force_replan: bool = False, **kwargs):
         assert 'user_request' in kwargs
@@ -93,11 +96,12 @@ class FHP(ReasoningMethod):
             self._verbose_print('Generated plan', self.task_plan)
 
         if self.task_plan:
-            action = UR5Action(**self.task_plan[0])
+            action = self._build_action(self.task_plan[0])
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 
+        # 'idle', see cot_sc.py's identical fix for why.
         return self._output(
-            action=UR5Action(action_name='move_home'),
+            action=UR5Action(action_name='idle'),
             end_of_simulation=True,
         )

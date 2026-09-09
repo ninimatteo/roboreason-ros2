@@ -43,6 +43,10 @@
       <div id="chat-history"></div>
       <form id="chat-form" class="chat-form">
         <input id="chat-input" type="text" placeholder="e.g. pick up the red cube and place it on zone A" autocomplete="off" />
+        <label class="benchmark-toggle" title="Tag this run as benchmark data — see docs/BENCHMARK_PLAN.md">
+          <input id="chat-benchmark" type="checkbox" />
+          Benchmark trial
+        </label>
         <button id="chat-send" type="submit">Send</button>
         <button id="chat-estop" type="button" class="estop" title="Stop the robot now, abort the plan, and return home" disabled>Stop</button>
       </form>
@@ -91,6 +95,25 @@
         </label>
         <label>Temperature
           <input id="inp-temp" type="number" step="0.1" min="0" max="2" />
+        </label>
+      </div>
+      <div id="pixel-grounding-fields" class="grid" hidden>
+        <label>Pixel grounding (VLM)
+          <select id="sel-grounding-mode">
+            <option value="point">Point (single [x, y] click)</option>
+            <option value="bbox">Bounding box ([x_min, y_min, x_max, y_max])</option>
+          </select>
+        </label>
+      </div>
+      <div id="reasoning-effort-fields" class="grid" hidden>
+        <label>Reasoning effort (VLM, Groq/Qwen3)
+          <select id="sel-reasoning-effort">
+            <option value="">Default (unset)</option>
+            <option value="none">None — disable internal reasoning</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
         </label>
       </div>
       <div id="grounding-fields" class="grounding-section" hidden>

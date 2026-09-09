@@ -105,9 +105,9 @@ class SelfRefine(ReasoningMethod):
         if iteration >= self.max_iterations:
             return True
         try:
-            if json.loads(self._strip_json_fence(feedback)).get('is_satisfactory', False):
+            if json.loads(self._extract_json(feedback)).get('is_satisfactory', False):
                 return True
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, json.JSONDecodeError, KeyError):
             pass
         return False
 
@@ -138,8 +138,8 @@ class SelfRefine(ReasoningMethod):
             self._verbose_print(f'Iteration {t+1} refined', {'solution': current})
 
         try:
-            return json.loads(self._strip_json_fence(current)).get('plan', [])
-        except json.JSONDecodeError:
+            return json.loads(self._extract_json(current)).get('plan', [])
+        except (ValueError, json.JSONDecodeError):
             return []
 
     def __call__(self, force_replan: bool = False, **kwargs):
@@ -154,11 +154,12 @@ class SelfRefine(ReasoningMethod):
             self.task_plan = self.generate_self_refined_solution(env_map, user_req, image=image)
 
         if self.task_plan:
-            action = UR5Action(**self.task_plan[0])
+            action = self._build_action(self.task_plan[0])
             self.task_plan = self.task_plan[1:]
             return self._output(action=action, end_of_simulation=False)
 
+        # 'idle', see cot_sc.py's identical fix for why.
         return self._output(
-            action=UR5Action(action_name='move_home', score=0.0),
+            action=UR5Action(action_name='idle', score=0.0),
             end_of_simulation=True,
         )

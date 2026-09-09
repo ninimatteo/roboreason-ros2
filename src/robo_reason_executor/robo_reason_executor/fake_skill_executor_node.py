@@ -15,6 +15,7 @@ import json
 import time
 
 from robo_reason_interfaces.action import ExecuteSkill
+from robo_reason_manager.schemas import ALLOWED_SKILLS, SKILL_REQUIRED_ARGS
 
 
 class FakeSkillExecutorNode(Node):
@@ -40,13 +41,38 @@ class FakeSkillExecutorNode(Node):
         return CancelResponse.ACCEPT
 
     def _execute_skill_callback(self, goal_handle):
-        skill_name = goal_handle.request.skill_name
-        skill_args = json.loads(goal_handle.request.skill_args_json)
+        skill_name = goal_handle.request.skill_name.lower()
+        result = ExecuteSkill.Result()
+
+        try:
+            skill_args = json.loads(goal_handle.request.skill_args_json)
+        except json.JSONDecodeError as exc:
+            self.get_logger().error(f'[FakeSkillExecutorNode] Malformed skill_args_json: {exc}')
+            goal_handle.abort()
+            result.success = False
+            result.error_message = f'malformed skill_args_json: {exc}'
+            return result
+
+        if skill_name not in ALLOWED_SKILLS:
+            self.get_logger().error(f'[FakeSkillExecutorNode] Unknown skill: {skill_name}')
+            goal_handle.abort()
+            result.success = False
+            result.error_message = f'unknown skill: {skill_name}'
+            return result
+
+        for arg in SKILL_REQUIRED_ARGS.get(skill_name, []):
+            if arg not in skill_args:
+                self.get_logger().error(
+                    f'[FakeSkillExecutorNode] Missing required arg for {skill_name}: {arg}'
+                )
+                goal_handle.abort()
+                result.success = False
+                result.error_message = f'missing required arg for {skill_name}: {arg}'
+                return result
 
         self.get_logger().info(f'[FAKE {skill_name.upper()}] args={skill_args}')
 
         feedback = ExecuteSkill.Feedback()
-        result = ExecuteSkill.Result()
 
         # Progress 0.30 — simulated motion, split into short sleeps so an
         # emergency-stop cancel is noticed within ~0.1s instead of only after

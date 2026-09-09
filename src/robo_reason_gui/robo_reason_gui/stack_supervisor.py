@@ -27,13 +27,13 @@ from robo_reason_bringup.config import settings
 # every skill run twice (duplicate-node race → corrupt robot state).
 _STACK_PROCESS_PATTERNS = (
     'gui_stack.launch.py',
-    'llm_planner_node',
-    'vlm_planner_node',
-    'vlm_llm_planner_node',
-    'plan_manager_node',
-    'fake_skill_executor_node',
-    'ur5_skill_executor_node',
-    'mock_camera_service_node',
+    'lib/robo_reason_planner/llm_planner_node',
+    'lib/robo_reason_planner/vlm_planner_node',
+    'lib/robo_reason_planner/vlm_llm_planner_node',
+    'lib/robo_reason_manager/plan_manager_node',
+    'lib/robo_reason_executor/fake_skill_executor_node',
+    'lib/robo_reason_executor/ur5_skill_executor_node',
+    'lib/vlm_camera_service/mock_camera_service_node',
 )
 
 
@@ -54,6 +54,14 @@ def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict
         # (declared-but-unused launch arg) in LLM/VLM mode.
         f"vlm_model_name:={config.get('vlm_model_name', settings.VLM_MODEL_NAME)}",
         f"vlm_temperature:={config.get('vlm_temperature', settings.VLM_TEMPERATURE)}",
+        # Only used by the VLM planner's direct pixel pipeline; harmless
+        # (declared-but-unused launch arg) in LLM/VLM_LLM mode.
+        f"grounding_mode:={config.get('grounding_mode', settings.VLM_GROUNDING_MODE)}",
+        # Used by both the VLM planner and the VLM_LLM scene-grounding call;
+        # harmless (declared-but-unused launch arg) in LLM mode. Empty string
+        # (default) omits the param, leaving the model's default behavior
+        # unchanged.
+        f"reasoning_effort:={config.get('reasoning_effort', settings.VLM_REASONING_EFFORT)}",
     ]
 
 
@@ -165,7 +173,12 @@ class StackSupervisor:
                 self._proc = None
                 return {'ok': True, 'status': self.status()}
             proc = self._proc
-            pgid = os.getpgid(proc.pid)
+            try:
+                pgid = os.getpgid(proc.pid)
+            except ProcessLookupError:
+                self._proc = None
+                self._pgid = None
+                return {'ok': True, 'status': self.status()}
             self._log('stopping stack (SIGINT)…')
             # SIGINT mimics Ctrl-C so ros2 launch shuts its nodes down cleanly.
             self._signal_group(pgid, signal.SIGINT)

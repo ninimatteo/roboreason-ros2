@@ -31,9 +31,42 @@ class Settings(BaseSettings):
     REASONING_METHOD: str = 'cot_sc'
     MODEL_NAME: str = 'nebius/nvidia-nemotron-120b'
     TEMPERATURE: float = 0.1
+    # Per-request HTTP timeout (seconds) for every FoundationClient provider
+    # call (Groq/OpenAI/Nebius/Anthropic — see base_client.py). Bounds a
+    # single stuck LLM/VLM call so it fails fast with a catchable error
+    # instead of silently absorbing the whole PLAN_TIMEOUT_S budget. Large
+    # models (e.g. nebius/nvidia-nemotron-120b) can legitimately take longer
+    # than the default per call — raise this if you see APITimeoutError on
+    # requests that are just slow, not stuck.
+    REQUEST_TIMEOUT_S: float = 120.0
 
     # ── VLM planner ───────────────────────────────────────────────────────────
     TMP_DIR: str = 'src/vlm_frames'
+    # 'point'  — VLM emits a single [x, y] pixel click per target (validated on
+    #            hardware; default, unchanged behavior).
+    # 'bbox'   — VLM emits a [x_min, y_min, x_max, y_max] pixel box per target;
+    #            the box center is deprojected for (x, y, z) and the box's
+    #            pixel width/height are converted to a real-world grasp_width
+    #            instead of relying on the VLM's blind numeric guess.
+    VLM_GROUNDING_MODE: str = 'point'
+    # A pick bbox's raw left/right edge pixels sit exactly on the object's
+    # silhouette boundary — the single worst place to sample depth (highest
+    # rate of "no valid depth" dropouts on real hardware). Sampling this
+    # fraction inward from each edge instead lands on the object's actual
+    # surface. See _apply_grasp_width in vlm_planner_node.py.
+    GRASP_WIDTH_EDGE_INSET_FRAC: float = 0.15
+    # Qwen3-family reasoning control, forwarded verbatim to Groq as the
+    # 'reasoning_effort' request param (see LLMClient/VLMClient._call_groq).
+    # ''       — omitted (default): unchanged behavior, model's own default.
+    # 'none'   — disables <think> chain-of-thought entirely; worth trying when
+    #            a reasoning-heavy VLM (e.g. groq/qwen3.6-27b) is visibly doing
+    #            imprecise percentage-estimation arithmetic for pixel grounding
+    #            instead of grounding directly (see debug-image "shifted point"
+    #            reports on Groq vs. Nebius).
+    # 'low' / 'medium' / 'high' / 'hidden' — other Groq-supported values.
+    # Applies to both the direct VLM planner (vlm_planner_node) and the
+    # VLM->LLM hybrid's scene-grounding call (vlm_llm_planner_node).
+    VLM_REASONING_EFFORT: str = ''
 
     # ── VLM+LLM hybrid planner (scene grounding call, independent of MODEL_NAME
     # which is used for the subsequent LLM planning call) ─────────────────────
@@ -48,6 +81,19 @@ class Settings(BaseSettings):
     # surface (mid-body grasp) instead of targeting the bare top surface.
     PICK_GRASP_DEPTH_FRACTION: float = 0.5   # fraction of object height to descend for pick
     MIN_OBJECT_HEIGHT_M: float = 0.02        # clamp for depth-computed object height
+
+    # ── Release-collision spacing (plan_manager, schemas.distribute_zone_releases) ──
+    # A "place these objects onto the tray" task can produce multiple releases
+    # that land on (about) the same point — same target zone for LLM, same
+    # depth-deprojected point for VLM/VLM_LLM. distribute_zone_releases nudges
+    # the 2nd/3rd/... release at a given spot along a line (wrapping into a
+    # grid once a row is full), spaced by the released object's grasp_width
+    # plus this margin. Two releases at the same (x, y) but different z are
+    # treated as an intentional stack, not a collision, and left alone.
+    ZONE_PLACEMENT_COLLISION_RADIUS_M: float = 0.03  # how close (x, y) counts as "the same spot"
+    ZONE_PLACEMENT_DEFAULT_SPACING_M: float = 0.05   # fallback item footprint when grasp_width is unknown
+    ZONE_PLACEMENT_MARGIN_M: float = 0.01            # extra clearance between adjacent items
+    ZONE_PLACEMENT_ITEMS_PER_ROW: int = 3            # line length before wrapping into a new grid row
 
     # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
     DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'

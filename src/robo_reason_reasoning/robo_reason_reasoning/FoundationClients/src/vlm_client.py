@@ -1,4 +1,4 @@
-import os, base64, base64
+import os, base64
 from io import BytesIO
 from typing import Any, Dict, Optional, Type, Union
 from PIL import Image, ImageDraw
@@ -28,23 +28,53 @@ class VLMClient(BaseFoundationClient):
             return kwargs[name]
         return self.model_parameters.get(name, default)
 
-    def _encode_image(self, image_source: Union[str, bytes, Image.Image]) -> str:
-        """Encodes image to base64 string."""
+    @staticmethod
+    def _sniff_mime_type(raw_bytes: bytes) -> str:
+        """Detects an image's MIME type from its magic bytes.
+
+        Both data: URI call sites used to hardcode 'image/jpeg' regardless
+        of the actual encoding. That was silently wrong whenever the source
+        was PNG (e.g. vlm_planner_node._save_frame writes .png via
+        cv2.imwrite) — harmless as long as the provider sniffed the bytes
+        itself, until Nebius started validating the declared MIME against
+        the payload and rejecting the mismatch with a 400 that doesn't
+        mention MIME at all ('content must be a valid string'), observed
+        2026-09-03 on both qwen3-2.5-70b and kimi-k3 — i.e. not model
+        specific. Falls back to JPEG (the prior blanket default) for
+        formats not recognized here.
+        """
+        if raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if raw_bytes.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if raw_bytes.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
+        if raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"
+
+    def _encode_image(self, image_source: Union[str, bytes, Image.Image]) -> tuple:
+        """Encodes image to a base64 string. Returns (base64_str, mime_type);
+        mime_type is None for an http(s) URL passed straight through (the
+        caller doesn't need one — see _build_image_url_content/_call_groq).
+        """
         if isinstance(image_source, Image.Image):
             buffered = BytesIO()
             image_source.save(buffered, format="JPEG")
-            return base64.b64encode(buffered.getvalue()).decode('utf-8')
+            raw = buffered.getvalue()
+            return base64.b64encode(raw).decode('utf-8'), "image/jpeg"
         elif isinstance(image_source, bytes):
-            return base64.b64encode(image_source).decode('utf-8')
+            return base64.b64encode(image_source).decode('utf-8'), self._sniff_mime_type(image_source)
         elif isinstance(image_source, str):
             if image_source.startswith("http"):
-                return image_source
+                return image_source, None
             elif os.path.isfile(image_source):
                 with open(image_source, "rb") as image_file:
-                    return base64.b64encode(image_file.read()).decode('utf-8')
+                    raw = image_file.read()
+                return base64.b64encode(raw).decode('utf-8'), self._sniff_mime_type(raw)
             else:
-                 return image_source
-        return ""
+                 return image_source, None
+        return "", "image/jpeg"
 
     def _build_image_url_content(self, image: Union[str, bytes, Image.Image], **kwargs) -> Dict[str, Any]:
         if image is None:
@@ -54,8 +84,9 @@ class VLMClient(BaseFoundationClient):
         if isinstance(image, str) and image.startswith("http"):
             image_url["url"] = image
         else:
-            mime_type = kwargs.get("image_mime_type", "image/jpeg")
-            image_url["url"] = f"data:{mime_type};base64,{self._encode_image(image)}"
+            encoded, detected_mime = self._encode_image(image)
+            mime_type = kwargs.get("image_mime_type", detected_mime or "image/jpeg")
+            image_url["url"] = f"data:{mime_type};base64,{encoded}"
 
         image_detail = kwargs.get("image_detail")
         if image_detail is not None:
@@ -95,8 +126,18 @@ class VLMClient(BaseFoundationClient):
         temperature = kwargs.get("temperature", self.temperature)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         top_p = kwargs.get("top_p", self.top_p)
+        # Qwen3-family reasoning control: "none" disables <think> chain-of-
+        # thought tokens entirely for clean, direct structured output;
+        # "hidden" keeps reasoning internal-only. Omitted (default) uses the
+        # model's own default behavior — no change unless explicitly opted
+        # into via client_parameters={'reasoning_effort': ...} or a per-call
+        # kwarg. This is the source-side fix for a reasoning-heavy model
+        # exhausting max_tokens on <think> before emitting JSON (see
+        # ReasoningMethod._is_blank_response's retry-once, which is the
+        # defensive fallback for when this isn't set).
+        reasoning_effort = kwargs.get("reasoning_effort", self.model_parameters.get("reasoning_effort"))
 
-        base64_image = self._encode_image(image)
+        base64_image, detected_mime = self._encode_image(image)
 
         if isinstance(image, str) and image.startswith("http"):
             image_content = {
@@ -107,10 +148,11 @@ class VLMClient(BaseFoundationClient):
             }
         else:
             # base64_image covers local files, bytes, PIL images, and raw base64 strings
+            mime_type = detected_mime or "image/jpeg"
             image_content = {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/jpeg;base64,{base64_image}"
+                    "url": f"data:{mime_type};base64,{base64_image}"
                 }
             }
 
@@ -139,6 +181,8 @@ class VLMClient(BaseFoundationClient):
             }
         # Note: Groq VLMs (e.g. qwen 3.6) don't support response_format json_object.
         # JSON output is enforced via the prompt instead.
+        if reasoning_effort is not None:
+            params["reasoning_effort"] = reasoning_effort
 
         response = self.client.chat.completions.create(**params)
         if hasattr(response, 'usage'):
@@ -245,45 +289,3 @@ class VLMClient(BaseFoundationClient):
             return self._call_gemini(text_prompt, image, **kwargs)
         else:
              raise NotImplementedError(f"Provider {self.provider} not supported for Vision.")
-
-
-if __name__ == "__main__":
-        
-        use_nebius = True
-        use_groq = False
-
-        if use_nebius:
-            model_parameters = {
-                "model_name": "nebius/qwen3-2.5-70b",
-                'temperature': 0.7,
-                'max_tokens': 2048,
-                'top_p': 0.9,
-            }
-        elif use_groq:
-            model_parameters = {
-                "model_name": "groq/llama4-scout-17b",
-                'temperature': 0.7,
-                'max_tokens': 2048,
-                'top_p': 0.9
-            }
-             
-        vlm = VLMClient(**model_parameters)
-        task = 'Find all the faces in the image. If there are specific known, please label them with their names.'
-        
-        bb_prompt = """
-        Task: {task}.
-        The image is provided in the size of {pixels_width} x {pixels_height}.
-        Strictly use the following json format for the response, avoid any additional text or explanation.
-
-        {{
-        "bounding_boxes": [
-            {{
-                "label": "detection-label",
-                "x_min": top-left-x-pixel,
-                "y_min": top-left-y-pixel,
-                "x_max": bottom-right-x-pixel,
-                "y_max": bottom-right-y-pixel
-            }}, 
-            ]
-        }}
-        """

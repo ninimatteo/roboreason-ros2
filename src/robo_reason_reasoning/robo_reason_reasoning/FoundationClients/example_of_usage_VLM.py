@@ -19,7 +19,7 @@ def test_groq_vlm():
 def test_nebius_vlm():
 
     return {
-        "model_name": "nebius/qwen3-2.5-70b",
+        "model_name": "nebius/kimi-k2.6",
         'temperature': 0.7,
         'max_tokens': 2048,
         'top_p': 0.9,

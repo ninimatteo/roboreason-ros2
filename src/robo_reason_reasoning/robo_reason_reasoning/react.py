@@ -1,5 +1,4 @@
 """ReAct reasoning method — adapted for UR5 from RoboReason-Lab."""
-import json
 from collections import namedtuple
 
 from robo_reason_reasoning.reasoning_method import ReasoningMethod
@@ -52,7 +51,7 @@ class React(ReasoningMethod):
             image=image
         )
 
-        output = dict(json.loads(self._strip_json_fence(raw)))
+        output = dict(self._parse_json_response(raw, context='react_step'))
         decision = output.get('react_decision')
 
         if decision == 'reasoning':
@@ -60,7 +59,7 @@ class React(ReasoningMethod):
             action = UR5Action(action_name='wait', time=0.0)
             eos = output.get('end_of_simulation', False)
         elif decision == 'action':
-            action = UR5Action(**output.get('action', {'action_name': 'move_home'}))
+            action = self._build_action(output.get('action', {'action_name': 'move_home'}))
             eos = output.get('end_of_simulation', False)
         else:
             action = UR5Action(action_name='move_home')

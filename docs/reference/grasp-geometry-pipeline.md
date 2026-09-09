@@ -14,7 +14,7 @@ launch/operator instructions.
 |---|---|---|---|
 | Object height | hand-authored in `scene_mock.json` | **depth-derived** (`table_surface_z - top_z`) | **depth-derived**, computed once when the generated scene is built |
 | Pick contact z | `object.position.z` (as authored) | depth top_z, pulled down (mid-body, clamp-capped) | same clamp math as `VLM`, baked into the generated scene's `position.z` |
-| Target height (stacking) | hand-authored `size[2]` | n/a — deprojection gives the real top z directly | **depth-derived**, `position.z`/`size[2]` split so the downstream LLM formula reconstructs the true top z |
+| Target top surface | hand-authored `bounds.z[1]` | n/a — deprojection gives the real top z directly | **depth-derived**, written straight into `bounds.z[1]` |
 | Grasp width | hand-authored `size[0]` | VLM's **visual guess** (not depth-verifiable) | VLM's **visual guess**, carried through the generated scene |
 | Held-object lift on release | `object_height` set by LLM from `size[2]`, applied by executor | `object_height` overwritten with depth-derived height, applied by executor | same as `LLM` (it *is* the `LLM` pipeline, fed a generated scene) |
 | TCP offset (flange→contact) | interpolated from `grasp_width` at execution time — same in all three modes (`ur5_skill_executor_node.py`) | | |
@@ -78,12 +78,20 @@ Every number is only as accurate as whoever last edited that file.
   treated as the grasp **contact point**, not a base/bottom reference.
 - **Grasp width**: the LLM is told to set `grasp_width = object.size[0]`.
 - **Release height**:
-  - Flat surface: `release_position.z = surface_z`.
-  - Stacking on a target: `release_position.z = target.position.z +
-    target.size[2]`. Here `target.position.z` is treated as a **base**
-    reference and `size[2]` as the height needed to reach the top — this is
-    the convention `scene_mock.json` was authored with, and the reason the
-    `VLM_LLM` fix below exists (see "Known pitfall").
+  - Bare table: `release_position.z = surface_z`.
+  - Into a target zone: `release_position.z = target.bounds.z[1]`, at the
+    midpoint of `bounds.x`/`bounds.y`. Since ROBOAI-19 a `targets.*` entry
+    is an explicit axis-aligned box (`bounds.x`/`y`/`z` as
+    `[min, max]` pairs) and `bounds.z[1]` is stated to be the zone's top
+    surface — there is no base-plus-height convention left to infer, which
+    is what the old `position.z + size[2]` formula depended on (see "Known
+    pitfall").
+  - Stacking on another object: `release_position.z = target.position.z +
+    target.size[2]`. `objects.*` deliberately keep `position` + `size`,
+    because a pick needs a single contact point rather than an area — and
+    an object's `position.z` is that contact point, not a base, which is
+    why `_fix_release_height` overrides this case with
+    `table_surface_z + size[2]`.
 - **Held-object lift**: the LLM also sets `object_height = size[2]` of the
   *held* object on the `release` action; the executor
   (`ur5_skill_executor_node.py`) adds this to `release_position.z` at
@@ -130,14 +138,19 @@ mode — all the interesting logic is in how the generated scene is built
   TCP_CLAMP_CLEARANCE_M)` — the same mid-body/clamp-capped contact point as
   `VLM` mode, just precomputed into the scene instead of during per-step
   deprojection.
-- **Targets**: same idea, but **no height floor** — a flat zone marked
-  directly on the table should read ~0 height, not get lifted like a
-  graspable object would:
-  `height = max(top_z - table_surface_z, 0.0)`, `size[2] = height`,
-  `position.z = top_z - height`. This makes `position.z` a **base**
-  reference again, so when the downstream LLM applies its normal stacking
-  formula (`position.z + size[2]`), it reconstructs the real,
-  depth-measured top surface — see "Known pitfall" below.
+- **Targets**: much simpler than objects, because since ROBOAI-19 a zone
+  *is* a box. The deprojected `top_z` is written straight to
+  `bounds.z[1]` — the number the downstream LLM reads verbatim as the
+  release height — and `bounds.z[0]` is set to the table surface the zone
+  rests on (or to `top_z` itself when the zone reads at or below the
+  table, so a flat zone marked directly on the table stays a legitimate
+  ~0-height zone rather than getting lifted). No height floor, and no
+  base-plus-height split to reconstruct. The VLM's un-depth-grounded
+  `size[2]` guess for a target is dropped entirely rather than corrected.
+  `bounds.x`/`bounds.y` are still `pixel_center ± size/2` from the VLM's
+  visual size estimate: scene grounding returns a pixel *centre*, not a
+  pixel bbox (`DetectedTarget`), so there are no real corners to
+  deproject yet.
 - **Grasp width**: still a blind VLM visual estimate, carried through the
   generated scene's `size[0]` and consumed by the LLM exactly as in `LLM`
   mode.
@@ -146,18 +159,26 @@ mode — all the interesting logic is in how the generated scene is built
   ensures the input fed into it is dimensionally consistent with what it
   assumes.
 
-### Known pitfall (fixed) — double-counted release height
+### Known pitfall (historical) — double-counted release height
 
-`scene_mock.json`'s convention is `position.z` = base reference,
-`size[2]` = height, so `position.z + size[2]` = top surface. Early hybrid
-code set `target.position.z` to the raw (already-correct) deprojected top
-surface **and** left the VLM's un-verified `size[2]` guess untouched — so
-the LLM's normal stacking formula added a guessed height on top of an
-already-correct value, inflating every stack-on-target release by however
-wrong that guess was. Fixed by deriving the target's real height from depth
-and writing `position.z` back as a base reference (see "Targets" above), so
-the existing LLM formula reconstructs the true top surface instead of
-double-counting it.
+Before ROBOAI-19, `scene_mock.json`'s target convention was an *implicit*
+one: `position.z` = base reference, `size[2]` = height, so
+`position.z + size[2]` = top surface. Early hybrid code set
+`target.position.z` to the raw (already-correct) deprojected top surface
+**and** left the VLM's un-verified `size[2]` guess untouched — so the LLM's
+normal stacking formula added a guessed height on top of an already-correct
+value, inflating every stack-on-target release by however wrong that guess
+was. The first fix derived the target's real height from depth and wrote
+`position.z` back as a base reference, so the formula reconstructed the
+true top surface rather than double-counting it.
+
+ROBOAI-19 removed the class of bug rather than the instance: a zone now
+declares `bounds.z[1]` as its top surface outright, so there is no
+convention to infer, no reconstruction to get wrong, and no second number
+that has to stay dimensionally consistent with the first. `objects.*`
+keep `position` + `size` and therefore keep their own version of this
+hazard — see `_fix_release_height`'s `table_surface_z + size[2]`
+override.
 
 ---
 

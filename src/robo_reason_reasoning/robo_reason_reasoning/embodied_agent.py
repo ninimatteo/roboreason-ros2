@@ -39,6 +39,7 @@ class EmbodiedAgent:
         client_parameters: dict,
         client_type: str = 'llm',
         verbose: bool = False,
+        grounding_mode: str = 'point',
         **kwargs,
     ):
         assert 'model_name' in client_parameters, "client_parameters must include 'model_name'."
@@ -46,10 +47,13 @@ class EmbodiedAgent:
         self.verbose = verbose
         self.reasoning_mode = reasoning_mode.lower()
         self.client_type = client_type.lower()
+        # VLM-only pixel-grounding format: 'point' or 'bbox' (see reasoning_method.py).
+        self.grounding_mode = grounding_mode
 
         self.predicates = Predicates.get_all_predicates()
         self.skills, self.action_placeholder = UR5Skills.get_embodiment_data(
-            use_vlm=(self.client_type == 'vlm')
+            use_vlm=(self.client_type == 'vlm'),
+            grounding_mode=self.grounding_mode,
         )
         self.eos_placeholder = UR5Skills.get_eos_example()
 
@@ -61,6 +65,7 @@ class EmbodiedAgent:
             skills=self.skills,
             action_placeholder=self.action_placeholder,
             verbose=verbose,
+            grounding_mode=grounding_mode,
         )
 
         mode = self.reasoning_mode

@@ -231,6 +231,8 @@ class CameraServicesNode(Node):
                 "waiting for camera inputs: " + ", ".join(missing)
             )
 
+    _MAX_FRAME_AGE_NS = 5_000_000_000  # 5 s; frames older than this are treated as stale
+
     def _handle_get_image(
         self, _request: GetImage.Request, response: GetImage.Response
     ) -> GetImage.Response:
@@ -238,6 +240,19 @@ class CameraServicesNode(Node):
             response.success = False
             response.frame_id = ""
             response.error_message = "RGB image not received yet"
+            return response
+
+        age_ns = (
+            self.get_clock().now()
+            - rclpy.time.Time.from_msg(self._latest_color.header.stamp)
+        ).nanoseconds
+        if age_ns > self._MAX_FRAME_AGE_NS:
+            response.success = False
+            response.frame_id = ""
+            response.error_message = (
+                f"Camera frame is stale ({age_ns / 1e9:.1f} s old) — "
+                "check that the Orbbec driver is still publishing."
+            )
             return response
 
         image = self._latest_color
@@ -359,12 +374,12 @@ class CameraServicesNode(Node):
             response.frame_id = "base_link"
         else:
             self.get_logger().warn(
-                "No camera→base_link transform yet — returning camera-frame points. "
+                "No camera→base_link transform yet — refusing Deproject request. "
                 "Make sure the ArUco board is visible and board_in_base_* params are set."
             )
-            response.success = True
-            response.points = points
-            response.frame_id = self._camera_frame_id()
+            response.success = False
+            response.error_message = "Camera not calibrated — no base_link transform available."
+            response.points = []
 
         response.error_message = ""
         self.get_logger().info(
@@ -470,12 +485,13 @@ class CameraServicesNode(Node):
         never stopped), silently leaking timers and letting a stale in-flight
         callback race the fresh calibration attempt.
         """
-        if self._calib_timer is not None:
-            self._calib_timer.cancel()
         self._T_base_camera = None
         self._charuco_calibrated = False
         self._calib_hits = []
-        self._calib_timer = self.create_timer(0.5, self._try_calibrate)
+        if self._calib_timer is not None:
+            self._calib_timer.reset()
+        else:
+            self._calib_timer = self.create_timer(0.5, self._try_calibrate)
         self.get_logger().info(
             f'[CameraServicesNode] Calibration reset — '
             f'need {_CALIB_REQUIRED_HITS} consistent hits to lock'
@@ -604,8 +620,8 @@ class CameraServicesNode(Node):
             return
 
         pts = np.round(projected.reshape(-1, 2)).astype(np.int32).tolist()
-        msg.u = [p[0] for p in pts]
-        msg.v = [p[1] for p in pts]
+        msg.u = [max(0, p[0]) for p in pts]
+        msg.v = [max(0, p[1]) for p in pts]
         self._charuco_axis_pub.publish(msg)
 
     def _camera_frame_id(self) -> str:

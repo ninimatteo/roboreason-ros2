@@ -46,5 +46,27 @@ class SceneGrounder:
             force_json=True,
             forced_json_schema=VLMSceneDescription,
         )
-        cleaned = ReasoningMethod._strip_json_fence(raw)
+        if ReasoningMethod._is_blank_response(raw):
+            # Same rationale and constants as ReasoningMethod._call_client: a
+            # reasoning-heavy model can exhaust its whole max_tokens budget on
+            # internal <think> reasoning before ever emitting the final JSON,
+            # leaving a blank (or unclosed-think-only) response. Retry once
+            # with a bigger budget instead of failing this call outright —
+            # this is a one-shot perception call (see the class docstring),
+            # so it doesn't go through _call_client itself, but it's the same
+            # failure mode and deserves the same recovery.
+            base_max_tokens = getattr(self.client, 'max_tokens', 8192)
+            retry_max_tokens = min(
+                base_max_tokens * ReasoningMethod._RETRY_MAX_TOKENS_MULTIPLIER,
+                ReasoningMethod._RETRY_MAX_TOKENS_CAP,
+            )
+            if retry_max_tokens > base_max_tokens:
+                raw = self.client(
+                    text_prompt=text_prompt,
+                    image=image,
+                    force_json=True,
+                    forced_json_schema=VLMSceneDescription,
+                    max_tokens=retry_max_tokens,
+                )
+        cleaned = ReasoningMethod._extract_json(raw)
         return VLMSceneDescription.model_validate_json(cleaned)
