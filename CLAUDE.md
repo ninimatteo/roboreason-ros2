@@ -183,6 +183,41 @@ both outside the repo. Never ask the user to paste the key into the chat, and
 never write it to a file in the repo. If the key is missing, say so in one line
 and continue — time tracking must not block the work.
 
+**Keep status live, not just at session boundaries.** Don't wait for
+`/sessione-fine` to reflect reality in Jira. Transition an issue the moment
+its actual state changes — In Review when a change is ready and self-tested
+but not merged, Done when it's merged/delivered, back to In Progress if
+review finds real problems. A status that's stale for hours because "the
+session will update it later" defeats the point of Jira being the live
+source of truth (see the project map above).
+
+**Mid-session pivots — new issue found while working another.** If working a
+task turns up a genuine separate issue (typically a bug, on real hardware or
+in code) that isn't what the session started on: create the Jira issue right
+away (`createJiraIssue`, project `ROBOAI`) rather than only mentioning it in
+chat, and switch onto it the same way a session start would —
+`transitionJiraIssue` to In Progress, `clockify.sh stop` the running entry,
+`clockify.sh start "ROBOAI-xx ..."` under the new key. Link it to the issue
+being worked when the connection matters (`createIssueLink`). When attention
+returns to the original task, switch back the same way (stop, start under the
+original key — Clockify has no "resume," a fresh entry under the same
+description is normal). Whether to pivot immediately or just log the issue
+and keep going is a judgment call (does it block the current task?) — when
+genuinely unsure, ask rather than silently choosing either way.
+
+**Weekly board grooming, at session start.** Jira issues default to sitting
+in the backlog until someone acts on them — don't let "someone" always be the
+user. As part of `/sessione-inizio` §1, alongside picking the next task, pull
+what's due this week (`duedate` within the next 7 days) and surface it
+explicitly in the session summary, unprompted. Caveat: the Jira tools
+available here cover issue fields, status and comments, not the Agile
+board/backlog API — there's no "move to board" or rank endpoint exposed, so
+this can't be a literal backlog-to-board drag from here. Until that changes,
+the reachable equivalent is calling the due-this-week issues out by name in
+the summary (already required above) — good enough to make sure they're
+seen, not a substitute for the real thing if a proper board-move ever becomes
+available.
+
 **Resuming across sessions and chats.** There is no local state file, and none
 should be created: it would be a copy of Jira and would diverge. The context
 lives in three places that are always current — Jira holds the In Progress task
