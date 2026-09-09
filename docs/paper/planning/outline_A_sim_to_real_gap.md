@@ -14,12 +14,29 @@ algorithmic contribution (not just a report), the evidence already exists
 engages [RAS] rather than merely citing it — a natural reviewer hook.
 
 **Estimated net-new work for Sept 15**: writing + a validation ablation
-(rerun a handful of `sort_hard`/`arith_hard` trials with the deterministic
-fixes disabled vs. enabled, isolating their effect — currently the fixes
-are validated against captured `debug/` logs and unit tests but not a
-controlled A/B on hardware, per `SESSION_CONTEXT.md`'s Known Open Issues).
-This ablation is the one piece of *new* experimental work all three
-outlines would benefit from, but it's most load-bearing for this one.
+(rerun a handful of `sort_hard`/`arith_hard`/`pp_hard` trials with the
+deterministic fixes disabled vs. enabled, isolating their effect —
+currently the fixes are validated against captured `debug/` logs and unit
+tests but not a controlled A/B on hardware, per `session-context.md`'s
+Known Open Issues). This ablation is the one piece of *new* experimental
+work all three outlines would benefit from, but it's most load-bearing for
+this one.
+
+**Update 2026-09-09.** The 120-trial benchmark was rerun in September on a
+single unified model (`nebius/kimi-k2.6`, both modes — see ROBOAI-25) after
+July's VLM model (`qwen3.6-27b`) left Nebius's catalog. The rerun does
+*not* reproduce July's value-mapping-arithmetic-specific VLM collapse
+(30%/25% TSR) — TSR is now LLM 97.3% vs VLM 88.7% overall, a real but much
+smaller gap, and reading all 22 non-empty operator notes shows the failures
+are collisions and mispositioning during multi-object placement, occurring
+in **both** arms, not a reasoning error isolated to VLM. This is better
+evidence for this outline's actual central claim than July's data was: the
+dominant real-hardware failure mode is geometric (object placement/spacing
+that a physical arm can get wrong regardless of how the scene was
+perceived), not a VLM-specific perception or reasoning weakness — see the
+new bug #6 in §3 and the rewritten §5. Outline B, whose central claim
+*was* the VLM-specific arithmetic collapse, does not survive this rerun;
+this outline does, and comes out of it with a cleaner story.
 
 ## Title candidates
 
@@ -38,17 +55,19 @@ Problem → gap → method → evidence → headline number. Draft skeleton:
 where perception and geometry are either perfectly known or entirely
 symbolic. We show, through a real UR5cb manipulator deployment with a
 calibrated RGB-D camera, that the dominant class of planning failure on
-physical hardware — miscalculated release height, grasp width, and object
-footprint arising from the model performing its own geometric arithmetic —
-is structurally invisible to symbolic/simulated benchmarks, including a
-directly comparable prior taxonomy-driven benchmark [RAS]. We diagnose five
-recurring geometry bugs from production hardware logs, replace model-side
-arithmetic with a deterministic grounding layer, and validate the fix via
-[ablation numbers]. On a 120-trial real-hardware LLM-vs-VLM study using the
-same evaluation philosophy as [RAS] adapted to physical ground truth, we
-find [X]% of logged failures trace to geometry/arithmetic rather than
-perception, a distribution no simulated benchmark of this kind could
-produce."
+physical hardware — miscalculated release height, grasp width, object
+footprint, and multi-object placement spacing arising from the model (or an
+insufficiently grounded planning layer) performing its own geometric
+arithmetic — is structurally invisible to symbolic/simulated benchmarks,
+including a directly comparable prior taxonomy-driven benchmark [RAS]. We
+diagnose six recurring geometry bugs from production hardware logs, replace
+model-side arithmetic with a deterministic grounding layer where possible,
+and validate the fix via [ablation numbers]. On a 120-trial real-hardware
+LLM-vs-VLM study using the same evaluation philosophy as [RAS] adapted to
+physical ground truth, we find failures concentrate in multi-object
+placement and collision regardless of grounding modality (LLM: 97.3% TSR,
+VLM: 88.7% TSR, both 100% safe), a distribution no simulated benchmark of
+this kind could produce."
 
 ### 1. Introduction (≈900 words)
 - Hook: LLM/VLM planners are validated almost exclusively in simulation;
@@ -58,15 +77,17 @@ produce."
   they never force the model to compute a quantity a sensor could
   contradict.
 - Contribution list (aim for 3, each one sentence + forward-reference):
-  1. A taxonomy of five recurring real-hardware geometry-grounding bugs,
-     diagnosed from production debug logs across five development
+  1. A taxonomy of six recurring real-hardware geometry-grounding bugs,
+     diagnosed from production debug logs across six development
      sessions (Sec. III).
   2. A deterministic grounding layer that removes model arithmetic from
      the geometry-critical path, validated by [ablation] (Sec. IV).
   3. A 120-trial real-hardware benchmark, methodologically anchored to
      [RAS]'s TS/TSR/AETS metrics but adapted for a physical rig with no
      collision sensor or vision-based state check, showing the residual
-     failure distribution after the fix (Sec. V).
+     failure distribution is dominated by multi-object placement geometry
+     regardless of grounding modality, not by a single planner's weakness
+     (Sec. V).
 
 ### 2. Related Work (≈700 words)
 - LLM/VLM planning surveys + reasoning strategies (ReAct, ToT, Self-Refine,
@@ -106,8 +127,20 @@ plus prose for the two most instructive cases, drawn directly from
 5. **Width-dependent TCP offset** — RG2 fingers pivot, so flange-to-contact
    distance is a function of grasp width, not a constant; wrong for any
    object whose width diverges from the calibration midpoint.
+6. **Multi-object sequential-placement collision** (new, September rerun) —
+   spacing multiple releases inside a target zone (ROBOAI-19's bounds-aware
+   `distribute_zone_releases`) keeps final positions from overlapping, but
+   does not prevent the arm clipping an already-placed object while
+   approaching or releasing the next one, nor a released object rolling
+   into a neighbor from residual momentum or a few cm of height error.
+   Dominant failure mode in the September 120-trial rerun (22 of 22
+   non-empty operator notes describe a collision or a fallen/displaced
+   object during a multi-cube task, in **both** LLM and VLM arms) —
+   identified, partially mitigated, **not yet fixed**: state this plainly
+   as an open problem the taxonomy surfaces, not a claimed contribution.
 Frame the throughline explicitly: **every one of these bugs required a real
-sensor (depth camera) or real actuator (pivoting gripper) to exist at all.**
+sensor (depth camera), a real actuator (pivoting gripper), or real
+multi-body physical contact to exist at all.**
 
 ### 4. Deterministic Grounding Layer (≈1,100 words) — the method
 - Design principle: pull geometric arithmetic *out* of the model and into
@@ -128,19 +161,35 @@ sensor (depth camera) or real actuator (pivoting gripper) to exist at all.**
   since they involve stacking/tray placement).
 
 ### 5. Real-Hardware Evaluation (≈1,600 words) — the 120-trial benchmark
-- Reuse `docs/report/sections/05_benchmark.tex` almost directly: task
-  matrix (6 conditions × 10 reps × 2 models), TS/TSR/AETS adapted to
-  semi-automatic annotation, headline table (95%/97% LLM vs. 82%/66% VLM).
-- Reframe the arithmetic-task finding (12/13 "wrong cube" errors trace to
-  value-mapping arithmetic, not color grounding) explicitly as **evidence
-  for the paper's central claim**: even a failure that *looks* like
-  perception is often geometry/arithmetic-adjacent reasoning, invisible in
-  a symbolic benchmark that never separates "grounded wrong pixel" from
-  "computed wrong target."
+- Use the September rerun (`benchmark/results_2026-09_3arm.csv`, ROBOAI-25),
+  not the July dataset: task matrix (6 conditions × 10 reps × 2 models, one
+  unified model per modality, `nebius/kimi-k2.6`), TS/TSR/AETS adapted to
+  semi-automatic annotation, headline numbers TS 100%/100%, TSR 97.3%
+  [93.3,99.0]% LLM vs. 88.7% [82.6,92.8]% VLM (Wilson 95% CI). Report the
+  one pre-registered comparison (Fisher's exact test, LLM vs. VLM,
+  `arith_hard` TSR) honestly: p=0.74, no detectable effect — state this as
+  a finding, not a shortfall, since it is itself evidence against a
+  VLM-specific reasoning weakness.
+- Reframe the failure-mode evidence around what the September notes
+  actually show: reading all 22 non-empty operator notes, every one
+  describes a collision, a fallen object, or a mispositioned release during
+  a multi-cube task (`pp_hard`/`sort_hard`/`arith_hard`), split across
+  **both** arms roughly in proportion to their trial counts — present this
+  as **evidence for the paper's central claim**: the dominant real-hardware
+  failure is multi-object placement geometry (bug #6, §3), invisible to a
+  symbolic benchmark that never simulates two real bodies occupying space
+  at once, and orthogonal to which planner grounded the scene.
 - State the semi-automatic methodology and its limitation plainly (no
   collision sensor, no vision-based final-state check — contrast directly
   with [RAS]'s fully-automatic metrics, which are only possible *because*
   their world is symbolic).
+- Note in Limitations: no `VLM_LLM` hybrid arm this cycle either — dropped
+  mid-collection when a real object in the camera's field of view (a
+  cardboard flap propped on a tray-like container, out of the intended
+  workspace) returned no valid depth at its viewing angle and crashed the
+  hybrid grounding call every time it was detected; a physical-setup
+  problem, not evidence about the hybrid architecture itself, but honestly
+  it means this outline still has no `VLM_LLM` data point either.
 
 ### 6. Discussion & Limitations (≈500 words)
 - What this means for anyone benchmarking LLM robot planners: symbolic/sim
