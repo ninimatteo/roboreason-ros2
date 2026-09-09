@@ -28,6 +28,7 @@ from statistics import mean, pstdev
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib.patches import Patch
+from scipy.stats import fisher_exact
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_CSV = REPO_ROOT / 'benchmark' / 'results_2026-09_3arm.csv'
@@ -156,6 +157,64 @@ def grouped(rows, key_fn):
     return out
 
 
+def wilson_ci(successes, n, z=1.959963984540054):
+    """95% Wilson score interval for a proportion, as (lo, hi) in [0, 1].
+    Chosen over normal-approximation (can leave [0,1] at small n) and over
+    Clopper-Pearson (needlessly conservative here) — see benchmark/PLAN.md
+    §3, decided before this cycle's data was collected.
+    """
+    if n == 0:
+        return (0.0, 0.0)
+    phat = successes / n
+    denom = 1 + z * z / n
+    center = phat + z * z / (2 * n)
+    margin = z * ((phat * (1 - phat) / n + z * z / (4 * n * n)) ** 0.5)
+    return (max(0.0, (center - margin) / denom), min(1.0, (center + margin) / denom))
+
+
+def group_wilson_ci(group, metric):
+    """Pooled Wilson 95% CI for a group of trial rows, TS or TSR (per
+    benchmark/PLAN.md §3 — every reported TS%/TSR% carries one). TS is
+    already a per-trial 0/1 indicator, so successes/n is exact. TSR is a
+    per-trial ratio (sub_tasks_completed/sub_tasks_required); pooling the
+    numerator and denominator across trials reproduces the same point
+    estimate as mean(TSR) and gives a defensible descriptive interval —
+    it treats each sub-task slot as one Bernoulli opportunity, which is a
+    looser assumption than true independence, but this is the descriptive
+    reporting §3 calls for, not the one planned hypothesis test (that one,
+    on arith_hard, is binarized per trial precisely to avoid this same
+    pooling issue where it would matter — see fisher_arith_hard below).
+    """
+    if metric == 'TS':
+        successes = sum(float(r['TS']) for r in group)
+        n = len(group)
+    else:
+        successes = sum(float(r['sub_tasks_completed']) for r in group)
+        n = sum(float(r['sub_tasks_required']) for r in group)
+    return wilson_ci(successes, n)
+
+
+def fisher_arith_hard(rows):
+    """The one planned hypothesis test declared in benchmark/PLAN.md §3:
+    two-sided Fisher's exact test on arith_hard TSR, LLM vs VLM, α=0.05.
+    Binarized per trial (full success, TSR==1.0, vs not) rather than
+    pooling the 4 sub-tasks per trial — pooling would treat sub-tasks
+    within one trial as independent Bernoulli draws, which they aren't (a
+    wrong value-mapping decision tends to misplace all four cubes
+    together, not independently), so trial-level keeps the test's
+    independence assumption honest at the cost of some power (n=10/arm).
+    Returns ((llm_success, llm_fail), (vlm_success, vlm_fail), p_value).
+    """
+    g = grouped(rows, lambda r: (r['model_label'], r['task_id']))
+    table = []
+    for m in ('LLM', 'VLM'):
+        group = g[(m, 'arith_hard')]
+        success = sum(1 for r in group if float(r['TSR']) >= 1.0)
+        table.append([success, len(group) - success])
+    _, p_value = fisher_exact(table, alternative='two-sided')
+    return table[0], table[1], p_value
+
+
 def series_offset(i, n_series, width, gap):
     """Symmetric per-series offset for the i-th of n_series bars sharing
     one category slot, e.g. n_series=2 -> [-0.5, 0.5] * (width+gap),
@@ -194,8 +253,13 @@ def style_axes(ax, ylabel=None):
         ax.set_ylabel(ylabel, fontsize=10)
 
 
-def grouped_bar(ax, categories, cat_labels, series_values, value_fmt='{:.0f}', ymax=None):
-    """series_values: {'LLM': [...], 'VLM': [...]} aligned to `categories`."""
+def grouped_bar(ax, categories, cat_labels, series_values, value_fmt='{:.0f}', ymax=None, ci_series=None):
+    """series_values: {'LLM': [...], 'VLM': [...]} aligned to `categories`.
+    ci_series, optional: same shape as series_values, but each entry is a
+    (lo, hi) tuple in the same units as series_values — drawn as an
+    asymmetric error bar (Wilson 95% CI, see benchmark/PLAN.md §3 and
+    group_wilson_ci above) instead of a bare bar height.
+    """
     n = len(categories)
     width = 0.26
     gap = 0.03
@@ -210,10 +274,22 @@ def grouped_bar(ax, categories, cat_labels, series_values, value_fmt='{:.0f}', y
         offset = series_offset(i, len(MODELS), width, gap)
         xs = [xi + offset for xi in x]
         vals = series_values[model]
-        bars = ax.bar(xs, vals, width=width, color=COLOR[model], label=model, zorder=3)
-        for b, v in zip(bars, vals):
+        bar_kwargs = dict(width=width, color=COLOR[model], label=model, zorder=3)
+        if ci_series:
+            cis = ci_series[model]
+            bar_kwargs['yerr'] = [
+                [max(0.0, v - lo) for v, (lo, hi) in zip(vals, cis)],
+                [max(0.0, hi - v) for v, (lo, hi) in zip(vals, cis)],
+            ]
+            bar_kwargs['capsize'] = 3
+            bar_kwargs['error_kw'] = {'ecolor': INK_MUTED, 'elinewidth': 1}
+        bars = ax.bar(xs, vals, **bar_kwargs)
+        for j, (b, v) in enumerate(zip(bars, vals)):
+            label_y = b.get_height() + top * 0.02
+            if ci_series:
+                label_y = max(label_y, ci_series[model][j][1] + top * 0.02)
             ax.text(
-                b.get_x() + b.get_width() / 2, b.get_height() + top * 0.02,
+                b.get_x() + b.get_width() / 2, label_y,
                 value_fmt.format(v), ha='center', va='bottom', fontsize=8.5, color=INK_SECONDARY,
             )
     ax.set_xticks(list(x))
@@ -239,11 +315,16 @@ def fig_ts_tsr_by_task(rows, task_order=None, filename='ts_tsr_by_task.png', sup
                 for t in task_order]
             for m in MODELS
         }
-        grouped_bar(ax, task_order, [TASK_LABELS[t] for t in task_order], series, '{:.0f}', ymax)
+        ci_series = {
+            m: [tuple(100 * b for b in group_wilson_ci(g[(m, t)], metric)) if g[(m, t)] else (0, 0)
+                for t in task_order]
+            for m in MODELS
+        }
+        grouped_bar(ax, task_order, [TASK_LABELS[t] for t in task_order], series, '{:.0f}', ymax, ci_series)
         style_axes(ax, ylabel='%')
         ax.set_title(title, fontsize=11.5, color=INK, loc='left', pad=10)
     fig.suptitle(
-        suptitle or f'Safety and success rate by task — {" vs ".join(MODELS)} (n=10 per bar)',
+        suptitle or f'Safety and success rate by task — {" vs ".join(MODELS)} (n=10 per bar, 95% Wilson CI)',
         fontsize=13, x=0.02, ha='left',
     )
     fig.tight_layout(rect=(0, 0, 1, 0.88))
@@ -281,10 +362,17 @@ def fig_easy_vs_hard(rows):
             m: [100 * mean(float(r[metric]) for r in g[(m, d)]) for d in diffs]
             for m in MODELS
         }
-        grouped_bar(ax, diffs, ['Easy', 'Hard'], series, '{:.0f}', 110)
+        ci_series = {
+            m: [tuple(100 * b for b in group_wilson_ci(g[(m, d)], metric)) for d in diffs]
+            for m in MODELS
+        }
+        grouped_bar(ax, diffs, ['Easy', 'Hard'], series, '{:.0f}', 110, ci_series)
         style_axes(ax, ylabel='%')
         ax.set_title(title, fontsize=11.5, color=INK, loc='left', pad=10)
-    fig.suptitle('Effect of task complexity — easy vs. hard (n=30 per bar)', fontsize=13, x=0.02, ha='left')
+    fig.suptitle(
+        'Effect of task complexity — easy vs. hard (n=30 per bar, 95% Wilson CI)',
+        fontsize=13, x=0.02, ha='left',
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.88))
     add_model_legend(fig)
     fig.savefig(FIGURES_DIR / 'easy_vs_hard.png', dpi=200)
@@ -429,15 +517,31 @@ def fig_overall_summary(rows, task_filter=None, filename='overall_summary.png', 
                ('AETS', 'Action Efficiency', '', None, '{:.3f}')]
     for ax, (metric, title, unit, ymax, fmt) in zip(axes, metrics):
         vals = []
+        cis = []  # Wilson 95% CI, TS/TSR only — see benchmark/PLAN.md §3
         for m in MODELS:
             xs = [float(r[metric]) for r in rows if r['model_label'] == m]
             v = 100 * mean(xs) if metric != 'AETS' else mean(xs)
             vals.append(v)
+            if metric != 'AETS':
+                group = [r for r in rows if r['model_label'] == m]
+                lo, hi = group_wilson_ci(group, metric)
+                cis.append((100 * lo, 100 * hi))
         top = ymax if ymax else max(vals) * 1.25
-        bars = ax.bar(MODELS, vals, width=0.55, color=[COLOR[m] for m in MODELS], zorder=3)
-        for b, v in zip(bars, vals):
+        bar_kwargs = dict(width=0.55, color=[COLOR[m] for m in MODELS], zorder=3)
+        if cis:
+            bar_kwargs['yerr'] = [
+                [max(0.0, v - lo) for v, (lo, hi) in zip(vals, cis)],
+                [max(0.0, hi - v) for v, (lo, hi) in zip(vals, cis)],
+            ]
+            bar_kwargs['capsize'] = 4
+            bar_kwargs['error_kw'] = {'ecolor': INK_MUTED, 'elinewidth': 1}
+        bars = ax.bar(MODELS, vals, **bar_kwargs)
+        for j, (b, v) in enumerate(zip(bars, vals)):
+            label_y = b.get_height() + top * 0.02
+            if cis:
+                label_y = max(label_y, cis[j][1] + top * 0.02)
             ax.text(
-                b.get_x() + b.get_width() / 2, b.get_height() + top * 0.02,
+                b.get_x() + b.get_width() / 2, label_y,
                 fmt.format(v) + unit, ha='center', va='bottom', fontsize=10, color=INK, fontweight='bold',
             )
         style_axes(ax)
@@ -445,7 +549,7 @@ def fig_overall_summary(rows, task_filter=None, filename='overall_summary.png', 
         ax.set_title(title, fontsize=11.5, color=INK, pad=10)
         ax.tick_params(axis='x', labelsize=10)
     fig.suptitle(
-        suptitle or f'Overall headline results — {" vs ".join(MODELS)} (n={n_per_bar} per bar)',
+        suptitle or f'Overall headline results — {" vs ".join(MODELS)} (n={n_per_bar} per bar, 95% Wilson CI)',
         fontsize=13, x=0.02, ha='left',
     )
     fig.tight_layout(rect=(0, 0, 1, 0.90))
@@ -506,9 +610,19 @@ def fig_failure_modes(rows):
     plt.close(fig)
 
 
+def _ci_str(lo, hi):
+    return f'[{100 * lo:4.1f}-{100 * hi:4.1f}]'
+
+
 def print_tables(rows):
+    # Every TS%/TSR% below carries its 95% Wilson CI, and the CSV's own
+    # data drives the one planned hypothesis test — both per
+    # benchmark/PLAN.md §3, decided before this cycle's data was seen.
     g = grouped(rows, lambda r: (r['model_label'], r['task_id']))
-    print(f"{'Model':<5} {'Task':<10} {'N':>3} {'TS%':>6} {'TSR%':>6} {'AETS':>7} {'steps':>7} {'plan_s':>7}")
+    print(
+        f"{'Model':<5} {'Task':<10} {'N':>3} {'TS%':>6} {'95% CI':>13} "
+        f"{'TSR%':>6} {'95% CI':>13} {'AETS':>7} {'steps':>7} {'plan_s':>7}"
+    )
     for m in MODELS:
         for t in TASK_ORDER:
             grp = g[(m, t)]
@@ -517,19 +631,39 @@ def print_tables(rows):
                 continue
             ts = 100 * mean(float(r['TS']) for r in grp)
             tsr = 100 * mean(float(r['TSR']) for r in grp)
+            ts_ci = _ci_str(*group_wilson_ci(grp, 'TS'))
+            tsr_ci = _ci_str(*group_wilson_ci(grp, 'TSR'))
             aets = mean(float(r['AETS']) for r in grp)
             steps = mean(int(r['steps_executed']) for r in grp)
             durations = [float(r['planning_duration_s']) for r in grp if r.get('planning_duration_s')]
             plan_s = f'{mean(durations):>7.1f}' if durations else f'{"n/a":>7}'
-            print(f'{m:<5} {t:<10} {n:>3} {ts:>5.1f}% {tsr:>5.1f}% {aets:>7.4f} {steps:>7.2f} {plan_s}')
+            print(
+                f'{m:<5} {t:<10} {n:>3} {ts:>5.1f}% {ts_ci:>13} {tsr:>5.1f}% {tsr_ci:>13} '
+                f'{aets:>7.4f} {steps:>7.2f} {plan_s}'
+            )
     print()
     for m in MODELS:
         xs = [r for r in rows if r['model_label'] == m]
         n = len(xs)
         ts = 100 * mean(float(r['TS']) for r in xs)
         tsr = 100 * mean(float(r['TSR']) for r in xs)
+        ts_ci = _ci_str(*group_wilson_ci(xs, 'TS'))
+        tsr_ci = _ci_str(*group_wilson_ci(xs, 'TSR'))
         aets = mean(float(r['AETS']) for r in xs)
-        print(f'{m} overall: N={n} TS%={ts:.1f} TSR%={tsr:.1f} AETS={aets:.4f}')
+        print(f'{m} overall: N={n} TS%={ts:.1f}{ts_ci} TSR%={tsr:.1f}{tsr_ci} AETS={aets:.4f}')
+
+    print('\nPlanned hypothesis test (benchmark/PLAN.md §3): two-sided Fisher\'s')
+    print('exact test, arith_hard full-trial success (TSR==1.0) rate, LLM vs VLM, α=0.05.')
+    if ('LLM', 'arith_hard') in g and ('VLM', 'arith_hard') in g:
+        (llm_ok, llm_fail), (vlm_ok, vlm_fail), p = fisher_arith_hard(rows)
+        verdict = 'significant' if p < 0.05 else 'not significant'
+        print(
+            f'  LLM: {llm_ok}/{llm_ok + llm_fail} full success   '
+            f'VLM: {vlm_ok}/{vlm_ok + vlm_fail} full success   '
+            f'p={p:.4f} ({verdict} at α=0.05)'
+        )
+    else:
+        print('  skipped: arith_hard data missing for LLM and/or VLM')
 
 
 def main():
