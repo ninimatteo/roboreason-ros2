@@ -55,10 +55,12 @@ yet known.
 \paragraph{Hardware re-verification (I1, I8).} \textbf{Done.} The September
 120-trial benchmark (Section~\ref{sec:benchmark}) exercised both the
 Session 5 geometry fixes and the camera/calibration path extensively on
-live hardware, not a replayed/synthetic check -- 100\% task safety across
-all 120 trials is the strongest verification either could have gotten.
-Kept here, marked done, rather than removed, since this paragraph was the
-gate the rest of this roadmap was written to wait on.
+live hardware, not a replayed/synthetic check -- the strongest verification
+either could have gotten, and neither fix is implicated in any of the
+120 trials' incidents (all collisions during multi-object placement, none
+a wrong height or missed footprint). Kept here, marked done, rather than
+removed, since this paragraph was the gate the rest of this roadmap was
+written to wait on.
 
 \paragraph{R1 -- Zone-bounds-aware release placement.} \textbf{Done,
 September 2026 (ROBOAI-18)}, resolved as a side effect of a hardware bug

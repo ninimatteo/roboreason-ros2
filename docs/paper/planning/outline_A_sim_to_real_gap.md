@@ -26,8 +26,11 @@ this one.
 single unified model (`nebius/kimi-k2.6`, both modes — see ROBOAI-25) after
 July's VLM model (`qwen3.6-27b`) left Nebius's catalog. The rerun does
 *not* reproduce July's value-mapping-arithmetic-specific VLM collapse
-(30%/25% TSR) — TSR is now LLM 97.3% vs VLM 88.7% overall, a real but much
-smaller gap, and reading all 22 non-empty operator notes shows the failures
+(30%/25% TSR) — TSR is now LLM 98.3% vs VLM 89.2% overall, a real but much
+smaller gap (safety also gaps: TS 98.3% LLM vs 85.0% VLM, VLM dropping to
+50%/60% on `sort_hard`/`arith_hard` — an annotation bug, ROBOAI-31, briefly
+hid this; corrected before these numbers), and reading all 22 non-empty
+operator notes shows the failures
 are collisions and mispositioning during multi-object placement, occurring
 in **both** arms, not a reasoning error isolated to VLM. This is better
 evidence for this outline's actual central claim than July's data was: the
@@ -65,9 +68,10 @@ model-side arithmetic with a deterministic grounding layer where possible,
 and validate the fix via [ablation numbers]. On a 120-trial real-hardware
 LLM-vs-VLM study using the same evaluation philosophy as [RAS] adapted to
 physical ground truth, we find failures concentrate in multi-object
-placement and collision regardless of grounding modality (LLM: 97.3% TSR,
-VLM: 88.7% TSR, both 100% safe), a distribution no simulated benchmark of
-this kind could produce."
+placement and collision regardless of grounding modality (LLM: 98.3% TSR /
+98.3% TS, VLM: 89.2% TSR / 85.0% TS, VLM safety dropping to 50-60% on the
+two hardest multi-object conditions), a distribution no simulated
+benchmark of this kind could produce."
 
 ### 1. Introduction (≈900 words)
 - Hook: LLM/VLM planners are validated almost exclusively in simulation;
@@ -164,11 +168,16 @@ multi-body physical contact to exist at all.**
 - Use the September rerun (`benchmark/results_2026-09_3arm.csv`, ROBOAI-25),
   not the July dataset: task matrix (6 conditions × 10 reps × 2 models, one
   unified model per modality, `nebius/kimi-k2.6`), TS/TSR/AETS adapted to
-  semi-automatic annotation, headline numbers TS 100%/100%, TSR 97.3%
-  [93.3,99.0]% LLM vs. 88.7% [82.6,92.8]% VLM (Wilson 95% CI). Report the
-  one pre-registered comparison (Fisher's exact test, LLM vs. VLM,
-  `arith_hard` TSR) honestly: p=0.74, no detectable effect — state this as
-  a finding, not a shortfall, since it is itself evidence against a
+  semi-automatic annotation, headline numbers TS 98.3% [91.1,99.7]% LLM
+  vs. 85.0% [73.9,91.9]% VLM, TSR 98.3% [93.3,99.0]% LLM vs. 89.2%
+  [82.6,92.8]% VLM (Wilson 95% CI). VLM safety drops to
+  50%/60% on `sort_hard`/`arith_hard` specifically (Table in
+  `05_benchmark.tex`) — worth its own sentence, it's a sharper finding than
+  the overall number alone. Report the one pre-registered comparison
+  (Fisher's exact test, LLM vs. VLM, `arith_hard` full-trial success,
+  binarized per trial not pooled across sub-tasks) honestly: LLM 6/10 vs.
+  VLM 4/10, p=0.66, no detectable effect at this n — state this as a
+  finding, not a shortfall, since it is itself evidence against a
   VLM-specific reasoning weakness.
 - Reframe the failure-mode evidence around what the September notes
   actually show: reading all 22 non-empty operator notes, every one

@@ -115,13 +115,22 @@ on planner/executor behavior).
 \end{itemize}
 
 At $n=10$ per cell, point estimates alone invite reviewer pushback (per
-ROBOAI-28). Every reported TSR is also given as a Wilson score interval at
-95\% confidence (pooled at the sub-task level, i.e.\ successes over
-$\text{sub\_tasks\_required} \times n$, not over trial count -- consistent
-with AETS's own denominator). One comparison was planned before collection,
-not chosen afterward to fit the numbers: a two-sided Fisher's exact test,
-LLM vs.\ VLM, on \texttt{arith\_hard} TSR, at $\alpha=0.05$. Everything else
-is reported descriptively only, per \texttt{benchmark/PLAN.md}~\S3.
+ROBOAI-28). Every reported TS\% and TSR\% is also given as a Wilson score
+interval at 95\% confidence (TS is an exact per-trial proportion; TSR pools
+successes over $\text{sub\_tasks\_required} \times n$, consistent with
+AETS's own denominator). One comparison was planned before collection, not
+chosen afterward to fit the numbers: a two-sided Fisher's exact test, LLM
+vs.\ VLM, on \texttt{arith\_hard} TSR, at $\alpha=0.05$ -- binarized at the
+trial level (full success vs.\ not), not pooled across a trial's four
+sub-tasks, since those aren't independent draws (one wrong value-mapping
+decision tends to misplace every cube in the trial together). Everything
+else is reported descriptively only, per \texttt{benchmark/PLAN.md}~\S3.
+
+\emph{Note on TS.} An annotation inconsistency (ROBOAI-31) initially left
+every September trial marked safe regardless of collisions; corrected by
+applying the same collision-in-note $\Rightarrow$ \texttt{TS=0} rule the
+July collection used throughout (verified against every July trial in both
+categories, no exceptions). The numbers below are post-correction.
 
 \subsection{Results}
 
@@ -133,8 +142,8 @@ is reported descriptively only, per \texttt{benchmark/PLAN.md}~\S3.
 \toprule
 \textbf{Model} & \textbf{n} & \textbf{TS (safety)} & \textbf{TSR (success)} & \textbf{AETS (efficiency)} \\
 \midrule
-LLM (\texttt{kimi-k2.6}) & 60 & 100\% & 98.3\% & 0.1269 \\
-VLM (\texttt{kimi-k2.6}) & 60 & 100\% & 89.2\% & 0.1149 \\
+LLM (\texttt{kimi-k2.6}) & 60 & 98.3\% & 98.3\% & 0.1269 \\
+VLM (\texttt{kimi-k2.6}) & 60 & 85.0\% & 89.2\% & 0.1149 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -154,28 +163,34 @@ VLM (\texttt{kimi-k2.6}) & 60 & 100\% & 89.2\% & 0.1149 \\
 \texttt{sort\_easy}  & LLM & 10 & 100\% & 100\% & 0.2000 & 5.0 \\
 \texttt{sort\_easy}  & VLM & 10 & 100\% &  70\% & 0.1400 & 5.0 \\
 \texttt{sort\_hard}  & LLM & 10 & 100\% & 100\% & 0.0558 & 18.0 \\
-\texttt{sort\_hard}  & VLM & 10 & 100\% &  88\% & 0.0505 & 17.4 \\
+\texttt{sort\_hard}  & VLM & 10 &  50\% &  88\% & 0.0505 & 17.4 \\
 \texttt{arith\_easy} & LLM & 10 & 100\% & 100\% & 0.1967 & 5.1 \\
 \texttt{arith\_easy} & VLM & 10 & 100\% & 100\% & 0.2000 & 5.0 \\
-\texttt{arith\_hard} & LLM & 10 & 100\% &  90\% & 0.0509 & 17.7 \\
-\texttt{arith\_hard} & VLM & 10 & 100\% &  85\% & 0.0461 & 18.6 \\
+\texttt{arith\_hard} & LLM & 10 &  90\% &  90\% & 0.0509 & 17.7 \\
+\texttt{arith\_hard} & VLM & 10 &  60\% &  85\% & 0.0461 & 18.6 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[H]
 \centering
-\caption{Wilson 95\% CI (pooled sub-tasks) and the one pre-registered test.}
+\caption{Wilson 95\% CI on the conditions with the largest safety/success
+  gap, and the one pre-registered test.}
 \label{tab:bench-wilson}
-\begin{tabular}{@{}llcc@{}}
+\begin{tabular}{@{}llccc@{}}
 \toprule
-\textbf{Task} & \textbf{Model} & \textbf{TSR} & \textbf{95\% CI} \\
+\textbf{Task} & \textbf{Model} & \textbf{Metric} & \textbf{Value} & \textbf{95\% CI} \\
 \midrule
-\texttt{arith\_hard} & LLM & 90.0\% & [76.9, 96.0] \\
-\texttt{arith\_hard} & VLM & 85.0\% & [70.9, 92.9] \\
+\texttt{sort\_hard} & VLM & TS  & 50.0\% & [23.7, 76.3] \\
+\texttt{arith\_hard} & LLM & TS  & 90.0\% & [59.6, 98.2] \\
+\texttt{arith\_hard} & VLM & TS  & 60.0\% & [31.3, 83.2] \\
+\texttt{arith\_hard} & LLM & TSR & 90.0\% & [76.9, 96.0] \\
+\texttt{arith\_hard} & VLM & TSR & 85.0\% & [70.9, 92.9] \\
 \midrule
-\multicolumn{4}{@{}l}{Fisher's exact test, LLM vs.\ VLM, \texttt{arith\_hard} TSR: $p = 0.74$.} \\
-\multicolumn{4}{@{}l}{Overall pooled TSR: LLM 97.3\% [93.3, 99.0], VLM 88.7\% [82.6, 92.8].} \\
+\multicolumn{5}{@{}l}{Fisher's exact test, LLM vs.\ VLM, \texttt{arith\_hard}
+  full-trial success: LLM 6/10, VLM 4/10, $p = 0.66$.} \\
+\multicolumn{5}{@{}l}{Overall: TS LLM 98.3\% [91.1, 99.7], VLM 85.0\%
+  [73.9, 91.9]; TSR LLM 98.3\% [93.3, 99.0], VLM 89.2\% [82.6, 92.8].} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -233,11 +248,18 @@ VLM (\texttt{kimi-k2.6}) & 60 & 100\% & 89.2\% & 0.1149 \\
 \subsection{Findings}
 
 \paragraph{Headline.} The LLM pipeline is both safer and more successful
-than the VLM pipeline overall (100\%/98.3\% vs.\ 100\%/89.2\%), but the gap
-is real and modest, not dramatic -- both arms are safe every single trial,
-and the pre-registered comparison on \texttt{arith\_hard} (the condition
-the July study flagged as the sharpest divide) shows no detectable
-difference ($p=0.74$).
+than the VLM pipeline overall (TS/TSR 98.3\%/98.3\% vs.\ 85.0\%/89.2\%).
+Unlike July, the safety gap this cycle is not uniform: both arms are safe
+on every easy-condition and \texttt{pp\_hard}/\texttt{sort\_hard} (LLM)
+trial, but VLM safety drops sharply on the two hardest multi-object
+conditions -- 50\% on \texttt{sort\_hard}, 60\% on \texttt{arith\_hard}
+(Table~\ref{tab:bench-wilson}) -- driven by collisions during sequential
+placement, not by any single catastrophic trial. The pre-registered
+comparison on \texttt{arith\_hard} TSR (the condition the July study
+flagged as the sharpest divide) shows no detectable difference at this
+sample size ($p=0.66$, Fisher's exact, LLM 6/10 vs.\ VLM 4/10 full
+success) -- consistent with a real but modest TSR gap that $n=10$ per cell
+cannot resolve to significance, not with an absence of a gap.
 
 \paragraph{The dominant failure mode is not vision, and it is not
 value-mapping arithmetic either -- it is multi-object placement geometry,
