@@ -87,6 +87,34 @@ NOTE_CATEGORY = {
     '20260720-154140-00b8f5ab': GRASP,       # failed to grasp the blue cube
     '20260720-154520-0a9099b6': REASONING,   # placed white cube on tray instead of red
     '20260720-154726-b9aa78e0': REASONING,   # wrong cube (blue) on tray, failed to grasp red, only white correct
+
+    # September 2026 rerun (ROBOAI-25, nebius/kimi-k2.6 unified model, LLM
+    # vs VLM only -- no REASONING or INCOMPLETE notes at all this cycle;
+    # every failure is a collision or an execution/release-geometry issue,
+    # in both arms, which is the finding this rerun actually supports (see
+    # docs/paper/planning/outline_A_sim_to_real_gap.md, 2026-09-09 update).
+    '20260907-115044-c7090373': COLLISION,   # white cube collided with orange, pushed out of line
+    '20260907-141610-aae7c68f': COLLISION,   # slightly touched blue with white, stayed in line
+    '20260907-155544-b522d98e': GRASP,       # red cube wasn't positioned on tray correctly, fell off
+    '20260907-161257-eebbb4da': GRASP,       # last block in line fell, slightly out of line
+    '20260907-171315-752b928c': GRASP,       # cube slipped, ended up not on the line
+    '20260907-172959-e9457695': COLLISION,   # cube collided, ended up elsewhere, not on the line
+    '20260907-173837-fd69a27f': GRASP,       # released one block too high, fell off the line
+    '20260908-114108-4c3b00a1': GRASP,       # one block fell off of the tray
+    '20260908-114715-fb0a6703': GRASP,       # unable to get the red cube, wrong coordinates
+    '20260908-121412-1b60c420': COLLISION,   # cube collided, ended up not on the line
+    '20260908-124323-ff3d7235': GRASP,       # cube grasped the wrong way, failed to end up in line
+    '20260908-131646-174a320c': COLLISION,   # cube pushed out of line by another cube
+    '20260908-150643-af3341e1': GRASP,       # failed to grasp one cube, not in the line
+    '20260908-151629-c2fb0d6f': GRASP,       # block fell off of the tray, was on the border
+    '20260908-155244-fb08777e': COLLISION,   # put one cube on top of another, wasn't in line
+    '20260908-160305-69739988': GRASP,       # released too high, rolled away from the line
+    '20260908-170931-5382bb8f': GRASP,       # failed the release, it fell
+    '20260908-182501-9fdc20af': COLLISION,   # collided with one cube while putting it in line
+    '20260909-101226-1bbd9640': COLLISION,   # cube collided with another, put out of line
+    '20260909-104452-d1e7a2e6': GRASP,       # red cube fell off of the blue cube (stack didn't hold)
+    '20260909-111111-7cd80e22': COLLISION,   # block put in a position occupied by another cube
+    '20260909-113255-14627c30': COLLISION,   # block pushed out of line by a collision
 }
 
 # Categorical palette (fixed order, colorblind-validated with
@@ -207,7 +235,8 @@ def fig_ts_tsr_by_task(rows, task_order=None, filename='ts_tsr_by_task.png', sup
         (axes[1], 'TSR', 'Task Success Rate (TSR%)', 110),
     ):
         series = {
-            m: [100 * mean(float(r[metric]) for r in g[(m, t)]) for t in task_order]
+            m: [100 * mean(float(r[metric]) for r in g[(m, t)]) if g[(m, t)] else 0
+                for t in task_order]
             for m in MODELS
         }
         grouped_bar(ax, task_order, [TASK_LABELS[t] for t in task_order], series, '{:.0f}', ymax)
@@ -227,7 +256,8 @@ def fig_aets_by_task(rows):
     g = grouped(rows, lambda r: (r['model_label'], r['task_id']))
     fig, ax = plt.subplots(figsize=(8, 4.2))
     series = {
-        m: [mean(float(r['AETS']) for r in g[(m, t)]) for t in TASK_ORDER]
+        m: [mean(float(r['AETS']) for r in g[(m, t)]) if g[(m, t)] else 0
+            for t in TASK_ORDER]
         for m in MODELS
     }
     grouped_bar(ax, TASK_ORDER, [TASK_LABELS[t] for t in TASK_ORDER], series, '{:.3f}', None)
@@ -272,7 +302,10 @@ def fig_steps_by_task(rows):
     per_model = {}
     for model in MODELS:
         vals = [[int(r['steps_executed']) for r in g[(model, t)]] for t in TASK_ORDER]
-        per_model[model] = {'means': [mean(v) for v in vals], 'stds': [pstdev(v) for v in vals]}
+        per_model[model] = {
+            'means': [mean(v) if v else 0 for v in vals],
+            'stds': [pstdev(v) if len(v) > 1 else 0 for v in vals],
+        }
     # Headroom must clear the tallest error-bar cap (mean + std), not just
     # the tallest bar, or the label/title crowd the whiskers.
     top = max(m + s for d in per_model.values() for m, s in zip(d['means'], d['stds'])) * 1.22
@@ -370,7 +403,8 @@ def fig_issue_rate_by_task(rows):
     g = grouped(rows, lambda r: (r['model_label'], r['task_id']))
     fig, ax = plt.subplots(figsize=(8.5, 4.2))
     series = {
-        m: [100 * mean(1 if r['notes'].strip() else 0 for r in g[(m, t)]) for t in TASK_ORDER]
+        m: [100 * mean(1 if r['notes'].strip() else 0 for r in g[(m, t)]) if g[(m, t)] else 0
+            for t in TASK_ORDER]
         for m in MODELS
     }
     grouped_bar(ax, TASK_ORDER, [TASK_LABELS[t] for t in TASK_ORDER], series, '{:.0f}', 110)
@@ -425,10 +459,12 @@ def fig_failure_modes(rows):
     and the reasoning behind each one.
     """
     counts = defaultdict(lambda: defaultdict(int))  # category -> model -> count
+    n_notes = 0
     for r in rows:
         cat = NOTE_CATEGORY.get(r['run_id'])
         if cat:
             counts[cat][r['model_label']] += 1
+            n_notes += 1
 
     categories = [REASONING, COLLISION, GRASP, INCOMPLETE]
     fig, ax = plt.subplots(figsize=(8.5, 4.6))
@@ -459,7 +495,7 @@ def fig_failure_modes(rows):
     ax.xaxis.grid(True, color=GRID, linewidth=1, zorder=0)
     ax.set_axisbelow(True)
     ax.tick_params(axis='both', length=0)
-    ax.set_xlabel('Number of trials (out of 31 with a recorded note)', fontsize=10)
+    ax.set_xlabel(f'Number of trials (out of {n_notes} with a recorded note)', fontsize=10)
     ax.set_title(
         'What actually went wrong, by category (from operator notes)',
         fontsize=12, color=INK, loc='left', pad=10,
@@ -477,6 +513,8 @@ def print_tables(rows):
         for t in TASK_ORDER:
             grp = g[(m, t)]
             n = len(grp)
+            if n == 0:
+                continue
             ts = 100 * mean(float(r['TS']) for r in grp)
             tsr = 100 * mean(float(r['TSR']) for r in grp)
             aets = mean(float(r['AETS']) for r in grp)
@@ -495,9 +533,20 @@ def print_tables(rows):
 
 
 def main():
-    rows = load_rows()
+    # VLM_LLM is dropped from every figure this cycle: only 3 of 18 cells
+    # were collected before it was abandoned mid-campaign (a physical
+    # camera-setup issue, not a code defect -- see benchmark/PLAN.md's
+    # 2026-09-07 addendum), and a 3-trial partial series next to two
+    # 60-trial complete arms in a headline chart would misrepresent it as
+    # comparable data. print_tables() still lists it separately (from the
+    # unfiltered rows) so the partial numbers stay visible in the console
+    # output.
+    global MODELS
+    all_rows = load_rows()
+    print_tables(all_rows)
+    rows = [r for r in all_rows if r['model_label'] != 'VLM_LLM']
+    MODELS = ['LLM', 'VLM']
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    print_tables(rows)
     fig_ts_tsr_by_task(rows)
     fig_aets_by_task(rows)
     fig_easy_vs_hard(rows)
