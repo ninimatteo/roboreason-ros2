@@ -163,6 +163,19 @@ link, not perception. Heights, offsets and release positions are computed in
 Python and override whatever the model produced. Preserve this pattern unless
 explicitly asked to revisit it.
 
+**Check for overlapping work before touching already-collected experimental
+data.** Nothing stops two sessions (or a session and the user) from working
+the same numbers in parallel on different branches — this happened on
+2026-09-09 (ROBOAI-6 vs ROBOAI-28/31, see `session-context.md`'s Session 6
+§8): two independent statistical-treatment implementations of the same
+PLAN.md criterion, disagreeing with each other, one already written into
+the paper draft before the other was even started. Before starting work
+that touches a results CSV, a report section, or an outline once real data
+exists in it: read `session-context.md`'s most recent entries and check
+Jira for other In Progress/In Review issues over the same data. It won't
+catch everything (the other session here left no Jira trace until after
+the fact), but it costs one read and would have caught this one.
+
 ## Work sessions
 
 Two project skills wrap the start and end of a working session:
