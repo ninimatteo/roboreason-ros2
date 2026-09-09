@@ -1219,6 +1219,46 @@ had been hiding, not a rounding correction.
 needed for direct comparability per outline B) — this was an annotation
 inconsistency at collection time, not a reason to drop it.
 
+## 8. Two Claude sessions worked the same statistical-treatment task in parallel, on different branches, with different answers
+
+PR #1 (ROBOAI-19/25/28/29/31) merged to `main` at `324fa0f`. Syncing local
+`main` afterward surfaced 3 commits made *that same morning*, directly on
+`main`, by a separate session (`793b511`, `7b60698`, `f20b096`, all
+`ROBOAI-6`) — it had rewritten `docs/paper/report/sections/05_benchmark.tex`
+and `outline_A_sim_to_real_gap.md` for the September data before this
+session's work existed, using its own from-scratch implementation of the
+same PLAN.md §3 criterion.
+
+Two independent disagreements, not one:
+
+- **TS**: that session's numbers were 100%/100% (LLM/VLM) — written before
+  ROBOAI-31 was found, so it inherited the same mislabeling bug this
+  session's investigation caught later that afternoon.
+- **Fisher test on `arith_hard`**: that session pooled the 4 sub-tasks per
+  trial into the contingency table (p=0.74); this session binarized at the
+  trial level specifically because pooling treats non-independent draws as
+  independent (the user chose trial-level explicitly when asked, see §7
+  above). Same test name, same PLAN.md citation, different answer — worth
+  remembering that "per the pre-registered criterion" doesn't pin down
+  implementation choices tightly enough to prevent this on its own.
+
+Resolved by rebasing local `main`'s 3 commits onto the merged `origin/main`
+(`git rebase origin/main`; the figure PNGs conflicted — resolved `--ours`
+in favor of the post-ROBOAI-31 versions; the `f20b096` sync commit became
+fully redundant against the already-newer `origin/main` `plot_results.py`
+and was dropped with `git rebase --skip`), then hand-correcting every
+stale number in the report/outline/roadmap/open-issues sections to match
+`plot_results.py`'s actual current output, per explicit user direction
+("your new data wins, not the old session's"). `main.pdf` recompiled
+clean (2 `pdflatex` passes). Pushed at `0e8f4f7`.
+
+**Lesson for next time**: two sessions touching the same experimental-data
+task on different branches without one knowing about the other is how this
+happened. Worth a Jira comment or a `session-context.md` note *before*
+starting overlapping work, not just after finding the conflict — there was
+no signal in Jira that ROBOAI-6 and ROBOAI-28/31 were touching the same
+underlying numbers until the git history collided.
+
 ---
 
 ## Known Open Issues (updated 2026-09-04)
@@ -1235,7 +1275,7 @@ inconsistency at collection time, not a reason to drop it.
   dropped mid-cycle, see `PLAN.md`'s 2026-09-07 addenda), n=10 per cell,
   120 trials. Statistical treatment (Wilson CI + planned Fisher test) and
   a TS annotation fix landed in ROBOAI-28/ROBOAI-31 (§7 above).
-  ROBOAI-19 is still not merged to `main` at time of writing.
+  ROBOAI-19 merged to `main` in PR #1 (`324fa0f`), 2026-09-09.
 - **`_fix_release_height`, `_mock_plan`, and `_build_generated_scene`
   (`llm_planner_node.py`, `vlm_llm_planner_node.py`) have zero automated
   test coverage**, despite being the most-corrected geometry code in the
