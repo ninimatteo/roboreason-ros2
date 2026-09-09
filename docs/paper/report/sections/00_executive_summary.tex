@@ -45,11 +45,12 @@ The practical reasons for the pivot, as reflected in the codebase's design:
     no dataset collection or model training infrastructure needed.
   \item \textbf{Deterministic geometry where it matters.} As the benchmark
     study in Section~\ref{sec:benchmark} shows, most real-world failures on
-    this project trace back to \emph{arithmetic and reasoning} mistakes by
-    the model (misjudging heights, offsets, or which object a value maps to),
-    not to perception. The current architecture lets those computations be
-    pulled out of the model and done deterministically in Python
-    (Section~\ref{sec:tech-decisions}), which is not possible with an
+    this project trace back to \emph{arithmetic and geometry} mistakes
+    (misjudging heights, offsets, or multi-object placement spacing), not to
+    perception, and this holds for both the LLM and VLM pipelines rather
+    than being specific to one. The current architecture lets those
+    computations be pulled out of the model and done deterministically in
+    Python (Section~\ref{sec:tech-decisions}), which is not possible with an
     end-to-end VLA.
 \end{itemize}
 
@@ -129,13 +130,26 @@ account.
 
 \subsection*{Headline result}
 
-Across the benchmark's 120 trials, the \textbf{LLM pipeline} was safer and
-more successful than the \textbf{VLM pipeline} (95\% task-safety / 97\%
-task-success vs.\ 82\% / 66\%). The more interesting finding, reached by
-reading the operator's free-text failure notes rather than trusting the
-aggregate numbers alone, is that VLM's dominant failure mode is \emph{not}
-color perception -- it is \emph{arithmetic/value-mapping reasoning} under the
-harder tasks. Section~\ref{sec:benchmark} gives the full breakdown.
+\textbf{Updated September 2026 -- supersedes the number below.} The
+benchmark was rerun 4--9 September on a single unified model
+(\texttt{nebius/kimi-k2.6}, both arms) after July's VLM model left the
+Nebius catalog. Across 120 trials, the \textbf{LLM pipeline} was still
+safer and more successful than the \textbf{VLM pipeline}, but by a much
+smaller margin (100\%/98.3\% vs.\ 100\%/89.2\%), and the pre-registered
+statistical test shows no detectable difference on the specific condition
+July flagged as the sharpest divide. Reading all 22 operator notes shows
+the dominant failure mode is multi-object placement geometry (collisions
+and mispositioned releases) in \textbf{both} arms, not a VLM-specific
+weakness. See Section~\ref{sec:benchmark} for the full breakdown, and
+\texttt{docs/paper/planning/outline\_A\_sim\_to\_real\_gap.md} for what this
+means for the ICRA submission framing.
+
+\emph{Original, July 2026 finding (does not replicate on the new model --
+kept for the historical record):} across the benchmark's original 120
+trials, the LLM pipeline was safer and more successful than the VLM
+pipeline (95\% task-safety / 97\% task-success vs.\ 82\% / 66\%), and the
+dominant VLM failure mode was reported as arithmetic/value-mapping
+reasoning under the harder tasks, not color perception.
 
 \subsection*{State of the working tree}
 

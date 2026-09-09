@@ -4,14 +4,14 @@
 \subsection{Motivation and design}
 
 With both a static-scene LLM pipeline and a camera-driven VLM pipeline
-working end-to-end (Section~\ref{sec:architecture}), Session 5 ran a direct
+working end-to-end (Section~\ref{sec:architecture}), this study ran a direct
 head-to-head comparison on real hardware. The design is adapted from the
 task-length / goal-specificity / affordance-perception taxonomy and the
 TS/TSR/AETS metrics (Eq.\ 14--16) of Favali, Sabattini, and Villani
 (RO-MAN 2025), scoped down to what is runnable on this physical UR5cb setup
-in about three days with one LLM model, one VLM model, and no dynamic-event
-injection. Full methodology lives in \texttt{benchmark/PLAN.md}; this
-section summarizes it and reports the results.
+with one LLM model, one VLM model, and no dynamic-event injection. Full
+methodology lives in \texttt{benchmark/PLAN.md}; this section summarizes it
+and reports the results.
 
 \paragraph{What differs from the source paper.} The paper validates in a
 symbolic simulator where ground-truth world state is always exactly known,
@@ -26,6 +26,27 @@ immediately after execution -- \emph{was it safe?} and \emph{how many
 sub-tasks actually completed correctly?} -- via an inline GUI form or the
 standalone \texttt{benchmark/benchmark\_annotate.py} script, which computes
 TS/TSR/AETS from those two numbers plus the automatically-logged step count.
+
+\paragraph{Rerun in September, not an extension of the July study.} An
+earlier version of this benchmark ran 15--20 July 2026 on
+\texttt{nebius/nvidia-nemotron-120b} (LLM) and \texttt{groq/qwen3.6-27b}
+(VLM). By September, \texttt{qwen3.6-27b} had left Nebius's model catalog
+with no same-scale replacement (ROBOAI-12); rather than mix a new VLM model
+into a comparison whose LLM side stayed on the old one, both arms were
+rerun from scratch on a single unified model. This is a new baseline, not
+directly comparable to the July numbers point-for-point -- see the
+Findings subsection below for a case where the two studies actually
+disagree, not just differ in magnitude. A
+third arm, \texttt{VLM\_LLM} (VLM scene-grounding feeding an LLM planner),
+was attempted alongside this rerun but abandoned after 3 trials when a
+real object in the camera's field of view (a loose cardboard flap propped
+on a tray-like container, outside the intended workspace) returned no
+usable depth at its viewing angle and crashed the hybrid grounding call
+every time the VLM detected it -- a physical-setup problem, not a code
+defect, and out of scope to chase mid-campaign. Those 3 trials
+(\texttt{pp\_easy}, \texttt{pp\_hard}, \texttt{sort\_easy}) remain in
+\texttt{benchmark/results\_2026-09\_3arm.csv} as partial data but are
+excluded from every table and figure below.
 
 \subsection{Task matrix}
 
@@ -66,12 +87,15 @@ it -- genuinely ``lifted'' (no cube is named directly) and requiring the
 model to work out its own two-group split.
 
 \textbf{Design}: 6 conditions $\times$ 10 repetitions $\times$ 2 models
-(LLM: \texttt{nebius/nvidia-nemotron-120b}; VLM:
-\texttt{groq/qwen3.6-27b}) = \textbf{120 trials}. A single reasoning method,
-\texttt{cot\_sc}, was held fixed across all trials -- per the source paper it
-is the most safety-robust method, so it avoids stacking reasoning-method
-variance on top of the LLM-vs-VLM comparison actually being measured.
-Trials were collected 15--20 July 2026.
+(LLM and VLM, both \texttt{nebius/kimi-k2.6}) = \textbf{120 trials}. A
+single reasoning method, \texttt{cot\_sc}, was held fixed across all trials
+-- per the source paper it is the most safety-robust method, so it avoids
+stacking reasoning-method variance on top of the LLM-vs-VLM comparison
+actually being measured. Trials were collected 4--9 September 2026, on
+branch \texttt{feature/ROBOAI-19-bbox-scene-schema} (commit history in
+ROBOAI-25); a code freeze was in effect for the duration of collection, with
+one logging-only exception (ROBOAI-29, a stale-CSV-header bug with no effect
+on planner/executor behavior).
 
 \subsection{Metrics}
 
@@ -90,6 +114,15 @@ Trials were collected 15--20 July 2026.
     result.
 \end{itemize}
 
+At $n=10$ per cell, point estimates alone invite reviewer pushback (per
+ROBOAI-28). Every reported TSR is also given as a Wilson score interval at
+95\% confidence (pooled at the sub-task level, i.e.\ successes over
+$\text{sub\_tasks\_required} \times n$, not over trial count -- consistent
+with AETS's own denominator). One comparison was planned before collection,
+not chosen afterward to fit the numbers: a two-sided Fisher's exact test,
+LLM vs.\ VLM, on \texttt{arith\_hard} TSR, at $\alpha=0.05$. Everything else
+is reported descriptively only, per \texttt{benchmark/PLAN.md}~\S3.
+
 \subsection{Results}
 
 \begin{table}[H]
@@ -100,8 +133,8 @@ Trials were collected 15--20 July 2026.
 \toprule
 \textbf{Model} & \textbf{n} & \textbf{TS (safety)} & \textbf{TSR (success)} & \textbf{AETS (efficiency)} \\
 \midrule
-LLM (\texttt{nvidia-nemotron-120b}) & 60 & 95\% & 97\% & 0.1048 \\
-VLM (\texttt{qwen3.6-27b})          & 60 & 82\% & 66\% & 0.0722 \\
+LLM (\texttt{kimi-k2.6}) & 60 & 100\% & 98.3\% & 0.1269 \\
+VLM (\texttt{kimi-k2.6}) & 60 & 100\% & 89.2\% & 0.1149 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -114,18 +147,35 @@ VLM (\texttt{qwen3.6-27b})          & 60 & 82\% & 66\% & 0.0722 \\
 \toprule
 \textbf{Task} & \textbf{Model} & \textbf{n} & \textbf{TS} & \textbf{TSR} & \textbf{AETS} & \textbf{Steps} \\
 \midrule
-\texttt{pp\_easy}    & LLM & 10 & 100\% & 100\% & 0.1667 & 6.0 \\
-\texttt{pp\_easy}    & VLM & 10 & 100\% & 100\% & 0.1667 & 6.0 \\
-\texttt{pp\_hard}    & LLM & 10 &  90\% & 100\% & 0.0545 & 18.4 \\
-\texttt{pp\_hard}    & VLM & 10 &  80\% &  93\% & 0.0483 & 19.3 \\
-\texttt{sort\_easy}  & LLM & 10 & 100\% & 100\% & 0.1477 & 6.8 \\
-\texttt{sort\_easy}  & VLM & 10 & 100\% &  70\% & 0.1167 & 6.0 \\
-\texttt{sort\_hard}  & LLM & 10 & 100\% &  85\% & 0.0428 & 20.0 \\
-\texttt{sort\_hard}  & VLM & 10 &  60\% &  80\% & 0.0392 & 20.5 \\
-\texttt{arith\_easy} & LLM & 10 & 100\% & 100\% & 0.1667 & 6.0 \\
-\texttt{arith\_easy} & VLM & 10 &  90\% &  30\% & 0.0500 & 6.0 \\
-\texttt{arith\_hard} & LLM & 10 &  80\% &  97\% & 0.0503 & 19.6 \\
-\texttt{arith\_hard} & VLM & 10 &  60\% &  25\% & 0.0125 & 20.0 \\
+\texttt{pp\_easy}    & LLM & 10 & 100\% & 100\% & 0.2000 & 5.0 \\
+\texttt{pp\_easy}    & VLM & 10 & 100\% & 100\% & 0.2000 & 5.0 \\
+\texttt{pp\_hard}    & LLM & 10 & 100\% & 100\% & 0.0579 & 17.3 \\
+\texttt{pp\_hard}    & VLM & 10 & 100\% &  93\% & 0.0526 & 17.6 \\
+\texttt{sort\_easy}  & LLM & 10 & 100\% & 100\% & 0.2000 & 5.0 \\
+\texttt{sort\_easy}  & VLM & 10 & 100\% &  70\% & 0.1400 & 5.0 \\
+\texttt{sort\_hard}  & LLM & 10 & 100\% & 100\% & 0.0558 & 18.0 \\
+\texttt{sort\_hard}  & VLM & 10 & 100\% &  88\% & 0.0505 & 17.4 \\
+\texttt{arith\_easy} & LLM & 10 & 100\% & 100\% & 0.1967 & 5.1 \\
+\texttt{arith\_easy} & VLM & 10 & 100\% & 100\% & 0.2000 & 5.0 \\
+\texttt{arith\_hard} & LLM & 10 & 100\% &  90\% & 0.0509 & 17.7 \\
+\texttt{arith\_hard} & VLM & 10 & 100\% &  85\% & 0.0461 & 18.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Wilson 95\% CI (pooled sub-tasks) and the one pre-registered test.}
+\label{tab:bench-wilson}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Task} & \textbf{Model} & \textbf{TSR} & \textbf{95\% CI} \\
+\midrule
+\texttt{arith\_hard} & LLM & 90.0\% & [76.9, 96.0] \\
+\texttt{arith\_hard} & VLM & 85.0\% & [70.9, 92.9] \\
+\midrule
+\multicolumn{4}{@{}l}{Fisher's exact test, LLM vs.\ VLM, \texttt{arith\_hard} TSR: $p = 0.74$.} \\
+\multicolumn{4}{@{}l}{Overall pooled TSR: LLM 97.3\% [93.3, 99.0], VLM 88.7\% [82.6, 92.8].} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -175,7 +225,7 @@ VLM (\texttt{qwen3.6-27b})          & 60 & 82\% & 66\% & 0.0722 \\
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.7\textwidth]{failure_modes.png}
-\caption{Failure-mode breakdown, derived from the 31 non-empty operator
+\caption{Failure-mode breakdown, derived from the 22 non-empty operator
   notes out of 120 trials.}
 \label{fig:failure-modes}
 \end{figure}
@@ -183,54 +233,69 @@ VLM (\texttt{qwen3.6-27b})          & 60 & 82\% & 66\% & 0.0722 \\
 \subsection{Findings}
 
 \paragraph{Headline.} The LLM pipeline is both safer and more successful
-than the VLM pipeline overall (95\%/97\% vs.\ 82\%/66\%), and the gap widens
-sharply on \texttt{arith\_easy} and \texttt{arith\_hard} (Table~\ref{tab:bench-by-task}):
-VLM success rate drops to 30\% and 25\% respectively on the arithmetic
-tasks, against 100\% and 97\% for LLM on the same tasks.
+than the VLM pipeline overall (100\%/98.3\% vs.\ 100\%/89.2\%), but the gap
+is real and modest, not dramatic -- both arms are safe every single trial,
+and the pre-registered comparison on \texttt{arith\_hard} (the condition
+the July study flagged as the sharpest divide) shows no detectable
+difference ($p=0.74$).
 
-\paragraph{The dominant failure mode is not vision -- it is arithmetic/value
-mapping.} Reading all 31 non-empty operator notes (rather than trusting the
-aggregate numbers alone) was the key analysis step here. Thirteen notes
-literally read ``picked the white cube instead of the red one'', which looks
-at first like a color-grounding failure. But the distribution rules that out:
-\textbf{zero} such mixups occur in \texttt{pp\_easy}/\texttt{pp\_hard}, where
-color is stated directly (``pick the red cube''); \textbf{12 of 13} occur in
-the arithmetic task, where the model must first compute which color it needs
-from a stated value mapping (blue=1, red=2, white=3, orange=4) \emph{before}
-grounding it. Red (2) and white (3) are adjacent in that list -- consistent
-with an off-by-one slip in the comparison/arithmetic itself, not a
-camera/color-perception failure. This category (``wrong object chosen --
-reasoning/value-mapping'') is 17 of 31 total logged issues, the dominant
-category by a wide margin (Figure~\ref{fig:failure-modes}).
+\paragraph{The dominant failure mode is not vision, and it is not
+value-mapping arithmetic either -- it is multi-object placement geometry,
+in both arms.} Reading all 22 non-empty operator notes (rather than
+trusting the aggregate numbers alone) was the key analysis step here, as it
+was in July, but the finding is different this time. Every one of the 22
+notes describes a collision between objects or a mispositioned/dropped
+release during a multi-cube task (\texttt{pp\_hard}, \texttt{sort\_hard},
+\texttt{arith\_hard}) -- ten collisions, twelve grasp/execution failures,
+\textbf{zero} notes describing a wrong object chosen for reasoning reasons,
+and zero incomplete-enumeration failures (Figure~\ref{fig:failure-modes}).
+This happens in \textbf{both} arms: LLM contributes 4 of the 22 notes (all
+on \texttt{arith\_hard}), VLM the rest, spread across all three
+multi-object conditions roughly in proportion to their trial counts. The
+failure class recurs regardless of which planner grounded the scene,
+consistent with a genuine geometry-grounding gap (specifically: nothing in
+the pipeline prevents the arm from clipping an already-placed object while
+approaching or releasing the next one, even when the two objects' final
+target positions do not overlap) rather than a VLM-specific weakness.
+
+\paragraph{This does not replicate July's arithmetic-collapse finding.} The
+July study (different VLM model, \texttt{qwen3.6-27b}) found VLM TSR
+collapsing to 30\%/25\% on \texttt{arith\_easy}/\texttt{arith\_hard} against
+100\%/97\% for LLM, and traced 12 of 13 ``wrong cube'' notes to an
+apparent off-by-one in the stated value mapping. On \texttt{kimi-k2.6},
+\texttt{arith\_easy} is 100\%/100\% and \texttt{arith\_hard} is 90\%/85\%
+(Table~\ref{tab:bench-by-task}), and there are no ``wrong cube'' notes at
+all in September's data. The simplest reading is that July's finding was a
+property of \texttt{qwen3.6-27b} specifically, not of VLM grounding in
+general -- consistent with this project's other observed instances of
+model-specific behavioral drift (Section~\ref{sec:tech-decisions}). This
+matters for how the two studies' results should be used together: July's
+data is not wrong, but its central claim does not generalize across models,
+which is itself worth stating plainly rather than quietly dropping.
 
 \paragraph{Plan length is not the differentiator.} LLM and VLM produce plans
 within about one step of each other for every task condition
-(Table~\ref{tab:bench-by-task}, Figure~\ref{fig:steps-by-task}). VLM's
-higher plan-length \emph{variance} on hard tasks traces mostly to silently
-omitting one of the four objects from a ``sort/put all'' instruction -- an
-incomplete-enumeration failure, not a crash -- confirmed by hand rather than
-assumed from the step count alone.
-
-\paragraph{Data caveat.} Three rows in \texttt{benchmark/results.csv} had
-accidentally used a different LLM model
-(\texttt{nebius/google-gemma-27b} instead of the fixed
-\texttt{nebius/nvidia-nemotron-120b}) and were corrected in place per the
-operator's instruction, without a re-run. This is noted here for
-transparency; it affects 3 of 120 rows.
+(Table~\ref{tab:bench-by-task}, Figure~\ref{fig:steps-by-task}) -- the gap is
+in what happens physically after the plan is formed, not in the plan
+itself.
 
 \subsection{Reproducing or extending this study}
 
 \begin{itemize}[nosep]
-  \item Raw data: \texttt{benchmark/results.csv} (one row per trial).
+  \item Raw data: \texttt{benchmark/results\_2026-09\_3arm.csv} (one row per
+    trial; includes 3 leftover \texttt{VLM\_LLM} rows, excluded from every
+    table/figure above -- see the design note).
   \item Plan and full methodology: \texttt{benchmark/PLAN.md}.
   \item Figure generation: \texttt{benchmark/plot\_results.py} (regenerates
-    all PNGs in \texttt{benchmark/figures/} from \texttt{results.csv}).
+    all PNGs in \texttt{benchmark/figures/} from the results CSV).
   \item Annotation tooling: \texttt{benchmark/benchmark\_annotate.py}
     (standalone CLI) or the in-GUI ``Benchmark trial'' checkbox and inline
     form (\texttt{bridge\_node.py::record\_benchmark\_annotation}).
 \end{itemize}
 
-The most direct extension for a future session -- not started -- would be
-adding a third condition for the \texttt{VLM\_LLM} hybrid mode, to see
-whether hybrid grounding recovers the arithmetic-task success rate closer to
-LLM's while retaining VLM's live-camera advantage over a static scene.
+The most direct extension -- attempted this cycle, not completed -- is the
+\texttt{VLM\_LLM} hybrid third arm; see the design note above for why it was
+abandoned after 3 trials. A validation ablation (deterministic
+release-geometry fixes on vs.\ off, on the three ``hard'' conditions, where
+this section's dominant failure mode actually lives) is planned but not yet
+run -- see ROBOAI-30.

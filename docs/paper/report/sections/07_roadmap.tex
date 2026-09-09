@@ -21,17 +21,17 @@ yet known.
   \node[phase] (a) at (0,0) {
     \textbf{Phase A -- Verify \& stabilize}\\[2pt]
     \footnotesize
-    $\bullet$ Re-verify Session 5 geometry fixes on hardware (I1)\\
-    $\bullet$ Re-check camera/board calibration (I8)\\
-    $\bullet$ R1: zone-bounds-aware release placement
+    $\bullet$ Re-verify Session 5 geometry fixes on hardware (I1) -- done\\
+    $\bullet$ Re-check camera/board calibration (I8) -- done\\
+    $\bullet$ R1: zone-bounds-aware release placement -- done
   };
   \node[phase, right=0.9cm of a] (b) {
     \textbf{Phase B -- Model quality \& schema}\\[2pt]
     \footnotesize
-    $\bullet$ R4: bounding-box scene schema\\
+    $\bullet$ R4: bounding-box scene schema -- done\\
     $\bullet$ R5: rewrite skill/primitive prompt text\\
     $\bullet$ R3: real tray-dimension-aware placement\\
-    $\bullet$ Benchmark: add VLM\_LLM condition
+    $\bullet$ Benchmark: add VLM\_LLM condition -- attempted, not complete
   };
   \node[phase, right=0.9cm of b] (c) {
     \textbf{Phase C -- New capabilities}\\[2pt]
@@ -52,12 +52,19 @@ yet known.
 
 \subsection{Phase A -- verify and stabilize}
 
-\paragraph{Hardware re-verification (I1, I8).} Not a backlog item so much as
-a gate: nothing else in this roadmap should be trusted until the Session 5
-geometry fixes are confirmed against a live run and calibration is confirmed
-current (Section~\ref{sec:open-issues}).
+\paragraph{Hardware re-verification (I1, I8).} \textbf{Done.} The September
+120-trial benchmark (Section~\ref{sec:benchmark}) exercised both the
+Session 5 geometry fixes and the camera/calibration path extensively on
+live hardware, not a replayed/synthetic check -- 100\% task safety across
+all 120 trials is the strongest verification either could have gotten.
+Kept here, marked done, rather than removed, since this paragraph was the
+gate the rest of this roadmap was written to wait on.
 
-\paragraph{R1 -- Zone-bounds-aware release placement.}
+\paragraph{R1 -- Zone-bounds-aware release placement.} \textbf{Done,
+September 2026 (ROBOAI-18)}, resolved as a side effect of a hardware bug
+found during the September benchmark rather than planned as its own session
+-- see Section~\ref{sec:tech-decisions}. What follows is the original
+pre-implementation plan, kept for context.
 \texttt{distribute\_zone\_releases} (\texttt{schemas.py}) currently spaces
 out colliding releases along a line/grid using only the released object's
 \texttt{grasp\_width}, with no notion of how big the target tray/zone
@@ -79,7 +86,13 @@ not reintroduce the LLM-only-matching problem that fix solved.
 \subsection{Phase B -- model quality and schema}
 
 \paragraph{R4 -- \texttt{scene\_mock.json}: bounding box instead of
-position + size, for \texttt{targets}.} Replace
+position + size, for \texttt{targets}.} \textbf{Done, September 2026
+(ROBOAI-19).} What follows is the original pre-implementation plan, kept
+for context; Section~\ref{sec:tech-decisions} has what was actually built,
+including one correction the plan below got wrong (the stacking-height
+instruction was duplicated in only two of six prompt files, not all six --
+the other four had none at all, masked by the old schema letting the model
+just copy a ready-made \texttt{position}). Replace
 \texttt{targets.*.position} (center) + \texttt{size} (dimensions) with an
 explicit bounding box (\texttt{min}/\texttt{max} corners, or a \texttt{min}
 corner + size). Agreed and deliberately deferred until after the benchmark
@@ -126,10 +139,14 @@ line/grid does) or becomes an explicit skill the LLM can invoke with a
 stated intent (``arrange neatly'' vs.\ ``just don't collide''). Depends on
 R1 first, since both need real zone dimensions plumbed through.
 
-\paragraph{Benchmark extension.} Add a third \texttt{VLM\_LLM} condition to
-the existing 120-trial study (Section~\ref{sec:benchmark}), to test whether
-hybrid grounding recovers arithmetic-task success rate closer to LLM's
-while keeping VLM's live-camera advantage.
+\paragraph{Benchmark extension.} \textbf{Attempted September 2026, not
+completed.} A third \texttt{VLM\_LLM} arm was added to the September rerun
+of the 120-trial study (Section~\ref{sec:benchmark}) but abandoned after 3
+trials: a real object in the camera's field of view returned no usable
+depth at its viewing angle and crashed the hybrid grounding call every time
+it was detected -- a physical-setup problem, not evidence about the hybrid
+architecture itself. Revisiting this is now mostly a matter of clearing
+that object from the workspace and re-running, not further design work.
 
 \subsection{Phase C -- new capabilities}
 

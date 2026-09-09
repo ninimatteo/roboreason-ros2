@@ -96,6 +96,47 @@ derivation; the key decisions:
     entire batched deprojection call, crashing an otherwise-valid plan.
     Fixed by sampling inset from the edge and isolating the failure so it
     degrades to ``keep the VLM's own width guess'' instead of crashing.
+  \item \textbf{Bounding-box target schema (ROBOAI-19, September).}
+    \texttt{targets.*} in \texttt{scene\_mock.json} replaced
+    \texttt{position} (center) + \texttt{size} (dimensions) with an explicit
+    \texttt{bounds: \{x, y, z\}} of \texttt{[min, max]} pairs, where
+    \texttt{bounds.z[1]} is the zone's top surface. Removes an assumed,
+    undocumented convention (\texttt{position} = center, half-extent =
+    \texttt{size}/2) this project's bugs had repeatedly tripped on, and
+    matches how a physical zone is actually measured by hand -- two
+    corners, not a center and a half-width. \texttt{objects.*} (things to
+    pick) deliberately kept \texttt{position}+\texttt{size}: a pick needs a
+    single contact point, not an area. Two hardware-found bugs surfaced
+    while wiring this through the LLM-mode prompts: four of six reasoning
+    methods (\texttt{cot\_sc}, \texttt{tot}, \texttt{always\_act},
+    \texttt{self\_refine}) never had a target-geometry instruction at all,
+    which was invisible under the old schema (the model could just copy a
+    ready-made \texttt{position}) and became a real hazard under
+    \texttt{bounds} (the model must compute a midpoint, and without being
+    told to, doesn't reliably land inside the zone).
+  \item \textbf{Zone-bounds-aware release spacing (ROBOAI-18, September).}
+    \texttt{distribute\_zone\_releases} (\texttt{schemas.py}) used to space
+    out colliding releases along an unbounded line/grid, with no notion of
+    how big the target zone actually was -- nothing stopped a fourth or
+    fifth object from landing just outside the tray's physical edge, and
+    \texttt{PlanValidator} only checks global workspace limits, not
+    per-zone bounds, so the overflow was caught nowhere. Now takes an
+    optional \texttt{targets} registry (the ROBOAI-19 \texttt{bounds}
+    schema) and, when a release cluster's anchor matches a known zone,
+    lays out occupants on a grid centered on the anchor and clamped to that
+    zone's bounds; falls back to the old unbounded behavior when no zone
+    matches (the case for point-grounded VLM releases, which have no
+    footprint to match against).
+  \item \textbf{Multi-object sequential-placement collision (identified,
+    not yet fixed).} The September benchmark's dominant failure mode
+    (Section~\ref{sec:benchmark}): spacing releases inside a zone's bounds
+    keeps \emph{final} positions from overlapping, but nothing prevents the
+    arm from clipping an already-placed object while approaching or
+    releasing the next one, or a released object rolling into a neighbor
+    from a few cm of height error. Twenty-two of twenty-two non-empty
+    operator notes in the September rerun describe exactly this, in both
+    the LLM and VLM arms -- a real, open problem distinct from the
+    zone-bounds fix above, not a claimed contribution.
 \end{itemize}
 
 \subsection{Reasoning-method robustness}

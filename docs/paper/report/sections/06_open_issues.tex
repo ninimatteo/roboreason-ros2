@@ -8,7 +8,10 @@ report is self-contained.
 \begin{enumerate}[label=\textbf{I\arabic*.}, leftmargin=1.6cm]
 
   \item \textbf{Session 5 geometry fixes are not yet hardware-verified
-    end-to-end.} \texttt{\_fix\_object\_height} / \texttt{\_fix\_release\_height}
+    end-to-end.} \textbf{Resolved, September 2026:} the 120-trial benchmark
+    (Section~\ref{sec:benchmark}) is exactly this end-to-end live run, at
+    far more than a handful of prompts -- 100\% task safety across all 120
+    trials. \texttt{\_fix\_object\_height} / \texttt{\_fix\_release\_height}
     (Section~\ref{sec:tech-decisions}) and the grasp-width edge-inset fix are
     verified against real captured hardware \texttt{debug/} data and
     unit-level replay, but not through a fresh, live end-to-end hardware run
