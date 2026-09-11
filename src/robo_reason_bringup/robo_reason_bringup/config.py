@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     # requests that are just slow, not stuck.
     REQUEST_TIMEOUT_S: float = 120.0
 
+    # ── LLM-mode deterministic geometry ablation (ROBOAI-30) ──────────────────
+    # When True, llm_planner_node skips _fix_object_height/_fix_release_height
+    # entirely and leaves the model's own computed object_height/release
+    # positions untouched -- i.e. the pre-fix behavior these two functions
+    # replaced. Exists only to A/B the fixes' effect on real hardware; default
+    # False (fixes applied, normal behavior) for every use outside that study.
+    DISABLE_GEOMETRY_FIX: bool = False
+    # Which benchmark/*.csv file bridge_node.py's inline annotation form (and
+    # benchmark_annotate.py, via the same-named ROBOREASON_ env var) appends
+    # to. Keeps studies from mixing in one file (see 2026-09-04, ROBOAI-25) --
+    # point this at a separate file while collecting for the ROBOAI-30
+    # ablation, then switch it back.
+    BENCHMARK_RESULTS_CSV: str = 'results_2026-09_3arm.csv'
+
     # ── VLM planner ───────────────────────────────────────────────────────────
     TMP_DIR: str = 'src/vlm_frames'
     # 'point'  — VLM emits a single [x, y] pixel click per target (validated on

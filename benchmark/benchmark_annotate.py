@@ -33,7 +33,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DEBUG_DIR = Path(os.environ.get('ROBOREASON_DEBUG_DIR', '/root/ws/src/roboreason-ros2/debug'))
-RESULTS_CSV = REPO_ROOT / 'benchmark' / 'results_2026-09_3arm.csv'
+# Same env var bridge_node.py reads via Settings.BENCHMARK_RESULTS_CSV, kept
+# in sync here without importing the full ROS2 Settings class (this script
+# stays runnable standalone, per its own module docstring).
+RESULTS_CSV = REPO_ROOT / 'benchmark' / os.environ.get('ROBOREASON_BENCHMARK_RESULTS_CSV', 'results_2026-09_3arm.csv')
 
 # task_id -> (label, sub_tasks_required) — must match benchmark/PLAN.md §1
 # and bridge_node.py's copy of this same table.
@@ -52,7 +55,7 @@ RESULTS_FIELDS = [
     'num_planned_steps', 'steps_executed', 'safety_ok', 'TS',
     'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS',
     'planning_duration_s', 'execution_duration_s', 'total_duration_s',
-    'notes',
+    'notes', 'geometry_fix_disabled',
 ]
 
 
@@ -174,6 +177,7 @@ def _load_run(run_dir: Path) -> dict:
         'execution_error': execution.get('error'),
         'planning_duration_s': planning_duration_s,
         'execution_duration_s': execution.get('execution_duration_s') or '',
+        'geometry_fix_disabled': config.get('disable_geometry_fix', False),
     }
 
 
@@ -281,6 +285,7 @@ def annotate(run_id: str = None) -> None:
         'execution_duration_s': execution_duration_s,
         'total_duration_s': total_duration_s,
         'notes': notes,
+        'geometry_fix_disabled': run['geometry_fix_disabled'],
     }
 
     RESULTS_CSV.parent.mkdir(parents=True, exist_ok=True)
