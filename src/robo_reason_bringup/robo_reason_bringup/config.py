@@ -40,13 +40,20 @@ class Settings(BaseSettings):
     # requests that are just slow, not stuck.
     REQUEST_TIMEOUT_S: float = 120.0
 
-    # ── LLM-mode deterministic geometry ablation (ROBOAI-30) ──────────────────
+    # ── Deterministic geometry ablation (ROBOAI-30) ────────────────────────────
+    # Two independent flags, both default False (normal behavior). "Soft" arm
+    # sets DISABLE_GEOMETRY_FIX only; "hard" arm sets both together.
+    #
     # When True, llm_planner_node skips _fix_object_height/_fix_release_height
     # entirely and leaves the model's own computed object_height/release
     # positions untouched -- i.e. the pre-fix behavior these two functions
-    # replaced. Exists only to A/B the fixes' effect on real hardware; default
-    # False (fixes applied, normal behavior) for every use outside that study.
+    # replaced. LLM-mode only.
     DISABLE_GEOMETRY_FIX: bool = False
+    # When True, plan_manager_node skips distribute_zone_releases entirely,
+    # leaving multiple releases at (about) the same point uncorrected instead
+    # of spacing them into a grid. Runs for all three planner modes (LLM, VLM,
+    # VLM_LLM) -- see the call site in plan_manager_node.py.
+    DISABLE_ZONE_DISTRIBUTION: bool = False
     # Which benchmark/*.csv file bridge_node.py's inline annotation form (and
     # benchmark_annotate.py, via the same-named ROBOREASON_ env var) appends
     # to. Keeps studies from mixing in one file (see 2026-09-04, ROBOAI-25) --

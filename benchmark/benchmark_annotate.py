@@ -55,7 +55,7 @@ RESULTS_FIELDS = [
     'num_planned_steps', 'steps_executed', 'safety_ok', 'TS',
     'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS',
     'planning_duration_s', 'execution_duration_s', 'total_duration_s',
-    'notes', 'geometry_fix_disabled',
+    'notes', 'geometry_fix_disabled', 'zone_distribution_disabled',
 ]
 
 
@@ -178,6 +178,7 @@ def _load_run(run_dir: Path) -> dict:
         'planning_duration_s': planning_duration_s,
         'execution_duration_s': execution.get('execution_duration_s') or '',
         'geometry_fix_disabled': config.get('disable_geometry_fix', False),
+        'zone_distribution_disabled': config.get('disable_zone_distribution', False),
     }
 
 
@@ -286,6 +287,7 @@ def annotate(run_id: str = None) -> None:
         'total_duration_s': total_duration_s,
         'notes': notes,
         'geometry_fix_disabled': run['geometry_fix_disabled'],
+        'zone_distribution_disabled': run['zone_distribution_disabled'],
     }
 
     RESULTS_CSV.parent.mkdir(parents=True, exist_ok=True)

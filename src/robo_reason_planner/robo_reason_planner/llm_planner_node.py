@@ -80,6 +80,7 @@ class LLMPlannerNode(Node):
             'temperature': self.get_parameter('temperature').value,
             'scene_json': scene_json,
             'disable_geometry_fix': settings.DISABLE_GEOMETRY_FIX,
+            'disable_zone_distribution': settings.DISABLE_ZONE_DISTRIBUTION,
         })
 
         grounded, err = check_command_grounding(user_command, scene_json)

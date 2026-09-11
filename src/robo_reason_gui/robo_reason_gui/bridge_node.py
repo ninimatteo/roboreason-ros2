@@ -87,7 +87,7 @@ BENCHMARK_RESULTS_FIELDS = [
     'num_planned_steps', 'steps_executed', 'safety_ok', 'TS',
     'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS',
     'planning_duration_s', 'execution_duration_s', 'total_duration_s',
-    'notes', 'geometry_fix_disabled',
+    'notes', 'geometry_fix_disabled', 'zone_distribution_disabled',
 ]
 
 
@@ -837,6 +837,7 @@ class GuiBridgeNode(Node):
             'total_duration_s': total_duration_s,
             'notes': notes,
             'geometry_fix_disabled': config.get('disable_geometry_fix', False),
+            'zone_distribution_disabled': config.get('disable_zone_distribution', False),
         }
 
         try:

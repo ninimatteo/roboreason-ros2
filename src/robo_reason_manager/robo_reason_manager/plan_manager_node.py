@@ -111,7 +111,8 @@ class PlanManagerNode(Node):
 
         # Keeps the spacing grid inside a matched target zone's own known
         # bounds (ROBOAI-19) instead of growing past it unbounded.
-        plan = distribute_zone_releases(plan, scene_data.get('targets', {}))
+        if not settings.DISABLE_ZONE_DISTRIBUTION:
+            plan = distribute_zone_releases(plan, scene_data.get('targets', {}))
 
         # Validate
         validator = PlanValidator()

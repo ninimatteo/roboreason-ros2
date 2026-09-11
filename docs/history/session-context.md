@@ -1261,6 +1261,43 @@ underlying numbers until the git history collided.
 
 ---
 
+## 9. ROBOAI-30 ablation: `distribute_zone_releases` is not LLM-only, and a "hard" arm was deferred for time
+
+While adding a second ablation flag on top of the existing
+`DISABLE_GEOMETRY_FIX` (soft arm: `_fix_object_height`/`_fix_release_height`
+in `llm_planner_node.py`), reading `distribute_zone_releases`'s own
+docstring (`schemas.py`) corrected an assumption made mid-session: it is
+not LLM-specific. It runs unconditionally in `plan_manager_node.py`
+downstream of all three planner modes (LLM, VLM, VLM_LLM). The real
+difference is narrower: `targets` bounds clamping (`_centered_zone_offset`)
+only fires for LLM, since VLM/VLM_LLM pass an empty or non-matching
+`targets` dict and fall back to the unbounded `_zone_slot_offset`.
+
+A `DISABLE_ZONE_DISTRIBUTION` flag (`config.py`, gated call in
+`plan_manager_node.py`, recorded in `config.json` and both benchmark CSVs
+alongside `disable_geometry_fix`) was added and verified at the function
+level, but a real "hard" ablation arm (soft flag plus this one together)
+was not run. Checked against Jira before starting it: ICRA deadline is
+2026-09-15, `ROBOAI-27` (internal draft) was already a day past its own
+due date, `ROBOAI-9` (related work) overdue since 09-07 and still To Do.
+Recommendation given to the user: skip it for this submission. The
+draft's own six-bug taxonomy (`ROBOAI-27`) already documents multi-object
+collision as the dominant failure mode *even with* `distribute_zone_releases`
+active across the existing 3-arm data, so a fresh OFF condition would
+likely confirm rather than surface a new finding, at the cost of roughly
+another 15-30 real trials the remaining runway doesn't obviously support.
+The flag stays in the code (default off, no behavior change) for a
+possible rebuttal or follow-up study; it was not used for data collection
+as of this entry. User had not yet responded to the recommendation when
+the session paused.
+
+**Lesson for next time**: check Jira due dates before scoping new
+experimental work, not just the new work's own time estimate — ROBOAI-30's
+Option A/B estimates were written 2026-09-09 assuming more runway than
+was actually left by 09-11.
+
+---
+
 ## Known Open Issues (updated 2026-09-04)
 
 - **`targets.table`'s y-range still slightly exceeds the workspace
