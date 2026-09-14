@@ -3,34 +3,31 @@
 
 A vision-language-action (VLA) model collapses perception, reasoning,
 and control into one policy, trained or fine-tuned end-to-end on
-embodiment-specific demonstration data. That data is the bottleneck:
-paired vision-action robot trajectories remain far scarcer, and far more
-expensive to collect, than the text, code, and image-text corpora a
-general-purpose LLM or VLM is pretrained on. A decoupled Sense-Plan-Act
-architecture sidesteps this bottleneck in a specific way. If planning is
-text (or text conditioned on an image), and the resulting plan is a
-sequence of parameterized skills rather than raw joint torques, then
-whatever manipulation-relevant knowledge the model already has, spatial
-reasoning, arithmetic, common-sense physics, ordering and precondition
-logic, is available zero-shot, through code, without collecting a single
-task-specific demonstration. This is the same argument prior
+embodiment-specific demonstration data, which is the bottleneck: paired
+vision-action trajectories remain far scarcer and more expensive to
+collect than the text, code, and image-text corpora a general-purpose
+LLM or VLM is pretrained on. A decoupled Sense-Plan-Act architecture
+sidesteps this. If planning is text (or text conditioned on an image),
+and the resulting plan is a sequence of parameterized skills rather than
+raw joint torques, then whatever manipulation-relevant knowledge the
+model already has, spatial reasoning, arithmetic, common-sense physics,
+ordering and precondition logic, is available zero-shot, through code,
+without a single task-specific demonstration, the same argument prior
 code-generation-for-robotics work makes~\cite{liang2023codeaspolicies,
 huang2023voxposer, huang2022innermonologue, singh2023progprompt}: an LLM
 that has never seen a robot trajectory has still seen a great deal of
-code, and a plan expressed as a short structured program is something
-that knowledge already transfers to.
+code.
 
 The cost is that a decoupled architecture asks the model to compute
 physical quantities, a release height, a grasp width, a target
-position, that it did not learn from a source with any grounding in the
-real world at all. \S\ref{sec:taxonomy} is what happens when that
-computation is trusted uncritically. Our answer, developed over the
-harness described below, is not to abandon the decoupled architecture
-but to constrain it: let the model choose \emph{what} to do and
-\emph{where}, in symbolic terms, and let a deterministic layer compute
-\emph{how much}, from a sensor measurement or a paired action already in
-the plan, whenever the plan requires a number the model cannot be
-trusted to produce on its own.
+position, that it did not learn from a source grounded in the real
+world at all; \S\ref{sec:taxonomy} is what happens when that
+computation is trusted uncritically. Our answer is not to abandon the
+decoupled architecture but to constrain it: let the model choose
+\emph{what} to do and \emph{where}, symbolically, and let a
+deterministic layer compute \emph{how much}, from a sensor measurement
+or a paired action already in the plan, whenever the plan needs a
+number the model cannot be trusted to produce on its own.
 
 \subsection{System architecture}
 \label{sec:harness-architecture}
@@ -67,31 +64,20 @@ supports six interchangeable reasoning strategies, from a single-step
 reactive baseline to self-consistency voting and tree search, selectable
 without touching the pipeline itself.
 
-Two design choices are what let this pipeline scale into an actual
-research tool rather than a one-off demo. First, every runtime parameter,
-model choice, reasoning strategy, grounding modality, timeouts, robot
-IP, is a field on one centralized settings object, overridable by an
-environment variable with no code change, which is what lets
+Two design choices let this pipeline scale into a research tool rather
+than a one-off demo. First, every runtime parameter, model choice,
+reasoning strategy, grounding modality, timeouts, robot IP, is a field
+on one centralized settings object, overridable by an environment
+variable with no code change, which is what lets
 \S\ref{sec:evaluation}'s conditions be defined and reproduced as
-configuration rather than as branches of the code. Second, every
-planning call records a per-run debug artifact, the command, the active
-configuration, the raw model response, the execution log, and, in VLM
-modes, the camera frame the plan was grounded in, which is what made
-diagnosing \S\ref{sec:taxonomy}'s failures possible in the first place:
-each bug there was traced from a hardware failure back to a specific
-malformed field in a specific logged response, not inferred after the
-fact. A web GUI supervises the whole stack (including the physical UR
-driver and the camera service, both of which fail intermittently enough
-on real hardware to need their own restart logic) as a set of monitored
-child processes, so that a trial can be launched, watched, and annotated
-without a terminal per node.
-
-This is, to our knowledge, the first harness of this kind, decoupled
-LLM/VLM planning with a code-grounding layer, validated on
-\emph{real} manipulator hardware rather than in simulation. A companion
-framework from the same group, RoboReason
-Lab~\cite{favaliRoboReasonLab}, implements the same class of reasoning
-strategies over the same kind of Sense-Plan-Act pipeline, but entirely
-inside CoppeliaSim; ours is its real-hardware counterpart, and, as
-\S\ref{sec:taxonomy} shows, real hardware surfaces an entire failure
-class that a simulation-only harness structurally cannot.
+configuration rather than as code branches. Second, every planning call
+records a per-run debug artifact, the command, active configuration, raw
+model response, execution log, and, in VLM modes, the camera frame the
+plan was grounded in, which is what made diagnosing
+\S\ref{sec:taxonomy}'s failures possible: each bug was traced from a
+hardware failure back to a specific malformed field in a specific logged
+response, not inferred after the fact. A web GUI supervises the whole
+stack, including the physical UR driver and camera service, both of
+which fail intermittently enough to need their own restart logic, as
+monitored child processes, so a trial can be launched, watched, and
+annotated without a terminal per node.

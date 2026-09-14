@@ -1,52 +1,41 @@
 \subsection{Design}
 
 With the deterministic grounding layer of \S\ref{sec:grounding-layer} in
-place, we ran a 120-trial real-hardware study comparing a static-scene LLM
-planner against a camera-grounded VLM planner, methodologically anchored
-to the task/environment complexity taxonomy and the TS/TSR/AETS metric
-family of Favali et al.~\cite{favaliRAS}, adapted to a physical rig. Six
-task conditions crossed three difficulty axes, task length, reference
-specificity, and affordance/perception load, each at an easy and a hard
-extreme, over a real scene of four color-distinguished cubes and a tray:
-\code{pp\_easy}/\code{pp\_hard} (pick-and-place, one vs.\ four objects,
-named directly), \code{sort\_easy}/\code{sort\_hard} (stacking and
-sorting), and \code{arith\_easy}/\code{arith\_hard} (the object to act on
-must be \emph{computed} from a stated numeric value mapping rather than
-named directly, the one condition designed to isolate reasoning load
-from perception load). Each condition was run 10 times per model, for
-120 trials total, with a single reasoning method (chain-of-thought with
-self-consistency) held fixed across all trials, since it is reported as
-the most safety-robust strategy in~\cite{favaliRAS} and avoids stacking
-reasoning-method variance on top of the LLM-vs-VLM comparison actually
-under test. Both the LLM and VLM planner use the same underlying model
-(\code{kimi-k2.6}) for text-only and image-grounded calls respectively.
-This is deliberate, so that grounding modality is the only variable
-isolated between arms, not a side effect of comparing two different
-models with different baseline capabilities.\footnote{An earlier run used
-different models per modality; the VLM-specific model was subsequently
-withdrawn from its provider's catalog, forcing a full re-run on a single
-unified model instead.}
+place, we ran a 120-trial real-hardware study comparing a static-scene
+LLM planner against a camera-grounded VLM planner, anchored to the
+task/environment complexity taxonomy and TS/TSR/AETS metrics of Favali
+et al.~\cite{favaliRAS}, adapted to a physical rig. Six task conditions
+crossed three difficulty axes, task length, reference specificity, and
+affordance/perception load, each easy and hard, over a real scene of
+four color-distinguished cubes and a tray: \code{pp\_easy}/\code{pp\_hard}
+(pick-and-place, one vs.\ four objects), \code{sort\_easy}/\code{sort\_hard}
+(stacking and sorting), and \code{arith\_easy}/\code{arith\_hard} (the
+object must be \emph{computed} from a stated numeric mapping rather than
+named, isolating reasoning load from perception load). Each condition
+ran 10 times per model, 120 trials total, with a single reasoning method
+(chain-of-thought with self-consistency) held fixed, the most
+safety-robust strategy per~\cite{favaliRAS} and one that avoids stacking
+reasoning-method variance on top of the comparison under test. Both
+planners use the same underlying model (\code{kimi-k2.6}), text-only and
+image-grounded respectively, so grounding modality is the only variable
+isolated between arms.\footnote{An earlier run used different models per
+modality; the VLM-specific one was later withdrawn from its provider's
+catalog, forcing a full re-run on a single unified model instead.}
 
 \subsection{Metrics, adapted for physical ground truth}
 
 Favali et al.'s TS (task safety), TSR (task success rate), and AETS
-(action efficiency on task success) metrics are fully automatic in a
-symbolic simulator, where whether an action ``damages the environment''
-or a sub-task ``completes'' is always exactly derivable from simulator
-state. Our real UR5cb has no collision or force-fault sensor anywhere in
-its control path, and no vision-based verification of the final scene
-state. We therefore adapt the same three metrics to a
-\textbf{semi-automatic} protocol: everything the system can know
-automatically (the command, configuration, generated plan, and steps
-actually executed) is logged by the debug harness of
-\S\ref{sec:grounding-layer} for every trial; the operator supplies exactly
-two numbers immediately after each trial, was it safe, and how many
-sub-tasks completed correctly, from which TS, TSR, and AETS are
-computed identically to~\cite{favaliRAS}'s definitions. This adaptation is
-itself a consequence of the paper's central argument: full automation of
-these metrics is only possible because a symbolic simulator's world state
-is always exactly known, which is precisely the property real hardware
-does not have.
+(action efficiency on task success) are fully automatic in a symbolic
+simulator, where whether an action ``damages the environment'' or a
+sub-task ``completes'' is always exactly derivable from simulator state.
+Our real UR5cb has no collision or force-fault sensor anywhere in its
+control path and no vision-based verification of the final scene, so we
+adapt the same three metrics to a \textbf{semi-automatic} protocol:
+everything the system can know automatically is logged by the debug
+harness of \S\ref{sec:grounding-layer} for every trial, and the operator
+supplies exactly two numbers immediately after, was it safe and how many
+sub-tasks completed, from which TS, TSR, and AETS are computed
+identically to~\cite{favaliRAS}'s definitions.
 
 At $n=10$ per cell, point estimates alone invite exactly the kind of
 pushback a reviewer should raise, so every reported TS\% and TSR\% below
@@ -85,28 +74,26 @@ grounding layer in place.}
 \label{fig:overall}
 \end{figure}
 
-Table~\ref{tab:overall} reports the headline result. Both models operate
-under the same deterministic grounding layer and the same underlying
-model, so the residual gap is neither a grasp-geometry gap
-(\S\ref{sec:grounding-layer} applies uniformly to both pipelines) nor a
-model-capability gap. It is specifically attributable to grounding
-modality. Breaking results down by task condition (Figure~\ref{fig:by-task})
-shows the gap concentrated on the two hardest multi-object conditions,
-and predominantly in \emph{safety}, not success rate: TS is 100\% for
-both models on every easy condition and on \code{pp\_hard}/\code{sort\_hard}
-(LLM), but drops to 50\% (VLM, \code{sort\_hard}) and 60\%/90\% (VLM/LLM,
-\code{arith\_hard}) on the two conditions with the most simultaneous
-in-zone objects. Neither model shows the sharp \emph{success-rate}
-collapse a July pilot with different, modality-specific models had found
-on the arithmetic conditions specifically (30\%/25\% VLM TSR against
-100\%/97\% LLM). With a single unified model, \code{arith\_easy} is
-100\%/100\% and \code{arith\_hard} is 90\%/85\% (TSR, LLM/VLM): a real but
-modest gap, not a collapse. \S\ref{sec:computation-not-perception}
-returns to why. The one pre-registered comparison, Fisher's exact test,
-LLM vs.\ VLM, \code{arith\_hard} full-trial success, shows no detectable
-difference at this sample size (LLM 6/10, VLM 4/10, $p=0.66$). That is
-consistent with a real but modest gap that $n=10$ per cell cannot
-resolve to significance, not with an absence of one.
+Table~\ref{tab:overall} reports the headline result. Both models share
+the same grounding layer and the same underlying model, so the residual
+gap is neither a grasp-geometry gap nor a model-capability gap; it is
+attributable to grounding modality. By task condition
+(Figure~\ref{fig:by-task}) the gap concentrates on the two hardest
+multi-object conditions, and predominantly in \emph{safety}: TS is
+100\% for both models on every easy condition and on
+\code{pp\_hard}/\code{sort\_hard} (LLM), but drops to 50\% (VLM,
+\code{sort\_hard}) and 60\%/90\% (VLM/LLM, \code{arith\_hard}) where the
+most objects share a zone at once. Neither model shows the sharp
+\emph{success-rate} collapse a July pilot with different,
+modality-specific models found on the arithmetic conditions (30\%/25\%
+VLM TSR against 100\%/97\% LLM): with a single unified model,
+\code{arith\_easy} is 100\%/100\% and \code{arith\_hard} is 90\%/85\%
+(TSR, LLM/VLM), a real but modest gap, not a collapse
+(\S\ref{sec:computation-not-perception}). The one pre-registered test,
+Fisher's exact, LLM vs.\ VLM on \code{arith\_hard} full-trial success,
+shows no detectable difference at this sample size (LLM 6/10, VLM 4/10,
+$p=0.66$), consistent with a real but modest gap $n=10$ per cell cannot
+resolve to significance.
 
 \begin{figure}[t]
 \centering
@@ -120,21 +107,18 @@ Wilson CI.}
 \label{sec:computation-not-perception}
 
 Reading all 22 non-empty operator failure notes from the 120 trials,
-rather than trusting the aggregate numbers alone, was the key analysis
-step, as it was in an earlier pilot on this same task matrix. Every one
-of the 22 notes describes either a collision between objects (10) or an
+rather than trusting aggregates alone, was the key analysis step. Every
+note describes either a collision between objects (10) or an
 execution/grasp failure, a slipped grasp, a release too high, a dropped
-object (12), during a multi-object task (\code{pp\_hard},
-\code{sort\_hard}, \code{arith\_hard}). \textbf{Zero} notes describe a
-wrong object chosen for reasoning or value-mapping reasons, and zero
-describe an incomplete enumeration (Figure~\ref{fig:failure-modes}). This
-happens in \textbf{both} arms: the LLM contributes 4 of the 22 notes (all
-on \code{arith\_hard}), the VLM the remaining 18, spread across all three
-multi-object conditions roughly in proportion to their trial counts. The
-failure recurs regardless of which planner grounded the scene, which is
-direct confirmation that Case 6 (\S\ref{sec:case-collision}) is this
-taxonomy's most consequential open item, not a peculiarity of one
-pipeline.
+object (12), during a multi-object task. \textbf{Zero} describe a wrong
+object chosen for reasoning or value-mapping reasons, and zero an
+incomplete enumeration (Figure~\ref{fig:failure-modes}). This happens in
+\textbf{both} arms: the LLM contributes 4 of the 22 notes (all on
+\code{arith\_hard}), the VLM the remaining 18, spread across all three
+multi-object conditions roughly in proportion to trial counts. The
+failure recurs regardless of which planner grounded the scene, direct
+confirmation that Case 6 (\S\ref{sec:case-collision}) is this taxonomy's
+most consequential open item, not a peculiarity of one pipeline.
 
 \begin{figure}[t]
 \centering
@@ -150,15 +134,11 @@ Case 6 is itself one of the six geometry-grounding bugs of
 Table~\ref{tab:taxonomy}; this evaluation is what identifies it as the
 dominant one once the other five are closed.
 
-\emph{A note on an earlier finding.} A pilot run on this same task matrix,
-using different, modality-specific models (not the single \code{kimi-k2.6}
-used here), found a different dominant category: 13 of 31 notes read as a
-wrong-object choice concentrated specifically in the arithmetic condition,
-consistent with an off-by-one error in value-mapping reasoning under a
-stated numeric mapping. That finding does not replicate here: zero such
-notes this cycle, on every condition. We read the simplest explanation as
-the correct one: it was a property of the earlier VLM model specifically,
-not of VLM grounding in general, and does not survive a model change. We
-report it for the record and as a caution against generalizing a
-single-model finding to ``VLM grounding'' as a category, not as a result
-that still stands.
+\emph{A note on an earlier finding.} A pilot on this same task matrix,
+using different, modality-specific models, found a different dominant
+category instead: 13 of 31 notes read as a wrong-object choice
+concentrated in the arithmetic condition. That finding does not
+replicate here, zero such notes this cycle, on every condition, and we
+read the simplest explanation as the correct one: a property of the
+earlier VLM model specifically, not of VLM grounding in general, and a
+caution against generalizing a single-model finding to a category.

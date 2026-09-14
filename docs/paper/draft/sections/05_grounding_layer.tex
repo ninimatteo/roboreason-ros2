@@ -1,19 +1,17 @@
 \subsection{Design principle}
 
 The fix for five of the six bugs in Table~\ref{tab:taxonomy} follows the
-same rule: \emph{pull geometric arithmetic out of the model and into code
-wherever the answer is computable from a sensor measurement or a paired
-action already in the plan, and leave the model responsible only for the
-symbolic decision of what to do and where, not how much}. The model still
-chooses which object to pick, which zone to release into, and in what
-order; a deterministic post-processing layer then overwrites the specific
-numeric fields most exposed to the failure modes of
-\S\ref{sec:taxonomy}, using only information already available at plan
-time (the paired pick action, measured depth, and the scene's registered
-target geometry). The sixth bug (Case 6, \S\ref{sec:case-collision}) is
-not a scalar this rule can simply overwrite. It is a trajectory-level,
-time-dependent contact problem, and is addressed separately, and only
-partially, below.
+same rule: \emph{pull geometric arithmetic out of the model and into
+code wherever the answer is computable from a sensor measurement or a
+paired action already in the plan, leaving the model responsible only
+for the symbolic decision of what to do and where, not how much}. The
+model still chooses which object to pick and which zone to release
+into; a deterministic post-processing layer overwrites the specific
+numeric fields most exposed to \S\ref{sec:taxonomy}'s failure modes,
+using only information already available at plan time. The sixth bug
+(Case 6, \S\ref{sec:case-collision}) is not a scalar this rule can
+overwrite, since it is a trajectory-level, time-dependent contact
+problem, and is addressed separately, and only partially, below.
 
 \subsection{Object and release height}
 \label{sec:fix-height}
@@ -29,67 +27,62 @@ which by construction cannot disagree with itself, instead of from a
 separate, independently-computed model output that could.
 
 \code{fix\_release\_height} performs the analogous correction for the
-release \emph{position}, and two design choices matter here. First,
-matching a release against the scene's registered targets is done by
-\textbf{footprint containment} ($\text{position} \pm \text{size}/2$)
-rather than point-distance to a target's registered center. Case 3 in
-Table~\ref{tab:taxonomy} showed that point-distance matching misses valid
-placements inside a target zone that is tens of centimeters wide. Second,
-a release position that \emph{exactly echoes} a target's or object's own
-registered coordinates is treated as intentional (a deliberate stack or
-placement) and left untouched, while a position that merely
-\emph{drifted} into a zone's footprint without echoing it is nudged back
-outside, along whichever axis requires the smaller correction. This
-happens only when that zone's surface sits meaningfully above the bare
-table, though; nudging away from the near-table-height generic ``table''
-zone would otherwise push objects off the table's edge trying to escape a
-zone that legitimately contains most of the workspace.
+release \emph{position}. Matching a release against the scene's
+registered targets is done by \textbf{footprint containment}
+($\text{position} \pm \text{size}/2$) rather than point-distance to a
+target's center, since Case 3 showed point-distance matching misses
+valid placements inside a target zone tens of centimeters wide. A
+release position that \emph{exactly echoes} a target's or object's own
+registered coordinates is treated as intentional and left untouched,
+while one that merely \emph{drifted} into a zone's footprint is nudged
+back outside along whichever axis needs the smaller correction, and only
+when that zone's surface sits meaningfully above the bare table, since
+nudging away from the near-table-height generic ``table'' zone would
+otherwise push objects off the table's edge escaping a zone that
+legitimately contains most of the workspace.
 
 \subsection{Width-aware TCP offset}
 
-Because the gripper's fingers pivot, the flange-to-contact distance for a
-given commanded width is not constant. We measure this relationship at
-three representative widths (fully closed, mid-open, fully open) and
+Because the gripper's fingers pivot, the flange-to-contact distance for
+a given commanded width is not constant. We measure this at three
+representative widths (fully closed, mid-open, fully open) and
 interpolate piecewise-linearly between them at plan time, setting the
 executor's tool transform per-pick from the plan's reported grasp width
-and resetting it to a default mid-open value after release. Pick descent
-is additionally capped at (calibrated offset $-$ clamp clearance), so
-that tall objects are gripped nearer their top rather than driving the
-gripper's rigid mounting body into them. This closes Case 5.
+and resetting it to a default afterward. Pick descent is additionally
+capped at (calibrated offset $-$ clamp clearance), so tall objects are
+gripped nearer their top rather than driving the gripper's rigid
+mounting body into them. This closes Case 5.
 
 \subsection{Zone-aware spacing: a partial mitigation for Case 6}
 \label{sec:zone-spacing}
 
-For a target zone that receives multiple releases in one plan, we lay out
-occupants on a grid centered on the zone's anchor point and clamped to
-its registered bounds, falling back to an unbounded grid only when no
-known zone matches. This closes the \emph{static} half of Case 6: final
-release positions inside a zone no longer overlap, and no longer overflow
-a zone smaller than the model's own (unclamped) spacing guess would have
-produced. It does not close the \emph{dynamic} half. The arm's approach
-trajectory to the $n$-th release is not checked against the
-already-placed $(n-1)$-th object's footprint, and a released object's
-small residual motion is not constrained at all. \S\ref{sec:evaluation}
-reports this as still the dominant failure mode; \S\ref{sec:discussion}
-returns to what closing the dynamic half would require.
+For a target zone that receives multiple releases in one plan, we lay
+out occupants on a grid centered on the zone's anchor and clamped to its
+registered bounds, falling back to an unbounded grid only when no known
+zone matches. This closes the \emph{static} half of Case 6: final
+release positions no longer overlap or overflow a zone smaller than the
+model's own unclamped guess would have. It does not close the
+\emph{dynamic} half: the arm's approach trajectory to the $n$-th release
+is not checked against the already-placed $(n-1)$-th object's footprint,
+nor is a released object's small residual motion constrained at all.
+\S\ref{sec:evaluation} reports this as still the dominant failure mode;
+\S\ref{sec:discussion} returns to what closing it would require.
 
 \subsection{Best-effort grasp-width sampling}
 
-For the VLM pipeline, grasp width is estimated by deprojecting a detected
-bounding box's left and right edge pixels to measure real-world distance.
-Sampling directly on the object's silhouette boundary is the single worst
-location for valid depth, since boundary pixels are the most exposed to
-occlusion and parallax error. A single failed sample previously aborted
-the entire batched deprojection call, crashing an otherwise valid plan
-over a parameter, grasp width, that does not even affect whether the
-\emph{pick} and \emph{release} coordinates themselves are safe. We fixed
-this by (i) sampling slightly inset from the raw silhouette edge rather
-than on it, landing on the object's surface instead of its boundary, and
-(ii) isolating width estimation into its own best-effort call that
-degrades to the model's own width guess on failure instead of aborting
-the plan. This closes Case 4 without requiring width to be depth-verified
-in every case, which is itself an open limitation we return to in
-\S\ref{sec:discussion}.
+For the VLM pipeline, grasp width is estimated by deprojecting a
+detected bounding box's left and right edge pixels. Sampling directly on
+the object's silhouette boundary is the single worst location for valid
+depth, since boundary pixels are the most exposed to occlusion and
+parallax error, and a single failed sample previously aborted the
+entire batched deprojection call over a parameter, grasp width, that
+does not even affect whether \emph{pick} and \emph{release} themselves
+are safe. We fixed this by sampling slightly inset from the raw
+silhouette edge instead of on it, and by isolating width estimation
+into its own best-effort call that degrades to the model's own guess on
+failure instead of aborting the plan. This closes Case 4 without
+requiring width to be depth-verified in every case, an open limitation
+we return to in \S\ref{sec:discussion}.
 
 \subsection{Validation}
 \label{sec:validation}

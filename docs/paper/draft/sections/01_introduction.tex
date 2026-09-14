@@ -1,34 +1,30 @@
 A vision-language-action (VLA) model maps perception and instruction
 directly to low-level control, in one policy trained end-to-end. This is
 an elegant architecture, but it inherits imitation learning's oldest
-bottleneck: the policy only knows what its demonstration data covers, and
-paired vision-action robot trajectories are expensive to collect at the
-scale and diversity a general-purpose manipulator needs. A large language
-model (LLM) or vision-language model (VLM), by contrast, is pretrained on
-a far broader and cheaper-to-collect corpus, text, code, and image-text
-pairs at internet scale, and arrives already knowing a great deal that is
-relevant to manipulation: object affordances, spatial and arithmetic
-reasoning, ordering and precondition logic, none of it robot-specific,
-all of it transferable through code rather than through a demonstration
-dataset~\cite{liang2023codeaspolicies, huang2023voxposer,
+bottleneck: the policy only knows what its demonstration data covers,
+and paired vision-action robot trajectories are expensive to collect at
+the scale a general-purpose manipulator needs. An LLM or VLM, by
+contrast, is pretrained on a far broader, cheaper-to-collect corpus,
+text, code, and image-text pairs at internet scale, and already knows a
+great deal relevant to manipulation, object affordances, spatial and
+arithmetic reasoning, ordering and precondition logic, none of it
+robot-specific, all of it transferable through code rather than a
+demonstration dataset~\cite{liang2023codeaspolicies, huang2023voxposer,
 huang2022innermonologue, singh2023progprompt}. This is the architectural
 bet a decoupled Sense-Plan-Act pipeline makes: let the model plan in
-language, and let a separate execution layer turn that plan into motion.
+language, and a separate execution layer turn that plan into motion.
 
 The bet has a cost. A decoupled pipeline has to ask the model, somewhere,
 to commit to numbers, a release height, a grasp width, a target
 position, and nothing in an LLM or VLM's pretraining grounds those
-numbers in the physical world it is now supposed to act in. Simulated
-validation hides this cost almost entirely: in a scripted physics engine
-or a symbolic environment, an object's height, its grasp width, and the
+numbers in the physical world it now acts in. Simulated validation hides
+this cost almost entirely: an object's height, its grasp width, and the
 distance a gripper must travel to release it safely are never actually
-\emph{measured}, they are asserted, correctly, by construction, so a
-model's arithmetic is never tested against a sensor that could
-contradict it~\cite{favaliRAS, rohmer2013coppeliasim, todorov2012mujoco}.
-On real hardware none of these quantities are given. They have to be
-computed, from noisy depth, from a calibrated but imperfect camera, or
-from a hand-authored scene file that may or may not match the physical
-table it describes.
+\emph{measured} there, they are asserted, correctly, by
+construction~\cite{favaliRAS, rohmer2013coppeliasim, todorov2012mujoco}.
+On real hardware none of these quantities are given; they have to be
+computed, from noisy depth, an imperfect camera, or a hand-authored
+scene file that may not match the physical table it describes.
 
 We present a real-hardware ROS2 harness built around this architectural
 choice (\S\ref{sec:harness}): a modular Sense-Plan-Act pipeline
@@ -43,27 +39,24 @@ strategies over the same kind of pipeline, but entirely inside
 CoppeliaSim; ours, as far as we are aware, is the first version of it run
 on a real manipulator.
 
-Building and operating this harness on a real UR5cb manipulator is what
-surfaced the cost described above concretely. Over six development
-sessions we found a recurring and costly pattern: whenever a planning
-prompt asked the model to compute a piece of manipulation geometry
-itself, that computation was often wrong, in ways that stayed silent
-until the arm physically dropped, crushed, or missed an object. We
-diagnose six such bugs from production hardware logs
-(\S\ref{sec:taxonomy}), and close five of them with the harness's
-code-grounding layer, which computes the same quantities deterministically
-from paired pick/release actions and measured depth instead of trusting
-the model's own arithmetic (\S\ref{sec:grounding-layer}). The sixth, a
-multi-object placement collision, we diagnose but have not yet closed.
-It turns out to be the dominant one: a 120-trial real-hardware benchmark
-(\S\ref{sec:evaluation}) shows it as the residual failure distribution
-once the other five are fixed, occurring in \emph{both} the LLM and VLM
-pipelines regardless of which one grounded the scene. We read this
-taxonomy as a discovered validation of the harness's central design
-premise, not as this paper's main contribution: an LLM/VLM harness needs
-a code-grounding layer precisely because real deployment keeps asking the
-model to compute quantities that only a sensor, or an already-committed
-action, should determine.
+Building and operating this harness on a real UR5cb manipulator surfaced
+the cost concretely. Over six development sessions we found a recurring
+pattern: whenever a planning prompt asked the model to compute a piece
+of manipulation geometry itself, that computation was often wrong, in
+ways that stayed silent until the arm dropped, crushed, or missed an
+object. We diagnose six such bugs from production hardware logs
+(\S\ref{sec:taxonomy}) and close five with the harness's code-grounding
+layer, which computes the same quantities deterministically instead of
+trusting the model's own arithmetic (\S\ref{sec:grounding-layer}). The
+sixth, a multi-object placement collision, we diagnose but have not
+closed; it turns out to be the dominant one, a 120-trial benchmark
+(\S\ref{sec:evaluation}) shows it as the residual failure once the other
+five are fixed, in \emph{both} the LLM and VLM pipelines regardless of
+which grounded the scene. We read this taxonomy as a discovered
+validation of the harness's design premise, not this paper's main
+contribution: an LLM/VLM harness needs code-grounding precisely because
+real deployment keeps asking the model to compute quantities only a
+sensor, or an already-committed action, should determine.
 
 The contributions of this paper are threefold:
 \begin{itemize}[nosep]
