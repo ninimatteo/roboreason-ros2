@@ -32,12 +32,11 @@ supporting six reasoning strategies over two grounding modalities (a
 static-scene LLM planner and a camera-grounded VLM planner), a small
 library of parameterized manipulation skills, and a deterministic
 code-grounding layer that overrides model-computed geometry with a
-sensor- or action-derived value wherever the two could disagree. A
-companion framework from the same group, RoboReason
-Lab~\cite{favaliRoboReasonLab}, implements the same class of reasoning
-strategies over the same kind of pipeline, but entirely inside
-CoppeliaSim; ours, as far as we are aware, is the first version of it run
-on a real manipulator.
+sensor- or action-derived value wherever the two could disagree. Prior
+work implements the same class of reasoning strategies over the same
+kind of pipeline entirely inside a simulator~\cite{favaliRoboReasonLab};
+to our knowledge, this is the first harness of this kind validated on
+real manipulator hardware rather than in simulation.
 
 Building and operating this harness on a real UR5cb manipulator surfaced
 the cost concretely. Over six development sessions we found a recurring
