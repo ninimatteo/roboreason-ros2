@@ -1,4 +1,11 @@
-\textbf{LLM/VLM planning for robotics.} Foundation models have been used to
+\textbf{From symbolic task-and-motion planning to LLM-based planning.}
+Robotic planning has long been structured around a
+Sense-Plan-Act pipeline~\cite{garrett2021integrated}, originally realized
+through hierarchical and symbolic planners that search a discrete action
+space for a sequence provably achieving a goal
+condition~\cite{kaelbling2011hierarchical}. These planners give strong
+correctness guarantees but require a hand-specified symbolic model of the
+world and its dynamics. Foundation models have been used to
 ground natural-language instructions in robotic
 affordances~\cite{ahn2022saycan}, to act as zero-shot
 planners~\cite{huang2022zeroshot}, and to generate feasible motion plans
@@ -17,25 +24,31 @@ berti2025emergent, billard2025roadmap}. Our contribution is orthogonal to
 this line of work: we do not propose a new reasoning strategy, and hold
 the reasoning strategy fixed in our evaluation (\S\ref{sec:evaluation}).
 Instead, we show that the geometric grounding surrounding \emph{any} of
-these strategies -- how a chosen action's numeric parameters are computed
--- is a separate failure axis that persists regardless of which reasoning
+these strategies, how a chosen action's numeric parameters are computed,
+is a separate failure axis that persists regardless of which reasoning
 strategy produced the action.
 
 \textbf{End-to-end and vision-language-action approaches.} An alternative
 architecture collapses perception, reasoning, and control into a single
 model, as in vision-language-action (VLA) systems~\cite{brohan2023rt2,
-driess2023palme} or code-generating policies that couple perception
+driess2023palme, geminiteam2025robotics15, kim2024openvla}. Trained or
+fine-tuned end-to-end, such a policy can in principle learn to compensate
+for geometric grounding errors on its own. It pays for that with the one
+resource imitation learning has always been bottlenecked on: paired
+vision-action demonstration data, collected per embodiment, which stays
+scarce and narrow next to the text/code/image-text corpora an LLM or VLM
+is pretrained on. Code-generating policies that couple perception
 directly to control primitives~\cite{liang2023codeaspolicies,
-huang2023voxposer, huang2022innermonologue, singh2023progprompt}. These
-approaches can, in principle, learn to compensate for geometric grounding
-errors end-to-end, at the cost of the diagnosability that a decoupled
-Sense-Plan-Act pipeline provides -- when an end-to-end model fails, it is
+huang2023voxposer, huang2022innermonologue, singh2023progprompt} sit
+closer to our own approach: they keep the decoupled Sense-Plan-Act split
+and let an LLM's pretrained code and spatial-reasoning knowledge stand in
+for embodiment-specific demonstrations. A fully end-to-end VLA also gives
+up the diagnosability a decoupled pipeline provides: when it fails, it is
 difficult to determine whether the failure was a misperception, a
-reasoning error, or a motor-control error~\cite{favaliRAS}. We deliberately
-retain a decoupled architecture, precisely because it lets us isolate and
-name the geometry-grounding failure class this paper documents; a fully
-end-to-end system would not permit the diagnosis in \S\ref{sec:taxonomy}
-at all, only its symptoms.
+reasoning error, or a motor-control error~\cite{favaliRAS}. We adopt the
+decoupled architecture for both reasons at once, data efficiency and
+diagnosability, since a fully end-to-end system would not permit the
+diagnosis of \S\ref{sec:taxonomy} at all, only its symptoms.
 
 \textbf{Simulation and sim-to-real transfer.} The sim-to-real gap is a
 long-studied concern in robot learning, primarily for learned low-level
@@ -43,29 +56,24 @@ control policies~\cite{zhao2020simtoreal}. Physics simulators such as
 Gazebo~\cite{koenig2004gazebo}, MuJoCo~\cite{todorov2012mujoco}, and
 CoppeliaSim~\cite{rohmer2013coppeliasim} narrow this gap for control by
 modeling contact dynamics and actuation limits~\cite{collins2021physics}.
-The gap we document is different in kind: it does not concern whether a
+The gap we document is different in kind. It does not concern whether a
 \emph{learned policy} generalizes from simulated to real dynamics, but
-whether a \emph{language-model-computed} geometric quantity -- one that a
+whether a \emph{language-model-computed} geometric quantity, one that a
 symbolic benchmark never forces the model to compute against a
-contradicting sensor -- is trustworthy at all. To our knowledge this
+contradicting sensor, is trustworthy at all. To our knowledge this
 failure class has not been previously isolated and named for LLM/VLM robot
 planners specifically.
 
 \textbf{Direct comparison.} The closest prior work to this paper is
 Favali et al.~\cite{favaliRAS}, which introduces a task/environment
-complexity taxonomy (task length, goal specificity, affordance
-perception; affordance density and four classes of dynamic disturbance)
-and TS/TSR/AETS metrics for benchmarking LLM-based robotic planning
-across six reasoning strategies, evaluated in a symbolic simulator with
-exact ground truth. We adopt the same evaluation philosophy and, for
-\S\ref{sec:evaluation}, the same metric family, but on real hardware,
-where ground truth for safety and success is not automatically available
-(\S\ref{sec:evaluation} details the resulting semi-automatic
-adaptation). A companion systems paper from the same group,
-RoboReason~Lab~\cite{favaliRoboReasonLab}, provides a modular simulation
-testbed for the same class of reasoning strategies in CoppeliaSim; like
-\cite{favaliRAS}, it never grounds a plan in measured depth or a
-calibrated camera. Both are simulation-only by design, and both are
-structurally unable to produce the geometry-grounding failures this paper
-diagnoses, because neither ever asks a model to compute a quantity a
-physical sensor could contradict.
+complexity taxonomy and TS/TSR/AETS metrics for benchmarking LLM-based
+robotic planning across six reasoning strategies, evaluated in a
+symbolic simulator with exact ground truth. We adopt the same evaluation
+philosophy and, for \S\ref{sec:evaluation}, the same metric family, but
+on real hardware, where ground truth for safety and success is not
+automatically available (\S\ref{sec:evaluation} details the resulting
+semi-automatic adaptation). Neither it nor its companion systems paper,
+RoboReason~Lab~\cite{favaliRoboReasonLab} (\S\ref{sec:harness-architecture}),
+ever grounds a plan in measured depth or a calibrated camera; both are
+simulation-only by design, and so structurally unable to produce the
+failures \S\ref{sec:taxonomy} diagnoses.

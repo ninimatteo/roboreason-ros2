@@ -1,80 +1,86 @@
-Large language models (LLMs) and vision-language models (VLMs) are
-increasingly used as high-level planners for robotic manipulation,
-translating a natural-language instruction and a scene observation into a
-sequence of executable skills~\cite{kim2024survey, wang2025robotics,
-ahn2022saycan, huang2022zeroshot}. A large and fast-growing body of work
-validates these planners in simulation: scripted physics engines such as
-CoppeliaSim~\cite{rohmer2013coppeliasim} or MuJoCo~\cite{todorov2012mujoco},
-or, further still, purely symbolic environments in which the ``scene'' is a
-hand-authored text description and perception is a proxy that returns
-whatever the experiment designer wrote down~\cite{favaliRAS}. Symbolic and
-scripted validation is valuable -- it is fast, reproducible, and lets a
-researcher isolate the reasoning strategy from perception and control. But
-it has a structural blind spot: an object's height, its grasp width, and
-the vertical distance a gripper must travel to release it safely are never
-actually \emph{measured} in these environments. They are simply asserted,
-correctly, by construction.
+A vision-language-action (VLA) model maps perception and instruction
+directly to low-level control, in one policy trained end-to-end. This is
+an elegant architecture, but it inherits imitation learning's oldest
+bottleneck: the policy only knows what its demonstration data covers, and
+paired vision-action robot trajectories are expensive to collect at the
+scale and diversity a general-purpose manipulator needs. A large language
+model (LLM) or vision-language model (VLM), by contrast, is pretrained on
+a far broader and cheaper-to-collect corpus, text, code, and image-text
+pairs at internet scale, and arrives already knowing a great deal that is
+relevant to manipulation: object affordances, spatial and arithmetic
+reasoning, ordering and precondition logic, none of it robot-specific,
+all of it transferable through code rather than through a demonstration
+dataset~\cite{liang2023codeaspolicies, huang2023voxposer,
+huang2022innermonologue, singh2023progprompt}. This is the architectural
+bet a decoupled Sense-Plan-Act pipeline makes: let the model plan in
+language, and let a separate execution layer turn that plan into motion.
 
-On real hardware, none of these quantities are given. They must be
-computed, from noisy depth, from a calibrated but imperfect camera, or from
-a hand-authored scene file that may or may not match the physical table it
-describes. Over six development sessions deploying an LLM/VLM planning
-stack on a real UR5cb manipulator with an OnRobot RG2 gripper and a
-calibrated RGB-D camera, we observed a recurring and costly pattern: when a
-planning prompt asks the model to compute a piece of manipulation geometry
-itself -- a release height, a stacking height, a grasp width -- that
-computation is often wrong, in ways that are silent until the arm
-physically drops, crushes, or misses an object. The failures are not
-random. They cluster around a single, identifiable root cause: the model
-is asked to reason about a physical quantity that a sensor, not language,
-should determine.
+The bet has a cost. A decoupled pipeline has to ask the model, somewhere,
+to commit to numbers, a release height, a grasp width, a target
+position, and nothing in an LLM or VLM's pretraining grounds those
+numbers in the physical world it is now supposed to act in. Simulated
+validation hides this cost almost entirely: in a scripted physics engine
+or a symbolic environment, an object's height, its grasp width, and the
+distance a gripper must travel to release it safely are never actually
+\emph{measured}, they are asserted, correctly, by construction, so a
+model's arithmetic is never tested against a sensor that could
+contradict it~\cite{favaliRAS, rohmer2013coppeliasim, todorov2012mujoco}.
+On real hardware none of these quantities are given. They have to be
+computed, from noisy depth, from a calibrated but imperfect camera, or
+from a hand-authored scene file that may or may not match the physical
+table it describes.
 
-This paper makes that observation precise and actionable. We diagnose six
-recurring geometry-grounding bugs from production hardware logs (\S
-\ref{sec:taxonomy}), show that they share a common structural cause across
-two independently-implemented planning pipelines (a static-scene LLM
-planner and a camera-grounded VLM planner), and close five of them by
-removing geometric arithmetic from the model's output entirely, replacing
-it with a deterministic grounding layer that computes the same quantities
-from paired pick/release actions and measured depth
-(\S\ref{sec:grounding-layer}). The sixth -- a multi-object placement
-collision -- we diagnose but have not yet closed, and it turns out to be
-the dominant one: a 120-trial real-hardware benchmark (\S\ref{sec:evaluation})
-shows it as the residual failure distribution once the other five are
-fixed, occurring in \emph{both} the LLM and VLM pipelines regardless of
-which one grounded the scene -- direct evidence that the failure tracks
-the geometry-grounding architecture, not the choice of grounding
-modality.
+We present a real-hardware ROS2 harness built around this architectural
+choice (\S\ref{sec:harness}): a modular Sense-Plan-Act pipeline
+supporting six reasoning strategies over two grounding modalities (a
+static-scene LLM planner and a camera-grounded VLM planner), a small
+library of parameterized manipulation skills, and a deterministic
+code-grounding layer that overrides model-computed geometry with a
+sensor- or action-derived value wherever the two could disagree. A
+companion framework from the same group, RoboReason
+Lab~\cite{favaliRoboReasonLab}, implements the same class of reasoning
+strategies over the same kind of pipeline, but entirely inside
+CoppeliaSim; ours, as far as we are aware, is the first version of it run
+on a real manipulator.
 
-Our central argument is that this failure class is not a peculiarity of
-our codebase, but a structural consequence of validating LLM/VLM robot
-planners in simulation. We make this argument concretely against a direct,
-comparable prior work: Favali et al.~\cite{favaliRAS} propose a rigorous
-taxonomy of task and environment complexity and a benchmarking framework
-for LLM-based robotic planning, evaluated in a symbolic simulator where
-ground truth is always exactly known. Their framework is, by design,
-incapable of producing the failure mode this paper documents, because
-their simulated agent never computes a grasp height that a physical sensor
-could contradict. We do not consider this a weakness of their study --
-their methodology is sound for the question it asks -- but we argue that a
-geometry-grounding audit of the kind we perform here is a necessary
-complement to any symbolic or scripted benchmark before an LLM/VLM planner
-is deployed on real hardware.
+Building and operating this harness on a real UR5cb manipulator is what
+surfaced the cost described above concretely. Over six development
+sessions we found a recurring and costly pattern: whenever a planning
+prompt asked the model to compute a piece of manipulation geometry
+itself, that computation was often wrong, in ways that stayed silent
+until the arm physically dropped, crushed, or missed an object. We
+diagnose six such bugs from production hardware logs
+(\S\ref{sec:taxonomy}), and close five of them with the harness's
+code-grounding layer, which computes the same quantities deterministically
+from paired pick/release actions and measured depth instead of trusting
+the model's own arithmetic (\S\ref{sec:grounding-layer}). The sixth, a
+multi-object placement collision, we diagnose but have not yet closed.
+It turns out to be the dominant one: a 120-trial real-hardware benchmark
+(\S\ref{sec:evaluation}) shows it as the residual failure distribution
+once the other five are fixed, occurring in \emph{both} the LLM and VLM
+pipelines regardless of which one grounded the scene. We read this
+taxonomy as a discovered validation of the harness's central design
+premise, not as this paper's main contribution: an LLM/VLM harness needs
+a code-grounding layer precisely because real deployment keeps asking the
+model to compute quantities that only a sensor, or an already-committed
+action, should determine.
 
 The contributions of this paper are threefold:
 \begin{itemize}[nosep]
-  \item A taxonomy of six recurring real-hardware geometry-grounding
-    bugs, diagnosed from production debug logs across six development
-    sessions on a real manipulator (\S\ref{sec:taxonomy}).
-  \item A deterministic grounding layer that closes five of the six,
-    removing model-computed geometric arithmetic from the
-    planning-critical path, together with an evaluation of its effect
-    (\S\ref{sec:grounding-layer}).
+  \item A real-hardware ROS2 harness for decoupled LLM/VLM manipulation
+    planning, with a code-grounding layer as an explicit architectural
+    component, presented as the real-hardware counterpart to
+    simulation-only frameworks for the same class of reasoning strategies
+    (\S\ref{sec:harness}).
+  \item A taxonomy of six recurring geometry-grounding bugs, discovered
+    while operating the harness on a real manipulator across six
+    development sessions, five of which the code-grounding layer closes
+    (\S\ref{sec:taxonomy}, \S\ref{sec:grounding-layer}).
   \item A 120-trial real-hardware benchmark, methodologically anchored to
     a directly comparable symbolic-simulation study~\cite{favaliRAS} and
     using a single unified model for both grounding modalities, showing
-    that the sixth, still-open bug -- multi-object placement collision --
-    is the dominant residual failure in \emph{both} arms, and what that
-    implies for evaluating LLM/VLM robot planners before hardware
+    that the sixth, still-open bug, multi-object placement collision, is
+    the dominant residual failure in \emph{both} arms, and what that
+    implies for evaluating LLM/VLM robot harnesses before hardware
     deployment (\S\ref{sec:evaluation}).
 \end{itemize}

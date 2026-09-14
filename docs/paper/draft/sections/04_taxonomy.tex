@@ -1,13 +1,15 @@
-This section diagnoses six recurring geometry-grounding bugs, each
-found on real hardware and each traced to its root cause using the
-per-run debug artifacts (raw model response, config, and, in VLM mode,
-the captured camera frame) that every planning call in our system
-records. Table~\ref{tab:taxonomy} summarizes all six; the remainder of
-this section develops the two most instructive of the five closed cases
-in full, since they recurred independently in two different planning
-pipelines and therefore best illustrate that the underlying pattern --
-not a one-off implementation slip -- is structural, then treats the
-sixth, still-open bug on its own (\S\ref{sec:case-collision}), since it
+Operating the harness of \S\ref{sec:harness} on real hardware is what
+turned the design rationale of \S\ref{sec:harness-rationale} from an
+argument into an observation. This section reports six recurring
+geometry-grounding bugs, each found on real hardware and each traced to
+its root cause using the harness's own per-run debug artifacts (raw
+model response, config, and, in VLM mode, the captured camera frame).
+Table~\ref{tab:taxonomy} summarizes all six. The remainder of this
+section develops the two most instructive of the five closed cases in
+full, since they recurred independently in two different planning
+pipelines and therefore best illustrate that the underlying pattern is
+structural, not a one-off implementation slip. It then treats the sixth,
+still-open bug on its own (\S\ref{sec:case-collision}), since that one
 turns out to be the dominant failure mode in \S\ref{sec:evaluation}.
 
 \begin{table*}[t]
@@ -45,7 +47,7 @@ Footprint- vs.\ point-distance target matching &
 \addlinespace
 Grasp-width sampled from the silhouette edge &
   Grasp width derived by deprojecting a bounding box's left/right edge
-  pixels -- exactly on the object's silhouette boundary, the single
+  pixels, exactly on the object's silhouette boundary, the single
   worst location for valid depth (occlusion/parallax). One failed edge
   sample aborted an otherwise valid plan. &
   Real depth noise at object boundaries; does not exist for a rendered or
@@ -53,9 +55,9 @@ Grasp-width sampled from the silhouette edge &
 \addlinespace
 Width-dependent TCP offset &
   The gripper's fingers pivot, so flange-to-contact distance is a
-  function of how far apart they are commanded to open, not a constant
-  -- wrong for any object whose width diverges from a single calibrated
-  offset. &
+  function of how far apart they are commanded to open, not a constant,
+  so it is wrong for any object whose width diverges from a single
+  calibrated offset. &
   Real gripper mechanism (finger kinematics), absent from a symbolic
   action space. \\
 \addlinespace
@@ -69,7 +71,7 @@ Multi-object sequential-placement collision \textbf{(open)} &
   fallen/displaced object during a multi-object task, in \textbf{both}
   the LLM and VLM pipelines. &
   Real multi-body contact between two already-placed objects and the
-  arm's approach trajectory -- absent from any single-object placement
+  arm's approach trajectory, absent from any single-object placement
   check, symbolic or real. \\
 \bottomrule
 \end{tabularx}
@@ -87,10 +89,10 @@ than pinching at the very top edge, produces a more stable hold on
 typical rigid objects.
 
 The paired \emph{release} action, however, computes how far to lift the
-object before opening the gripper -- the \code{object\_height} parameter,
-added to \code{release\_position.z} by the executor at execution time --
-by assuming the object was grasped at its top. This assumption is wrong
-by construction whenever the pick descended mid-body, which is always. The
+object before opening the gripper (the \code{object\_height} parameter,
+added to \code{release\_position.z} by the executor at execution time) by
+assuming the object was grasped at its top. This assumption is wrong by
+construction whenever the pick descended mid-body, which is always. The
 result is a systematic release overshoot of approximately $0.5\height$:
 released objects land, or are dropped from, a height proportional to half
 their own size, rather than fractions of a centimeter above the surface.
@@ -98,43 +100,43 @@ their own size, rather than fractions of a centimeter above the surface.
 This bug was fixed once, in our VLM pipeline, by deriving
 \code{object\_height} directly from measured depth
 ($\height = \max(\surfz - \topz, \height_{\min})$) rather than from a
-model-reported size. It then recurred, independently, in our LLM pipeline
+model-reported size. It then recurred independently in our LLM pipeline
 several weeks later, because that pipeline's prompt still asked the model
 to compute \code{object\_height} from its own scene-description arithmetic
-(\code{object\_height} $=$ \code{size[2]}), which is exactly the assumption
-the VLM-mode fix had already identified as wrong. Fixing the bug once, in
-one pipeline, did not fix it everywhere it existed. The eventual,
-general fix -- described in \S\ref{sec:grounding-layer} -- is to compute
-this quantity deterministically for \emph{every} pipeline, precisely
-because the underlying error is not a mistake any particular prompt makes,
-but a mismatch between what the model is asked to assume and what the
-physical gripper actually does.
+(\code{object\_height} $=$ \code{size[2]}), exactly the assumption the
+VLM-mode fix had already identified as wrong. Fixing the bug once, in one
+pipeline, did not fix it everywhere it existed. The eventual, general fix,
+described in \S\ref{sec:grounding-layer}, is to compute this quantity
+deterministically for \emph{every} pipeline. The underlying error is not
+a mistake any particular prompt makes, after all, but a mismatch between
+what the model is asked to assume and what the physical gripper actually
+does.
 
 \subsection{Case 2: double-counted stacking height}
 \label{sec:case-double-count}
 
 Our static scene description uses the convention
 \code{position.z} $=$ base reference, \code{size[2]} $=$ height, so that
-\code{position.z} $+$ \code{size[2]} reconstructs a target's top surface --
+\code{position.z} $+$ \code{size[2]} reconstructs a target's top surface,
 the formula every LLM-mode prompt is given for computing a stacking
 release height. In our VLM$\to$LLM hybrid pipeline, a VLM grounding call
 first deprojects a target's pixel location to a real, depth-measured
 world coordinate, then hands the resulting scene off to the same LLM
 planner used in static-scene mode. An early version of this hybrid set the
 generated scene's \code{target.position.z} directly to the depth-measured
-top surface -- already correct, and requiring no further adjustment --
-while leaving the VLM's separate, un-verified \code{size[2]} guess
-untouched. The downstream LLM planner then applied its normal stacking
-formula, adding the guessed height on top of an already-correct value,
+top surface, already correct and requiring no further adjustment, while
+leaving the VLM's separate, un-verified \code{size[2]} guess untouched.
+The downstream LLM planner then applied its normal stacking formula,
+adding the guessed height on top of an already-correct value and
 inflating every stack-on-target release by however wrong that guess
 happened to be.
 
-The fix follows the same pattern as Case 1: rather than trying to correct
+The fix follows the same pattern as Case 1. Rather than trying to correct
 the VLM's size guess, we derive the target's real height from depth
 ($\height = \max(\topz - \surfz, 0)$, with no minimum floor, since a flat
 target zone marked directly on the table should legitimately read as
-having near-zero height) and reset \code{position.z} back to a base
-reference, so that the existing downstream formula reconstructs the true
+having near-zero height), then reset \code{position.z} back to a base
+reference so that the existing downstream formula reconstructs the true
 top surface instead of double-counting it. The quantity computed by
 sensor is inserted \emph{into} the representation the model already
 expects, rather than trusted from the model's own output.
@@ -143,28 +145,27 @@ expects, rather than trusted from the model's own output.
 \label{sec:case-collision}
 
 Unlike Cases 1--2, this bug is not closed by \S\ref{sec:grounding-layer}.
-When a task places several objects into the same target zone in
-sequence -- stacking three cubes on a tray, arranging four in a line on
-the table -- each release's \emph{final} position is spaced to avoid
-overlapping the others already placed, by a grid layout clamped to the
-zone's real bounds (\S\ref{sec:grounding-layer}). This closes the
-\emph{static} version of the problem: no two final positions occupy the
-same footprint. It does not address the \emph{dynamic} version: nothing
-constrains the arm's trajectory while approaching or releasing the
-$n$-th object to avoid clipping the $(n-1)$-th, already sitting in the
-zone, and nothing constrains a released object's small residual motion
-(momentum, a few cm of height error) from displacing a neighbor after
-release. Both are genuinely three-dimensional, time-dependent contact
-problems -- not resolvable by correcting a single scalar the way Cases
-1--2 were.
+When a task places several objects into the same target zone in sequence,
+stacking three cubes on a tray, say, or arranging four in a line on the
+table, each release's \emph{final} position is spaced to avoid overlapping
+the others already placed, by a grid layout clamped to the zone's real
+bounds (\S\ref{sec:grounding-layer}). This closes the \emph{static}
+version of the problem: no two final positions occupy the same footprint.
+It does not address the \emph{dynamic} version. Nothing constrains the
+arm's trajectory while approaching or releasing the $n$-th object to
+avoid clipping the $(n-1)$-th, already sitting in the zone, and nothing
+constrains a released object's small residual motion (momentum, a few cm
+of height error) from displacing a neighbor after release. Both are
+genuinely three-dimensional, time-dependent contact problems, not
+resolvable by correcting a single scalar the way Cases 1--2 were.
 
 We identified this bug from the same per-run debug artifacts as Cases
-1--2, but by the time it was isolated, it was already the dominant
+1--2. By the time it was isolated, though, it was already the dominant
 failure mode in the evaluation of \S\ref{sec:evaluation} (22 of 22
 non-empty operator notes, in both the LLM and VLM pipelines), rather
 than something we could re-run in isolation and close before reporting
 results. We report it here as an identified, partially-mitigated (by the
-static spacing fix), \textbf{open} problem, not a claimed contribution --
+static spacing fix) \textbf{open} problem, not a claimed contribution.
 \S\ref{sec:discussion} returns to what closing it would require.
 
 \subsection{The common pattern}
@@ -175,8 +176,8 @@ becomes, on real hardware, (a) a sensor measurement subject to depth
 noise and occlusion, (b) a function of real actuator kinematics that a
 text-based action schema has no natural way to express, or (c), for
 Case 6, a consequence of real multi-body contact between two physical
-objects sharing space over time. None of the three failure modes can
+objects sharing space over time. None of these three failure modes can
 occur in an environment where object geometry is authored by the
-experiment designer or perfectly known by the physics engine -- which is
-precisely the setting in which LLM/VLM robot planners are most commonly
-benchmarked~\cite{favaliRAS, favaliRoboReasonLab}.
+experiment designer or perfectly known by the physics engine. That,
+however, is precisely the setting in which LLM/VLM robot planners are
+most commonly benchmarked~\cite{favaliRAS, favaliRoboReasonLab}.

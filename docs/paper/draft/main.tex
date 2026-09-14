@@ -23,7 +23,7 @@
 
 \begin{document}
 
-\title{\LARGE \bf Don't Trust the Model's Arithmetic: Deterministic Geometric Grounding for LLM/VLM-Driven Manipulation}
+\title{\LARGE \bf RoboReason: A Real-Hardware Harness for Code-Grounded LLM/VLM Manipulation}
 
 \author{Matteo Nini$^{1}$%
 	\thanks{$^{1}$The authors are with [Department, University]. E-mail: {\tt\small matteo.nini@[domain]}.}%
@@ -34,32 +34,20 @@
 \maketitle
 
 \begin{abstract}
-Large language model (LLM) and vision-language model (VLM) based robotic
-planners are increasingly validated in simulation, where an object's
-position, size, and grasp geometry are either exactly known or scripted.
-We report on a real UR5cb manipulator deployment where these planners are
-routinely asked to compute grasp and release geometry themselves --
-release height, target stacking height, grasp width -- and show that this
-model-computed arithmetic, not high-level task reasoning, is the dominant
-source of planning failure on physical hardware. Across six development
-sessions we diagnose a recurring family of geometry-grounding bugs (e.g.\
-a systematic release-height overshoot from a top-vs-mid-body grasp
-mismatch, and a double-counted stacking height in a hybrid vision-language
-pipeline), each invisible to a symbolic or scripted simulator because
-none of these quantities are ever actually measured there. We fix five of
-these deterministically, removing geometric arithmetic from the model
-entirely and computing it from paired pick/release actions and measured
-depth; the sixth, a multi-object placement collision that recurs when
-sequential releases share a target zone, we diagnose but do not yet close,
-and report as the dominant residual failure. On a 120-trial real-hardware
-benchmark comparing an LLM planner against a camera-grounded VLM planner
-using a single unified model for both, we show this residual failure
-distribution occurs in \textbf{both} arms regardless of grounding
-modality, and argue that symbolic-simulation benchmarks of LLM-based
-robot planners -- including a directly comparable prior taxonomy-driven
-study -- structurally cannot observe this failure class, and that a
-geometry-grounding audit belongs in the evaluation protocol for any
-LLM/VLM planner headed to real hardware.
+Vision-language-action (VLA) models fold perception, reasoning, and
+control into one policy, but need paired vision-action data far scarcer
+than the text and image corpora an LLM or VLM is pretrained on. We argue
+instead for a decoupled Sense-Plan-Act architecture: an LLM/VLM plans in
+language, and a deterministic code layer grounds the plan's geometry in
+sensor measurement, so pretrained knowledge transfers through code
+without task-specific action data. We present a real-hardware ROS2
+harness built on this principle. Deploying it on a UR5cb manipulator
+surfaced six recurring geometry-grounding bugs invisible to symbolic
+simulation by construction; the code-grounding layer closes five, and a
+120-trial benchmark shows the sixth, a multi-object placement collision,
+as the dominant residual failure in \textbf{both} an LLM and a
+camera-grounded VLM arm. We report this taxonomy as a discovered
+validation of the harness's premise, not our central claim.
 \end{abstract}
 
 \section{Introduction}
@@ -70,29 +58,33 @@ LLM/VLM planner headed to real hardware.
 \label{sec:related-work}
 \input{sections/02_related_work}
 
-\section{Geometry-Grounding Failure Taxonomy}
-\label{sec:taxonomy}
-\input{sections/03_geometry_taxonomy}
+\section{The Harness}
+\label{sec:harness}
+\input{sections/03_harness}
 
-\section{Deterministic Grounding Layer}
+\section{Geometry-Grounding Failures Discovered on Real Hardware}
+\label{sec:taxonomy}
+\input{sections/04_taxonomy}
+
+\section{Closing the Discovered Failures}
 \label{sec:grounding-layer}
-\input{sections/04_grounding_layer}
+\input{sections/05_grounding_layer}
 
 \section{Real-Hardware Evaluation}
 \label{sec:evaluation}
-\input{sections/05_evaluation}
+\input{sections/06_evaluation}
 
 \section{Discussion and Limitations}
 \label{sec:discussion}
-\input{sections/06_discussion}
+\input{sections/07_discussion}
 
 \section{Conclusion}
 \label{sec:conclusion}
-\input{sections/07_conclusion}
+\input{sections/08_conclusion}
 
 % NOTE: IEEEtran.bst is not installed in this local TeX Live; using ieeetr
 % as a local stand-in. Overleaf and the official IEEE/ICRA LaTeX template
-% both bundle IEEEtran.bst -- switch back to \bibliographystyle{IEEEtran}
+% both bundle IEEEtran.bst; switch back to \bibliographystyle{IEEEtran}
 % for the final submission build.
 \bibliographystyle{ieeetr}
 \bibliography{bibliography}
