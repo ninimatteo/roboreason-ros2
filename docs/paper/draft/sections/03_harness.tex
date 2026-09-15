@@ -55,20 +55,21 @@ supports six interchangeable reasoning strategies, from a single-step
 reactive baseline to self-consistency voting and tree search, selectable
 without touching the pipeline itself.
 
-Two design choices let this pipeline scale into a research tool rather
-than a one-off demo. First, every runtime parameter, model choice,
-reasoning strategy, grounding modality, timeouts, robot IP, is a field
-on one centralized settings object, overridable by an environment
-variable with no code change, which is what lets
+\rev{Two design choices let this pipeline scale into a research tool
+rather than a one-off demo. First, every runtime parameter is a field
+on one centralized settings object: model choice, reasoning strategy,
+grounding modality, timeouts, robot IP. Each is overridable by an
+environment variable with no code change.} This is what lets
 \S\ref{sec:evaluation}'s conditions be defined and reproduced as
-configuration rather than as code branches. Second, every planning call
-records a per-run debug artifact, the command, active configuration, raw
-model response, execution log, and, in VLM modes, the camera frame the
-plan was grounded in, \rev{which is what made it possible to diagnose the
-failures reported in \S\ref{sec:taxonomy}: each bug there} was traced
+configuration rather than as code branches. \rev{Second, every planning
+call records a per-run debug artifact: the command, active
+configuration, raw model response, execution log, and, in VLM modes,
+the camera frame the plan was grounded in.} This is what made it
+possible to diagnose the failures reported in \S\ref{sec:taxonomy}:
+each bug there was traced
 from a hardware failure back to a specific malformed field in a specific
-logged response, not inferred after the fact. A web GUI supervises the whole
-stack, including the physical UR driver and camera service, both of
-which fail intermittently enough to need their own restart logic, as
-monitored child processes, so a trial can be launched, watched, and
-annotated without a terminal per node.
+logged response, not inferred after the fact. \rev{A web GUI supervises
+the whole stack, including the physical UR driver and camera service,
+both of which fail intermittently enough to need their own restart
+logic, as monitored child processes. That is what lets a trial be
+launched, watched, and annotated without a terminal per node.}

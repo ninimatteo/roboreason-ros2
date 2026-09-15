@@ -90,21 +90,22 @@ $\descent_{\max}$ a clamp preventing the gripper's rigid mounting body
 from crashing into tall objects, since centering the grasp mid-body
 produces a more stable hold than pinching at the top edge.
 
-The paired \emph{release} action, however, computes how far to lift the
-object before opening the gripper (\code{object\_height}, added to
-\code{release\_position.z} at execution time) by assuming it was grasped
-at the top, wrong by construction whenever the pick descended mid-body,
-which is always. The result is a systematic overshoot of roughly
+\rev{The paired \emph{release} action, however, computes how far to lift
+the object before opening the gripper: \code{object\_height}, added to
+\code{release\_position.z} at execution time. This computation assumes
+the object was grasped at the top. That assumption is wrong by
+construction whenever the pick descended mid-body, which is always.}
+The result is a systematic overshoot of roughly
 $0.5\height$: objects land, or are dropped from, a height proportional
 to half their own size rather than fractions of a centimeter.
 
-We fixed this once, in the VLM pipeline, by deriving
+\rev{We fixed this once, in the VLM pipeline, by deriving
 \code{object\_height} from measured depth
 ($\height = \max(\surfz - \topz, \height_{\min})$) instead of a
 model-reported size. It then recurred independently in the LLM pipeline
-weeks later, because that pipeline's prompt still asked the model to
+weeks later. That pipeline's prompt still asked the model to
 compute \code{object\_height} as \code{size[2]}, the same assumption the
-VLM-mode fix had already identified as wrong. Fixing the bug once, in
+VLM-mode fix had already identified as wrong.} Fixing the bug once, in
 one pipeline, did not fix it everywhere it existed; the general fix
 (\S\ref{sec:grounding-layer}) computes this quantity deterministically
 for \emph{every} pipeline, since the error is not a mistake any
@@ -118,16 +119,16 @@ Our static scene description uses the convention
 \code{position.z} $=$ base reference, \code{size[2]} $=$ height, so
 \code{position.z} $+$ \code{size[2]} reconstructs a target's top
 surface, the formula every LLM-mode prompt uses for a stacking release
-height. In our VLM$\to$LLM hybrid pipeline, a VLM grounding call first
-deprojects a target's pixel location to a depth-measured world
-coordinate, then hands the resulting scene to the same LLM planner used
-in static-scene mode. An early version of this hybrid set the generated
-scene's \code{target.position.z} directly to that depth-measured top
-surface, already correct, while leaving the VLM's separate,
-un-verified \code{size[2]} guess untouched. The downstream planner then
-applied its normal stacking formula, adding the guessed height on top of
-an already-correct value and inflating every stack-on-target release by
-however wrong that guess happened to be.
+height. \rev{In our VLM$\to$LLM hybrid pipeline, a VLM grounding call
+first deprojects a target's pixel location to a depth-measured world
+coordinate. It then hands the resulting scene to the same LLM planner
+used in static-scene mode. An early version of this hybrid set the
+generated scene's \code{target.position.z} directly to that
+depth-measured top surface, already correct. It left the VLM's separate,
+un-verified \code{size[2]} guess untouched, though.} The downstream
+planner then applied its normal stacking formula, adding the guessed
+height on top of an already-correct value and inflating every
+stack-on-target release by however wrong that guess happened to be.
 
 The fix follows Case 1's pattern: derive the target's real height from
 depth ($\height = \max(\topz - \surfz, 0)$, no minimum floor, since a
@@ -146,14 +147,13 @@ When a task places several objects into the same target zone in
 sequence, each release's \emph{final} position is spaced to avoid
 overlapping the others already placed, by a grid clamped to the zone's
 real bounds (\S\ref{sec:grounding-layer}). This closes the
-\emph{static} half: no two final positions occupy the same footprint. It
-does not address the \emph{dynamic} half: nothing constrains the arm's
-trajectory while approaching or releasing the $n$-th object against the
-$(n-1)$-th already sitting in the zone, and nothing constrains a
-released object's small residual motion from displacing a neighbor
-afterward. Both are genuinely three-dimensional, time-dependent contact
-problems, not resolvable by correcting a single scalar the way Cases
-1--2 were.
+\emph{static} half: no two final positions occupy the same footprint. \rev{It does not address the \emph{dynamic} half. Nothing constrains
+the arm's trajectory while approaching or releasing the $n$-th object
+against the $(n-1)$-th already sitting in the zone. Nothing constrains
+a released object's small residual motion from displacing a neighbor
+afterward, either.} Both are genuinely three-dimensional, time-dependent
+contact problems, not resolvable by correcting a single scalar the way
+Cases 1--2 were.
 
 We identified this bug from the same debug artifacts as Cases 1--2, but
 by the time it was isolated it was already the dominant failure mode of

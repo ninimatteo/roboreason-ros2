@@ -1,19 +1,19 @@
-We presented a real-hardware ROS2 harness for decoupled LLM/VLM
-manipulation planning, built on the premise that a model's broad,
+\rev{We presented a real-hardware ROS2 harness for decoupled LLM/VLM
+manipulation planning. It is built on one premise: a model's broad,
 non-robot-specific pretraining is usable for physical reasoning through
 code, without collecting task-specific action data, provided a
 deterministic layer grounds the plan's numeric geometry in sensor
 measurement rather than trusting the model's own arithmetic. Deploying
 that harness on a real UR5cb manipulator turned this premise into an
-observation: over six development sessions we found six recurring
-geometry-grounding bugs, invisible to symbolic and scripted simulation by
-construction, and closed five of them with the harness's code-grounding
-layer. A 120-trial real-hardware evaluation, using a single unified model
-for both grounding modalities, shows the sixth, a multi-object placement
-collision, as the dominant residual failure, occurring in both the LLM
-and VLM pipelines regardless of which one grounded the scene. Closing
+observation. Over six development sessions we found six recurring
+geometry-grounding bugs, invisible to symbolic and scripted simulation
+by construction. We closed five of them with the harness's
+code-grounding layer. A 120-trial real-hardware evaluation, using a
+single unified model for both grounding modalities, shows the sixth, a
+multi-object placement collision, as the dominant residual failure in
+both pipelines, regardless of which one grounded the scene. Closing
 that bug's dynamic, trajectory-level half as a new harness skill, along
-with a depth-verified treatment of grasp width, are the most direct next
-steps; more broadly, we argue that a geometry-grounding audit belongs
-alongside task-complexity benchmarking for any LLM/VLM harness headed to
-physical hardware.
+with a depth-verified treatment of grasp width, are the most direct
+next steps. More broadly, a geometry-grounding audit belongs alongside
+task-complexity benchmarking for any LLM/VLM harness headed to physical
+hardware.}

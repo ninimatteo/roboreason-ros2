@@ -1,10 +1,11 @@
-\textbf{Implication for evaluation practice.} Symbolic and scripted
+\textbf{Implication for evaluation practice.} \rev{Symbolic and scripted
 simulation is necessary but not sufficient for validating an LLM/VLM
-robot planner: it validates reasoning strategy and task decomposition,
-but by construction cannot exercise the geometry-grounding failure class
-of \S\ref{sec:taxonomy}, since it never asks the model to compute a
-quantity a physical sensor could contradict. A geometry-grounding audit,
-identifying every numeric quantity a prompt asks the model to compute
+robot planner. It validates reasoning strategy and task decomposition.
+By construction, though, it cannot exercise the geometry-grounding
+failure class of \S\ref{sec:taxonomy}, since it never asks the model to
+compute a quantity a physical sensor could contradict.} A
+geometry-grounding audit, identifying every numeric quantity a prompt
+asks the model to compute
 itself and asking whether a sensor or paired action already determines
 it more reliably, belongs alongside task-complexity benchmarking as a
 standard step before hardware deployment.
@@ -23,24 +24,24 @@ decoupled enough to diagnose it.
 paper is either closed or diagnosed precisely enough to know what
 closing it would take. Case 6 is neither: it is a trajectory-level,
 multi-body contact problem, and \S\ref{sec:zone-spacing}'s
-static-spacing mitigation does not touch its dynamic half. Closing it
-plausibly needs a motion-planning-level check of the approach trajectory
-against already-placed objects' known footprints, or a settle-time
-verification step after each release so a displaced neighbor is caught
-before the next pick. We have not implemented or evaluated either, but
-the first is naturally an obstacle-avoiding approach skill on the
-harness of \S\ref{sec:harness}, treating already-placed objects the same
-way a mobile-base planner already treats static obstacles, and is the
-concrete next addition we have in mind.
+static-spacing mitigation does not touch its dynamic half. \rev{Closing it plausibly needs one of two things: a motion-planning-level
+check of the approach trajectory against already-placed objects' known
+footprints, or a settle-time verification step after each release so a
+displaced neighbor is caught before the next pick. We have not
+implemented or evaluated either. The first is naturally an
+obstacle-avoiding approach skill on the harness of \S\ref{sec:harness},
+though, treating already-placed objects the same way a mobile-base
+planner already treats static obstacles. It is the concrete next
+addition we have in mind.}
 
 \textbf{Generalizability.} Our evidence comes from one manipulator
 (UR5cb), one gripper, one camera rig, and a single underlying model
-(\code{kimi-k2.6}) used for both the LLM and VLM arm. We do not claim
-that the specific six bugs of Table~\ref{tab:taxonomy} recur verbatim on
-different hardware, only that the \emph{structural pattern}, geometry
-computed by a model instead of measured, and multiple real bodies
-sharing space over time, is a property of this architecture, not of this
-robot. Grasp width is the one quantity we still cannot cross-check
+(\code{kimi-k2.6}) used for both the LLM and VLM arm. \rev{We do not
+claim that the specific six bugs of Table~\ref{tab:taxonomy} recur
+verbatim on different hardware. We claim only that the \emph{structural
+pattern} is a property of this architecture, not of this robot:
+geometry computed by a model instead of measured, and multiple real
+bodies sharing space over time.} Grasp width is the one quantity we still cannot cross-check
 against depth in every case, since a single top-down sample determines
 height unambiguously but not left-right extent; our best-effort
 edge-inset sampling (\S\ref{sec:grounding-layer}) reduces this gap

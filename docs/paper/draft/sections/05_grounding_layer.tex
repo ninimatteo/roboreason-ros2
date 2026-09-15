@@ -39,15 +39,16 @@ release \emph{position}. Matching a release against the scene's
 registered targets is done by \textbf{footprint containment}
 ($\text{position} \pm \text{size}/2$) rather than point-distance to a
 target's center, since Case 3 showed point-distance matching misses
-valid placements inside a target zone tens of centimeters wide. A
-release position that \emph{exactly echoes} a target's or object's own
-registered coordinates is treated as intentional and left untouched,
-while one that merely \emph{drifted} into a zone's footprint is nudged
-back outside along whichever axis needs the smaller correction, and only
-when that zone's surface sits meaningfully above the bare table, since
-nudging away from the near-table-height generic ``table'' zone would
-otherwise push objects off the table's edge escaping a zone that
-legitimately contains most of the workspace.
+valid placements inside a target zone tens of centimeters wide.
+\rev{A release position that \emph{exactly echoes} a target's or
+object's own registered coordinates is treated as intentional and left
+untouched. One that merely \emph{drifted} into a zone's footprint is
+nudged back outside instead, along whichever axis needs the smaller
+correction. This nudge only fires when that zone's surface sits
+meaningfully above the bare table, though: nudging away from the
+near-table-height generic ``table'' zone would otherwise push objects
+off the table's edge escaping a zone that legitimately contains most of
+the workspace.}
 
 \subsection{Width-aware TCP offset}
 
@@ -79,13 +80,13 @@ nor is a released object's small residual motion constrained at all.
 \subsection{Best-effort grasp-width sampling}
 
 For the VLM pipeline, grasp width is estimated by deprojecting a
-detected bounding box's left and right edge pixels. Sampling directly on
+detected bounding box's left and right edge pixels. \rev{Sampling directly on
 the object's silhouette boundary is the single worst location for valid
 depth, since boundary pixels are the most exposed to occlusion and
-parallax error, and a single failed sample previously aborted the
-entire batched deprojection call over a parameter, grasp width, that
-does not even affect whether \emph{pick} and \emph{release} themselves
-are safe. We fixed this by sampling slightly inset from the raw
+parallax error. A single failed sample previously aborted the
+entire batched deprojection call over this one parameter, grasp width,
+that does not even affect whether \emph{pick} and \emph{release}
+themselves are safe.} We fixed this by sampling slightly inset from the raw
 silhouette edge instead of on it, and by isolating width estimation
 into its own best-effort call that degrades to the model's own guess on
 failure instead of aborting the plan. This closes Case 4 without
@@ -95,14 +96,14 @@ we return to in \S\ref{sec:discussion}.
 \subsection{Validation}
 \label{sec:validation}
 
-Each fix in this section was developed and iterated against real,
-previously-failing production runs: the per-run debug artifacts our
-system records for every planning call (raw model response, active
-configuration, and, in VLM modes, the captured camera frame) let us
-replay the exact inputs that produced a given hardware failure and
-confirm that the corrected pipeline now produces the hand-derived
-expected geometry for that same input, rather than validating only
-against synthetic test cases. This retrospective replay, together with a
+\rev{Each fix in this section was developed and iterated against real,
+previously-failing production runs, rather than validated only against
+synthetic test cases. The per-run debug artifacts our system records
+for every planning call, raw model response, active configuration, and,
+in VLM modes, the captured camera frame, let us replay the exact inputs
+that produced a given hardware failure. We then confirm that the
+corrected pipeline now produces the hand-derived expected geometry for
+that same input.} This retrospective replay, together with a
 unit-level regression suite (45/45 passing across all reasoning-method
 implementations at the time of writing), gives us confidence that each
 fix addresses its diagnosed root cause. \S\ref{sec:evaluation} reports

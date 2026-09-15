@@ -23,10 +23,10 @@ detail~\cite{kim2024survey, wang2025robotics, huang2024planningsurvey,
 berti2025emergent, billard2025roadmap}. Our contribution is orthogonal to
 this line of work: we do not propose a new reasoning strategy, and hold
 the reasoning strategy fixed in our evaluation (\S\ref{sec:evaluation}).
-Instead, we show that the geometric grounding surrounding \emph{any} of
-these strategies, how a chosen action's numeric parameters are computed,
-is a separate failure axis that persists regardless of which reasoning
-strategy produced the action.
+\rev{Instead, we show that a separate failure axis exists underneath
+\emph{any} of these strategies: how a chosen action's numeric parameters
+are computed. That axis persists regardless of which reasoning strategy
+produced the action.}
 
 \textbf{End-to-end and vision-language-action approaches.} An alternative
 architecture collapses perception, reasoning, and control into a single
@@ -45,10 +45,11 @@ and let an LLM's pretrained code and spatial-reasoning knowledge stand in
 for embodiment-specific demonstrations. A fully end-to-end VLA also gives
 up the diagnosability a decoupled pipeline provides: when it fails, it is
 difficult to determine whether the failure was a misperception, a
-reasoning error, or a motor-control error~\cite{favaliRAS}. We adopt the
-decoupled architecture for both reasons at once, data efficiency and
-diagnosability, since a fully end-to-end system would not permit the
-diagnosis of \S\ref{sec:taxonomy} at all, only its symptoms.
+reasoning error, or a motor-control error~\cite{favaliRAS}. \rev{We
+adopt the decoupled architecture for both reasons at once: data
+efficiency and diagnosability. A fully end-to-end system would not
+permit the diagnosis of \S\ref{sec:taxonomy} at all, only its
+symptoms.}
 
 \textbf{Simulation and sim-to-real transfer.} The sim-to-real gap is a
 long-studied concern in robot learning, primarily for learned low-level
