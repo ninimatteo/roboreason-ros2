@@ -38,20 +38,21 @@
 \maketitle
 
 \begin{abstract}
-Vision-language-action (VLA) models fold perception, reasoning, and
-control into one policy, but need paired vision-action data far scarcer
-than the text and image corpora an LLM or VLM is pretrained on. We argue
-instead for a decoupled Sense-Plan-Act architecture: an LLM/VLM plans in
-language, and a deterministic code layer grounds the plan's geometry in
-sensor measurement, so pretrained knowledge transfers through code
-without task-specific action data. We present a real-hardware ROS2
-harness built on this principle. Deploying it on a UR5cb manipulator
-surfaced six recurring geometry-grounding bugs invisible to symbolic
-simulation by construction; the code-grounding layer closes five, and a
-120-trial benchmark shows the sixth, a multi-object placement collision,
-as the dominant residual failure in \textbf{both} an LLM and a
-camera-grounded VLM arm. We report this taxonomy as a discovered
-validation of the harness's premise, not our central claim.
+\rev{Vision-language-action (VLA) models fold perception, reasoning, and
+control into one policy. That policy needs paired vision-action data,
+far scarcer than the text and image corpora an LLM or VLM is pretrained
+on. We argue instead for a decoupled Sense-Plan-Act architecture: an
+LLM/VLM plans in language, and a deterministic code layer grounds the
+plan's geometry in sensor measurement. Pretrained knowledge then
+transfers through code, without any task-specific action data. We
+present a real-hardware ROS2 harness built on this principle. Deploying
+it on a UR5cb manipulator surfaced six recurring geometry-grounding
+bugs, invisible to symbolic simulation by construction. The
+code-grounding layer closes five of them. A 120-trial benchmark shows
+the sixth, a multi-object placement collision, as the dominant residual
+failure, in \textbf{both} an LLM and a camera-grounded VLM arm. We
+report this taxonomy as a discovered validation of the harness's
+premise, not as our central claim.}
 \end{abstract}
 
 \section{Introduction}

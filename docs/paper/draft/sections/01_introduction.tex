@@ -1,31 +1,31 @@
-A vision-language-action (VLA) model maps perception and instruction
+\rev{A vision-language-action (VLA) model maps perception and instruction
 directly to low-level control, in one policy trained end-to-end. This is
 an elegant architecture, but it inherits imitation learning's oldest
-bottleneck: the policy only knows what its demonstration data covers,
-and paired vision-action robot trajectories are expensive to collect at
-the scale a general-purpose manipulator needs. \rev{An LLM or VLM, by
-contrast, is pretrained on a broader and cheaper-to-collect corpus (text,
-code, and image-text pairs at internet scale) that already encodes much
-of what manipulation requires: object affordances, spatial and
+bottleneck: the policy only knows what its demonstration data covers.
+Paired vision-action robot trajectories are expensive to collect at the
+scale a general-purpose manipulator needs. An LLM or VLM, by contrast,
+is pretrained on a broader and cheaper-to-collect corpus: text, code,
+and image-text pairs at internet scale. That corpus already encodes
+much of what manipulation requires: object affordances, spatial and
 arithmetic reasoning, and precondition ordering. None of this is
-robot-specific, and all of it transfers through code rather than through
-a demonstration
+robot-specific, and all of it transfers through code rather than
+through a demonstration
 dataset~\cite{liang2023codeaspolicies, huang2023voxposer,
-huang2022innermonologue, singh2023progprompt}.} This is the architectural
-bet a decoupled Sense-Plan-Act pipeline makes: let the model plan in
-language, and a separate execution layer turn that plan into motion.
+huang2022innermonologue, singh2023progprompt}. This is the architectural
+bet a decoupled Sense-Plan-Act pipeline makes: the model plans in
+language, and a separate execution layer turns that plan into motion.}
 
-A decoupled pipeline has to ask the model, somewhere,
-to commit to numbers, a release height, a grasp width, a target
-position, and nothing in an LLM or VLM's pretraining grounds those
-numbers in the physical world it now acts in. Simulated validation hides
-this cost almost entirely: an object's height, its grasp width, and the
-distance a gripper must travel to release it safely are never actually
-\emph{measured} there, they are asserted, correctly, by
+\rev{A decoupled pipeline still has to ask the model, somewhere, to
+commit to numbers: a release height, a grasp width, a target position.
+Nothing in an LLM or VLM's pretraining grounds those numbers in the
+physical world it now acts in. Simulated validation hides this cost
+almost entirely. An object's height, its grasp width, and the distance
+a gripper must travel to release it safely are never actually
+\emph{measured} there; they are asserted, correctly, by
 construction~\cite{favaliRAS, rohmer2013coppeliasim, todorov2012mujoco}.
-On real hardware none of these quantities are given; they have to be
-computed, from noisy depth, an imperfect camera, or a hand-authored
-scene file that may not match the physical table it describes.
+On real hardware none of these quantities are given. They have to be
+computed: from noisy depth, an imperfect camera, or a hand-authored
+scene file that may not match the physical table it describes.}
 
 We present a real-hardware ROS2 harness built around this architectural
 choice (\S\ref{sec:harness}): a modular Sense-Plan-Act pipeline

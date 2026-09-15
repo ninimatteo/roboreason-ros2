@@ -1,22 +1,20 @@
 \subsection{Design rationale: code-grounding over end-to-end control}
 \label{sec:harness-rationale}
 
-A vision-language-action (VLA) model collapses perception, reasoning,
-and control into one policy, trained or fine-tuned end-to-end on
-embodiment-specific demonstration data, which is the bottleneck: paired
-vision-action trajectories remain far scarcer and more expensive to
-collect than the text, code, and image-text corpora a general-purpose
-LLM or VLM is pretrained on. A decoupled Sense-Plan-Act architecture
-sidesteps this. If planning is text (or text conditioned on an image),
-and the resulting plan is a sequence of parameterized skills rather than
-raw joint torques, then whatever manipulation-relevant knowledge the
-model already has, spatial reasoning, arithmetic, common-sense physics,
-ordering and precondition logic, is available zero-shot, through code,
-without a single task-specific demonstration, the same argument prior
-code-generation-for-robotics work makes~\cite{liang2023codeaspolicies,
-huang2023voxposer, huang2022innermonologue, singh2023progprompt}: an LLM
-that has never seen a robot trajectory has still seen a great deal of
-code.
+\rev{A vision-language-action (VLA) model collapses perception,
+reasoning, and control into one policy, trained or fine-tuned end-to-end
+on embodiment-specific demonstration data, the bottleneck
+\S\ref{sec:introduction} discusses. A decoupled Sense-Plan-Act
+architecture sidesteps it instead. Planning is text, or text conditioned
+on an image; the resulting plan is a sequence of parameterized skills
+rather than raw joint torques. Whatever manipulation-relevant knowledge
+the model already has, spatial reasoning, arithmetic, common-sense
+physics, ordering and precondition logic, is then available zero-shot,
+through code, without a single task-specific demonstration. This is the
+same argument prior code-generation-for-robotics work
+makes~\cite{liang2023codeaspolicies, huang2023voxposer,
+huang2022innermonologue, singh2023progprompt}: an LLM that has never
+seen a robot trajectory has still seen a great deal of code.}
 
 The cost is that a decoupled architecture asks the model to compute
 physical quantities, a release height, a grasp width, a target

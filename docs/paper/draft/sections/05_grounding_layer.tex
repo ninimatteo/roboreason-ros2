@@ -1,7 +1,10 @@
 \subsection{Design principle}
 
-The fix for five of the six bugs in Table~\ref{tab:taxonomy} follows the
-same rule: \emph{pull geometric arithmetic out of the model and into
+\rev{Every bug in Table~\ref{tab:taxonomy} is an instance of the same
+mistake: the model is trusted for a computation that a sensor
+measurement or an already-committed action in the plan could instead
+answer exactly.} The fix for five of the six bugs follows
+the same rule: \emph{pull geometric arithmetic out of the model and into
 code wherever the answer is computable from a sensor measurement or a
 paired action already in the plan, leaving the model responsible only
 for the symbolic decision of what to do and where, not how much}. The
@@ -12,19 +15,24 @@ using only information already available at plan time. The sixth bug
 (Case 6, \S\ref{sec:case-collision}) is not a scalar this rule can
 overwrite, since it is a trajectory-level, time-dependent contact
 problem, and is addressed separately, and only partially, below.
+\rev{The layer implements this rule as a small set of deterministic
+correction functions, applied to the plan before execution; the first
+pair closes Case 1.}
 
 \subsection{Object and release height}
 \label{sec:fix-height}
 
-Given a generated plan, \code{fix\_object\_height} recomputes every
-release step's \code{object\_height} as the true vertical distance from
-the paired pick's actual grasp contact point to the table surface,
-$\height - \descent$ in the notation of \S\ref{sec:case-grasp-mismatch},
-rather than accepting whatever height value the model reported. This
-directly closes Case 1: the release-lift amount is now derived from the
-\emph{same} descent the executor actually commanded during the pick,
-which by construction cannot disagree with itself, instead of from a
-separate, independently-computed model output that could.
+\rev{\code{fix\_object\_height} and \code{fix\_release\_height} are
+these two functions.} Given a generated plan, \code{fix\_object\_height}
+recomputes every release step's \code{object\_height} as the true
+vertical distance from the paired pick's actual grasp contact point to
+the table surface, $\height - \descent$ in the notation of
+\S\ref{sec:case-grasp-mismatch}, rather than accepting whatever height
+value the model reported. This directly closes Case 1: the release-lift
+amount is now derived from the \emph{same} descent the executor
+actually commanded during the pick, which by construction cannot
+disagree with itself, instead of from a separate,
+independently-computed model output that could.
 
 \code{fix\_release\_height} performs the analogous correction for the
 release \emph{position}. Matching a release against the scene's
