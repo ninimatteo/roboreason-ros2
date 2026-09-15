@@ -34,14 +34,7 @@ number the model cannot be trusted to produce on its own.
 
 \begin{figure*}[t]
 \centering
-\fbox{\begin{minipage}[c][5.5cm]{0.92\textwidth}
-\centering
-System architecture diagram: task interface/GUI, the three planner
-nodes, the plan manager, the skill executor, and the code-grounding
-layer, with the debug-artifact and configuration paths annotated.
-\\[4pt]
-\footnotesize (placeholder; final figure to be supplied)
-\end{minipage}}
+\includegraphics[width=0.92\textwidth, keepaspectratio]{images/fig1_roboreason_horizontal_cropped.pdf}
 \caption{Harness architecture: the Sense-Plan-Act pipeline of
 \S\ref{sec:harness-architecture}, with the code-grounding layer overriding
 model-computed geometry before execution.}
@@ -73,10 +66,10 @@ variable with no code change, which is what lets
 configuration rather than as code branches. Second, every planning call
 records a per-run debug artifact, the command, active configuration, raw
 model response, execution log, and, in VLM modes, the camera frame the
-plan was grounded in, which is what made diagnosing
-\S\ref{sec:taxonomy}'s failures possible: each bug was traced from a
-hardware failure back to a specific malformed field in a specific logged
-response, not inferred after the fact. A web GUI supervises the whole
+plan was grounded in, \rev{which is what made it possible to diagnose the
+failures reported in \S\ref{sec:taxonomy}: each bug there} was traced
+from a hardware failure back to a specific malformed field in a specific
+logged response, not inferred after the fact. A web GUI supervises the whole
 stack, including the physical UR driver and camera service, both of
 which fail intermittently enough to need their own restart logic, as
 monitored child processes, so a trial can be launched, watched, and

@@ -3,18 +3,19 @@ directly to low-level control, in one policy trained end-to-end. This is
 an elegant architecture, but it inherits imitation learning's oldest
 bottleneck: the policy only knows what its demonstration data covers,
 and paired vision-action robot trajectories are expensive to collect at
-the scale a general-purpose manipulator needs. An LLM or VLM, by
-contrast, is pretrained on a far broader, cheaper-to-collect corpus,
-text, code, and image-text pairs at internet scale, and already knows a
-great deal relevant to manipulation, object affordances, spatial and
-arithmetic reasoning, ordering and precondition logic, none of it
-robot-specific, all of it transferable through code rather than a
-demonstration dataset~\cite{liang2023codeaspolicies, huang2023voxposer,
-huang2022innermonologue, singh2023progprompt}. This is the architectural
+the scale a general-purpose manipulator needs. \rev{An LLM or VLM, by
+contrast, is pretrained on a broader and cheaper-to-collect corpus (text,
+code, and image-text pairs at internet scale) that already encodes much
+of what manipulation requires: object affordances, spatial and
+arithmetic reasoning, and precondition ordering. None of this is
+robot-specific, and all of it transfers through code rather than through
+a demonstration
+dataset~\cite{liang2023codeaspolicies, huang2023voxposer,
+huang2022innermonologue, singh2023progprompt}.} This is the architectural
 bet a decoupled Sense-Plan-Act pipeline makes: let the model plan in
 language, and a separate execution layer turn that plan into motion.
 
-The bet has a cost. A decoupled pipeline has to ask the model, somewhere,
+A decoupled pipeline has to ask the model, somewhere,
 to commit to numbers, a release height, a grasp width, a target
 position, and nothing in an LLM or VLM's pretraining grounds those
 numbers in the physical world it now acts in. Simulated validation hides
@@ -56,7 +57,7 @@ real deployment keeps asking the model to compute quantities only a
 sensor, or an already-committed action, should determine.
 
 The contributions of this paper are threefold:
-\begin{itemize}[nosep]
+\begin{itemize}
   \item A real-hardware ROS2 harness for decoupled LLM/VLM manipulation
     planning, with a code-grounding layer as an explicit architectural
     component, presented as the real-hardware counterpart to
@@ -66,11 +67,21 @@ The contributions of this paper are threefold:
     while operating the harness on a real manipulator across six
     development sessions, five of which the code-grounding layer closes
     (\S\ref{sec:taxonomy}, \S\ref{sec:grounding-layer}).
-  \item A 120-trial real-hardware benchmark, methodologically anchored to
-    a directly comparable symbolic-simulation study~\cite{favaliRAS} and
-    using a single unified model for both grounding modalities, showing
-    that the sixth, still-open bug, multi-object placement collision, is
-    the dominant residual failure in \emph{both} arms, and what that
-    implies for evaluating LLM/VLM robot harnesses before hardware
-    deployment (\S\ref{sec:evaluation}).
+  \item \rev{A 120-trial real-hardware benchmark against a directly
+    comparable symbolic-simulation study~\cite{favaliRAS}, using a single
+    unified model for both grounding modalities. It shows that the
+    sixth, still-open bug, multi-object placement collision, is the
+    dominant residual failure in \emph{both} arms, with implications for
+    evaluating LLM/VLM robot harnesses before hardware deployment
+    (\S\ref{sec:evaluation}).}
 \end{itemize}
+
+\rev{The rest of the paper is organized as follows.
+\S\ref{sec:related-work} situates this work against prior LLM/VLM
+planning and simulation-only benchmarks. \S\ref{sec:harness} describes
+the harness's architecture. \S\ref{sec:taxonomy} reports the
+experimental setup and the six geometry-grounding bugs it surfaced.
+\S\ref{sec:grounding-layer} presents the code-grounding method that
+closes five of them. \S\ref{sec:evaluation} reports the 120-trial
+real-hardware benchmark. \S\ref{sec:discussion} discusses limitations,
+and \S\ref{sec:conclusion} concludes.}

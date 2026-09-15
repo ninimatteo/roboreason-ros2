@@ -33,11 +33,11 @@ architecture collapses perception, reasoning, and control into a single
 model, as in vision-language-action (VLA) systems~\cite{brohan2023rt2,
 driess2023palme, geminiteam2025robotics15, kim2024openvla}. Trained or
 fine-tuned end-to-end, such a policy can in principle learn to compensate
-for geometric grounding errors on its own. It pays for that with the one
-resource imitation learning has always been bottlenecked on: paired
-vision-action demonstration data, collected per embodiment, which stays
-scarce and narrow next to the text/code/image-text corpora an LLM or VLM
-is pretrained on. Code-generating policies that couple perception
+for geometric grounding errors on its own, at the cost of the
+demonstration-data bottleneck discussed in
+\S\ref{sec:introduction}\rev{: it needs data scarcer and narrower per
+embodiment than the text/code/image-text corpora an LLM or VLM is
+pretrained on.} Code-generating policies that couple perception
 directly to control primitives~\cite{liang2023codeaspolicies,
 huang2023voxposer, huang2022innermonologue, singh2023progprompt} sit
 closer to our own approach: they keep the decoupled Sense-Plan-Act split

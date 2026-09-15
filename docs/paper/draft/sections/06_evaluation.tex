@@ -21,6 +21,10 @@ image-grounded respectively, so grounding modality is the only variable
 isolated between arms.\footnote{An earlier run used different models per
 modality; the VLM-specific one was later withdrawn from its provider's
 catalog, forcing a full re-run on a single unified model instead.}
+\fb{The accompanying video presents the physical rig and representative
+trials from all six conditions, including a multi-object placement
+collision as described in \S\ref{sec:case-collision}, together with the
+operator's annotation step performed immediately after each trial.}
 
 \subsection{Metrics, adapted for physical ground truth}
 
@@ -133,12 +137,6 @@ second-order instance of the paper's central claim; it is a direct one.
 Case 6 is itself one of the six geometry-grounding bugs of
 Table~\ref{tab:taxonomy}; this evaluation is what identifies it as the
 dominant one once the other five are closed.
-
-\emph{A note on an earlier finding.} A pilot on this same task matrix,
-using different, modality-specific models, found a different dominant
-category instead: 13 of 31 notes read as a wrong-object choice
-concentrated in the arithmetic condition. That finding does not
-replicate here, zero such notes this cycle, on every condition, and we
-read the simplest explanation as the correct one: a property of the
-earlier VLM model specifically, not of VLM grounding in general, and a
-caution against generalizing a single-model finding to a category.
+% [ROBOAI-27, review round] Removed "A note on an earlier finding" here
+% per both reviewers: unexplained without the July-pilot methodology
+% this draft no longer carries, and added nothing the reader could use.

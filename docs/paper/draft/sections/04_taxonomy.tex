@@ -3,12 +3,17 @@ design rationale of \S\ref{sec:harness-rationale} from an argument into
 an observation: six recurring geometry-grounding bugs, each traced to
 its root cause using the harness's own per-run debug artifacts (raw
 model response, config, and, in VLM mode, the captured camera frame).
-Table~\ref{tab:taxonomy} summarizes all six. Below, we develop the two
-most instructive of the five closed cases in full, since both recurred
-independently in two different planning pipelines and so best show that
-the pattern is structural, not a one-off slip, then treat the sixth,
-still-open bug on its own (\S\ref{sec:case-collision}), which turns out
-to be the dominant failure mode in \S\ref{sec:evaluation}.
+\rev{These bugs surfaced on the same physical rig and task set used
+throughout this paper: a UR5cb manipulator with an OnRobot RG2 gripper
+and a calibrated RGB-D camera, operating over a real scene of four
+color-distinguished cubes and a tray, executing pick-and-place, sorting,
+and arithmetic value-mapping tasks (\S\ref{sec:evaluation} details the
+full protocol).} Table~\ref{tab:taxonomy} summarizes all six. Below, we
+develop the two most instructive of the five closed cases in full, since
+both recurred independently in two different planning pipelines and so
+best show that the pattern is structural, not a one-off slip, then treat
+the sixth, still-open bug on its own (\S\ref{sec:case-collision}), which
+turns out to be the dominant failure mode in \S\ref{sec:evaluation}.
 
 \begin{table*}[t]
 \centering
@@ -169,4 +174,6 @@ consequence of real multi-body contact over time. None of these three
 can occur where object geometry is authored by the experiment designer
 or perfectly known by the physics engine, precisely the setting where
 LLM/VLM robot planners are most commonly
-benchmarked~\cite{favaliRAS}.
+benchmarked~\cite{favaliRAS}. \rev{\S\ref{sec:grounding-layer} turns this
+shared structure into a method: wherever a quantity falls into case (a)
+or (b), compute it deterministically instead of trusting the model.}
