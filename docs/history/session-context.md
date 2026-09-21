@@ -1320,3 +1320,55 @@ was actually left by 09-11.
   have coverage (`test_schemas.py`). Worth a Jira issue of its own.
 - The GUI camera-frame proxy readiness bug from 2026-09-03 §4 is still
   not investigated and still has no Jira issue.
+
+---
+
+## 10. ICRA 2027 submitted (2026-09-16): re-annotated collision notes flipped
+the "dominant residual failure" claim from false to true
+
+`ROBOAI-7` closed as Done, submission sent. The last working session before
+submission (2026-09-15/16) caught two claims in the draft that a reviewer's
+own note-by-note check would have contradicted, both traced back to
+`benchmark/results_2026-09_3arm.csv`'s free-text `notes` column.
+
+**What changed in the data.** The user re-annotated several `notes` entries
+to specify a cause that was real but had been left out the first time
+(e.g. "Failed to grasp one of the cube, so it was not in the line" became
+"...because of a former collision..."). `benchmark/plot_results.py`'s
+`NOTE_CATEGORY` dict is hand-curated per `run_id` by design, precisely to
+avoid a keyword classifier misfiling notes (see its own header comment) —
+re-annotating the CSV text alone did not update the categorization used to
+generate `failure_modes.png`. Five `run_id`s moved from `GRASP` to
+`COLLISION` after a manual re-check against the new note text.
+
+**Effect on the paper's claims.** Before: 10 collision notes vs. 12
+grasp/execution notes (LLM 1 vs 3), which does not support "the collision
+dominates, in both implementations" — it doesn't even hold in the LLM arm
+alone. After: 15 vs. 7 (LLM 4 vs. 0), which does. Separately, the "neither
+a grasp-geometry gap" claim in §VI.C was contradicted by the corrected
+split too: 7 of 22 notes are grasp/execution failures unrelated to
+collision, all 7 on the VLM implementation, none on the LLM one — a real,
+data-supported grasp-geometry difference between the two grounding
+modalities, not absence of one. Both were fixed in the submitted draft
+(`docs/paper/draft/sections/04_taxonomy.tex`,
+`docs/paper/draft/sections/06_evaluation.tex`); `benchmark/plot_results.py`
+had an unrelated crash on the now-empty `VLM_LLM` group (stray pilot rows
+removed from the CSV as part of the same cleanup), fixed with a
+skip-if-empty guard in `print_tables()`.
+
+**Concurrent-editing note.** A co-author was editing `docs/paper/draft/`'s
+Overleaf project live during this same window — see the overlapping-work
+convention this file's own §8 (2026-09-09) documents. It surfaced as a
+literal Italian question left inside a `\subsection{}` argument
+(`03_harness.tex`) that would have rendered in the compiled PDF verbatim,
+and a grammar error in a `\section{}` title (`main.tex`, "A Investigation"
+for "A Structured Investigation") — both caught and fixed only because a
+full read-through was done immediately before submission, not because
+either side flagged the other's in-flight edit. Worth a standing habit for
+any paper with more than one Overleaf editor: a full-document read
+immediately before the deadline, not just of your own last diff.
+
+**Lesson for next time**: when free-text annotation data is corrected
+after the fact, check whether anything derives a *separate* hand-curated
+structure from that same text (here, `NOTE_CATEGORY`) — the two silently
+drifted apart until someone recomputed by hand.
