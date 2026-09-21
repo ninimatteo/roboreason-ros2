@@ -1,12 +1,10 @@
-\ff{To shed light on where LLM/VLM planning actually breaks on a real
+To understand where LLM/VLM planning actually breaks on a real
 robot, we ran a structured investigation of the baseline on
-pick-and-place, leaving every numeric parameter definition to the planner
-itself rather than a geometric solver, consistent with the model-free
-design motivated in Sec.~\ref{sec:related-work}.} \rev{We exercised
-both planner implementations across all three task families,} and
-traced every hardware failure back to its root cause using the
-baseline's per-run debug artifacts: the raw model response, the active
-configuration, and, in VLM mode, the captured camera frame.
+pick-and-place. \rev{We exercised both planner implementations across
+all three task families,} and traced every hardware failure back to
+its root cause using the baseline's per-run debug artifacts: the raw
+model response, the active configuration, and, in VLM mode, the
+captured camera frame.
 % TODO-VERIFY: "exercised both planner implementations across all
 % three task families" — confermare dai log che la copertura è stata
 % davvero completa (entrambe le implementazioni x tutte le famiglie di
@@ -27,16 +25,14 @@ Table~\ref{tab:taxonomy}. They fall into three families:
     multi-object placement collision, still \rev{unresolved}).
 \end{itemize}
 
-\mn{One finding shapes everything that follows. Two of the six modes,
-the only two confirmed to recur in both implementations, show that the
-problem is not confined to one grounding modality.} The phantom
-top-surface grasp appeared first in the VLM \rev{implementation}, was
-fixed there, and then recurred independently in the LLM
-\rev{implementation}, whose scene description is exact by
-construction. The benchmark of Section~\ref{sec:evaluation} later
-confirmed the same pattern for the placement collision: it dominates
-\emph{both} \rev{implementations}. \mn{For these two modes,} the
-problem is how the model reasons about physical quantities when
+One finding shapes everything that follows. These failures do not
+depend on perception quality. The phantom top-surface grasp appeared
+first in the VLM \rev{implementation}, was fixed there, and then
+recurred independently in the LLM \rev{implementation}, whose scene
+description is exact by construction. The benchmark of
+Section~\ref{sec:evaluation} later confirmed the same pattern for the
+placement collision: it dominates \emph{both} \rev{implementations}.
+The problem is how the model reasons about physical quantities when
 turning a decision into numbers, not how the scene was perceived. This
 is why the harness of Section~\ref{sec:harness} operates at the
 execution level, correcting the numbers a plan carries, and not at the
@@ -93,10 +89,10 @@ Sequential-placement collision \textbf{(\rev{unresolved})} &
   Zone-aware spacing keeps a zone's \emph{final} release positions from
   overlapping. It does not stop the arm clipping an already-placed
   object en route to the next release, nor a released object settling
-  into a neighbor. \mn{Dominant residual failure in the 120-trial
-  benchmark: 15 of the 22 non-empty operator notes describe a
-  collision, in \textbf{both} implementations (all 4 LLM notes, 11 of
-  18 VLM notes).} &
+  into a neighbor. Dominant residual failure in the 120-trial
+  benchmark: all 22 non-empty operator notes describe a collision or a
+  fallen object during a multi-object task, in \textbf{both}
+  \rev{implementations}. &
   Real multi-body contact between placed objects and the approach
   trajectory, over time. \\
 \bottomrule

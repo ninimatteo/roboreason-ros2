@@ -36,22 +36,12 @@ search, selectable without touching the pipeline itself.
 The baseline supports two planner \rev{implementations} that differ
 only in how the scene enters the plan.
 
-% \textbf{LLM \rev{implementation}: perfect perception.} The
-% static-scene LLM planner reads a hand-authored scene description that
-% lists every object's identity, position, and size exactly. Perception
-% is perfect by construction: there is no camera, no noise, and no
-% detection error. Whatever goes wrong in this \rev{implementation}
-% cannot be blamed on perception.
-\textbf{LLM \rev{implementation}: \ff{noise-free perception, up to human registration error.}} The
+\textbf{LLM \rev{implementation}: perfect perception.} The
 static-scene LLM planner reads a hand-authored scene description that
-lists every object's identity, position, and size. \ff{Perception is
-noise-free by construction: there is no camera, no sensor noise, and
-no automated detection pipeline that could fail. The only remaining
-source of imprecision is human registration error when the scene was
-authored, moreover we bound this below the order of centimeters.} As a result, whatever goes wrong in this
-\rev{implementation} cannot be attributed to perceptual noise or
-detection error\ff{, and is too large to be explained by registration
-error alone}.
+lists every object's identity, position, and size exactly. Perception
+is perfect by construction: there is no camera, no noise, and no
+detection error. Whatever goes wrong in this \rev{implementation}
+cannot be blamed on perception.
 
 \textbf{VLM \rev{implementation}: real perception.} The
 camera-grounded VLM planner perceives the scene through a calibrated

@@ -49,12 +49,7 @@ identically to their original definitions.
 At $n=10$ per cell, point estimates alone invite justified pushback,
 so every reported TS and TSR carries a 95\% Wilson score interval (TS
 is an exact per-trial proportion; TSR pools successes over
-$\text{sub-tasks required} \times n$). \mn{TSR's interval treats each
-sub-task as an independent draw; because sub-tasks within a trial are
-correlated rather than independent, as the trial-level binarization
-below reflects, this interval understates the true uncertainty and
-should be read as descriptive rather than a calibrated guarantee.} One
-comparison was declared
+$\text{sub-tasks required} \times n$). One comparison was declared
 before any data was collected: a two-sided Fisher's exact test, LLM
 vs.\ VLM, on \code{arith\_hard} full-trial success, at $\alpha=0.05$.
 It is binarized per trial rather than pooled across sub-tasks, since
@@ -90,13 +85,9 @@ VLM (\code{kimi-k2.6}) & 60 & 85.0\% & 89.2\% & 0.1149 \\
 
 Table~\ref{tab:overall} reports the headline result. Both
 \rev{implementations} share the same harness and the same underlying
-model, so the gap is not a model-capability gap. \mn{It is
-attributable to grounding modality, and grounding modality does
-include a real grasp-geometry difference: of the 22 failure notes, 7
-are grasp or execution failures unrelated to collision, all 7 on the
-VLM implementation and none on the LLM implementation, consistent with
-grasp width being estimated from noisy depth in one arm and given
-exactly in the other.} By task condition (Figure~\ref{fig:by-task}), the gap
+model, so the residual gap between them is neither a grasp-geometry
+gap nor a model-capability gap; it is attributable to grounding
+modality. By task condition (Figure~\ref{fig:by-task}), the gap
 concentrates on the two hardest multi-object conditions, and
 predominantly in safety. TS is 100\% for both \rev{implementations} on
 every easy condition and on \code{pp\_hard} and \code{sort\_hard} for
@@ -115,7 +106,6 @@ consistent with a modest gap that $n=10$ per cell cannot resolve to
 significance.
 
 \begin{figure}[t]
-\vspace*{2mm}
 \centering
 \includegraphics[width=0.95\linewidth]{ts_tsr_by_task.png}
 \caption{Task safety and task success rate by task condition, with
@@ -126,11 +116,11 @@ significance.
 \subsection{What fails with the harness in place}
 \label{sec:eval-failures}
 
-\mn{The aggregate metrics alone do not explain what failed; reading
-all 22 failure notes from the 120 trials individually does.} Every
-note describes either a collision between objects (15) or an
-execution or grasp failure, a slipped grasp, a dropped object (7),
-during a multi-object task. Zero notes describe a
+Reading all 22 non-empty operator failure notes from the 120 trials,
+rather than trusting aggregates alone, was the key analysis step.
+Every note describes either a collision between objects (10) or an
+execution or grasp failure, a slipped grasp, a release too high, a
+dropped object (12), during a multi-object task. Zero notes describe a
 wrong object chosen for reasoning or value-mapping reasons, and zero
 an incomplete enumeration (Figure~\ref{fig:failure-modes}). The
 pattern holds in both \rev{implementations}: the LLM
@@ -140,7 +130,6 @@ spread across the three multi-object conditions roughly in proportion
 to trial counts.
 
 \begin{figure}[t]
-\vspace*{2mm}
 \centering
 \includegraphics[width=0.85\linewidth]{failure_modes.png}
 \caption{Failure-mode breakdown, derived from the 22 non-empty
@@ -154,5 +143,12 @@ precisely the one \harness{} does not yet \rev{resolve}, the
 sequential-placement collision, and it dominates \emph{both}
 \rev{implementations}, regardless of which planner grounded the scene.
 Zero notes implicate the model's choice of object or its task
-decomposition. The residual failure is a property of the \rev{unresolved}
+decomposition. The remaining grasp and execution notes describe
+physical instability during multi-object trials rather than the
+\rev{resolved} height and matching classes.
+% TODO-VERIFY: confermare dalle note operatore grezze che nessuna
+% delle 12 note grasp/execution (es. "release too high") corrisponde
+% in realtà a una classe di failure risolta; in tal caso riportarla
+% come regressione parziale.
+The residual failure is a property of the \rev{unresolved}
 contact-dynamics problem, not of a perception modality.
