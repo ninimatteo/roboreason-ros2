@@ -16,7 +16,6 @@ msg/_*.py
 build_isolated/
 devel_isolated/
 roboreason_ros2.tar
-docs/guide/docker-setup.md
 
 venv/
 
