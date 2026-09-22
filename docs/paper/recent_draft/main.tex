@@ -1,0 +1,76 @@
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}
+
+\IEEEoverridecommandlockouts
+\overrideIEEEmargins
+
+\usepackage[final]{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{float}
+\graphicspath{{images/}}
+\usepackage{mathtools}
+\usepackage{cite}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{booktabs}
+\usepackage{adjustbox}
+\usepackage{bm}
+\usepackage{hhline,array}
+\usepackage[dvipsnames]{xcolor}
+
+\input{sections/definitions}
+
+\begin{document}
+
+\title{\LARGE \bf \harness{} Manipulation: A Sensor-Anchored Execution Harness\\for LLM/VLM Robot Planning}
+
+\author{Anonymous Author(s)}
+
+% \author{Matteo Nini$^{1}$%
+% 	\thanks{$^{1}$The authors are with University of Modena and Reggio
+% 	Emilia. E-mail: {\tt\small matteo.nini@unimore.it}.}%
+% }
+
+\maketitle
+
+\begin{abstract}
+Large language and vision-language models (LLMs and VLMs) can plan robot manipulation zero-shot, leveraging pretraining corpora far broader than typical robot-learning demonstrations. Their modular, gray-box nature also allows plans to be inspected before execution, unlike end-to-end vision-language-action (VLA) policies. However, a decoupled Sense-Plan-Act pipeline still requires the model to specify physical quantities such as release height, grasp width, or target position, which pretraining does not ground in the scene. We present \harness{} (\harnesslong{}), an execution harness inserted between the high-level planner and low-level skill executor. While the planner handles symbolic decisions, \harness{} recomputes action parameters from sensor measurements or committed actions. We motivate \harness{} through a structured study of LLM/VLM pick-and-place on a real UR5cb, identifying six recurring failure modes that persist even under perfect perception and therefore stem from physical reasoning rather than perception. \harness{} resolves five of the six modes for common manipulation tasks. In a 120-trial real-hardware benchmark using a unified model across both grounding modalities, the LLM implementation achieves 98.3% task safety and success, with the remaining dominant failure being multi-object placement collision, which \harness{} does not yet resolve.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:introduction}
+\input{sections/01_introduction}
+
+\section{Related Work}
+\label{sec:related-work}
+\input{sections/02_related_work}
+
+\section{The Experimental Baseline}
+\label{sec:baseline}
+\input{sections/03_harness}
+
+\section{\rev{A Structured Investigation of Manipulation Planning Failures}}
+\label{sec:failures}
+\input{sections/04_taxonomy}
+
+\section{\rev{Resolving the Failures with \harness{}}}
+\label{sec:harness}
+\input{sections/05_grounding_layer}
+
+\section{Evaluating \harness{} on Real Hardware}
+\label{sec:evaluation}
+\input{sections/06_evaluation}
+
+\section{Discussion and Limitations}
+\label{sec:discussion}
+\input{sections/07_discussion}
+
+\section{Conclusion}
+\label{sec:conclusion}
+\input{sections/08_conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{bibliography}
+
+\end{document}

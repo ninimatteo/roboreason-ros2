@@ -24,7 +24,9 @@ easy to miss: an object's height or the distance a gripper must travel
 are never \emph{measured} there, but asserted, correctly, by
 construction~\cite{favaliRAS, rohmer2013coppeliasim,
 todorov2012mujoco}. In the real world, by contrast, every such
-quantity has to be computed: from noisy depth or an imperfect camera.}
+quantity has to be computed: from noisy depth, an imperfect camera, or
+a hand-authored scene file that may not match the physical table it
+describes.}
 
 This paper closes that gap with an execution harness. We proceeded
 in three steps. First, we built an experimental baseline: a ROS2

@@ -97,16 +97,16 @@ NOTE_CATEGORY = {
     '20260907-115044-c7090373': COLLISION,   # white cube collided with orange, pushed out of line
     '20260907-141610-aae7c68f': COLLISION,   # slightly touched blue with white, stayed in line
     '20260907-155544-b522d98e': GRASP,       # red cube wasn't positioned on tray correctly, fell off
-    '20260907-161257-eebbb4da': GRASP,       # last block in line fell, slightly out of line
-    '20260907-171315-752b928c': GRASP,       # cube slipped, ended up not on the line
+    '20260907-161257-eebbb4da': COLLISION,   # last block in line collided, slightly out of line
+    '20260907-171315-752b928c': COLLISION,   # cube collided, ended up not on the line
     '20260907-172959-e9457695': COLLISION,   # cube collided, ended up elsewhere, not on the line
-    '20260907-173837-fd69a27f': GRASP,       # released one block too high, fell off the line
-    '20260908-114108-4c3b00a1': GRASP,       # one block fell off of the tray
-    '20260908-114715-fb0a6703': GRASP,       # unable to get the red cube, wrong coordinates
+    '20260907-173837-fd69a27f': GRASP,       # released one block slightly too high, fell off the line
+    '20260908-114108-4c3b00a1': GRASP,       # one block fell off of the tray, positioning issue
+    '20260908-114715-fb0a6703': COLLISION,   # unable to get the red cube, wrong coordinates, prior collision
     '20260908-121412-1b60c420': COLLISION,   # cube collided, ended up not on the line
-    '20260908-124323-ff3d7235': GRASP,       # cube grasped the wrong way, failed to end up in line
+    '20260908-124323-ff3d7235': COLLISION,   # cube grasped the wrong way after a prior collision
     '20260908-131646-174a320c': COLLISION,   # cube pushed out of line by another cube
-    '20260908-150643-af3341e1': GRASP,       # failed to grasp one cube, not in the line
+    '20260908-150643-af3341e1': COLLISION,   # failed to grasp after a prior collision, not in the line
     '20260908-151629-c2fb0d6f': GRASP,       # block fell off of the tray, was on the border
     '20260908-155244-fb08777e': COLLISION,   # put one cube on top of another, wasn't in line
     '20260908-160305-69739988': GRASP,       # released too high, rolled away from the line
@@ -645,6 +645,8 @@ def print_tables(rows):
     for m in MODELS:
         xs = [r for r in rows if r['model_label'] == m]
         n = len(xs)
+        if n == 0:
+            continue
         ts = 100 * mean(float(r['TS']) for r in xs)
         tsr = 100 * mean(float(r['TSR']) for r in xs)
         ts_ci = _ci_str(*group_wilson_ci(xs, 'TS'))

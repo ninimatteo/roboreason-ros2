@@ -87,7 +87,7 @@ BENCHMARK_RESULTS_FIELDS = [
     'num_planned_steps', 'steps_executed', 'safety_ok', 'TS',
     'sub_tasks_completed', 'sub_tasks_required', 'TSR', 'AETS',
     'planning_duration_s', 'execution_duration_s', 'total_duration_s',
-    'notes',
+    'notes', 'geometry_fix_disabled', 'zone_distribution_disabled',
 ]
 
 
@@ -736,10 +736,12 @@ class GuiBridgeNode(Node):
         # 2026-09-04 (ROBOAI-25): the September 3-arm study writes to its
         # own file, not the renamed benchmark/results_2026-07_llm_vlm.csv
         # (the July 2-arm study, different models) — keeps the two from
-        # ever mixing in one CSV. Mirror any rename here in
-        # benchmark/benchmark_annotate.py's RESULTS_CSV too.
+        # ever mixing in one CSV. Filename comes from Settings so a
+        # differently-scoped study (e.g. ROBOAI-30's ablation) can point
+        # this elsewhere via ROBOREASON_BENCHMARK_RESULTS_CSV without a
+        # code change; benchmark_annotate.py reads the same env var.
         repo_root = Path(__file__).resolve().parents[3]
-        return repo_root / 'benchmark' / 'results_2026-09_3arm.csv'
+        return repo_root / 'benchmark' / settings.BENCHMARK_RESULTS_CSV
 
     def _next_benchmark_repetition(self, results_csv: Path, task_id: str, model_label: str) -> int:
         if not results_csv.exists():
@@ -834,6 +836,8 @@ class GuiBridgeNode(Node):
             'execution_duration_s': execution_duration_s,
             'total_duration_s': total_duration_s,
             'notes': notes,
+            'geometry_fix_disabled': config.get('disable_geometry_fix', False),
+            'zone_distribution_disabled': config.get('disable_zone_distribution', False),
         }
 
         try:

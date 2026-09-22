@@ -40,6 +40,27 @@ class Settings(BaseSettings):
     # requests that are just slow, not stuck.
     REQUEST_TIMEOUT_S: float = 120.0
 
+    # ── Deterministic geometry ablation (ROBOAI-30) ────────────────────────────
+    # Two independent flags, both default False (normal behavior). "Soft" arm
+    # sets DISABLE_GEOMETRY_FIX only; "hard" arm sets both together.
+    #
+    # When True, llm_planner_node skips _fix_object_height/_fix_release_height
+    # entirely and leaves the model's own computed object_height/release
+    # positions untouched -- i.e. the pre-fix behavior these two functions
+    # replaced. LLM-mode only.
+    DISABLE_GEOMETRY_FIX: bool = False
+    # When True, plan_manager_node skips distribute_zone_releases entirely,
+    # leaving multiple releases at (about) the same point uncorrected instead
+    # of spacing them into a grid. Runs for all three planner modes (LLM, VLM,
+    # VLM_LLM) -- see the call site in plan_manager_node.py.
+    DISABLE_ZONE_DISTRIBUTION: bool = False
+    # Which benchmark/*.csv file bridge_node.py's inline annotation form (and
+    # benchmark_annotate.py, via the same-named ROBOREASON_ env var) appends
+    # to. Keeps studies from mixing in one file (see 2026-09-04, ROBOAI-25) --
+    # point this at a separate file while collecting for the ROBOAI-30
+    # ablation, then switch it back.
+    BENCHMARK_RESULTS_CSV: str = 'results_2026-09_3arm.csv'
+
     # ── VLM planner ───────────────────────────────────────────────────────────
     TMP_DIR: str = 'src/vlm_frames'
     # 'point'  — VLM emits a single [x, y] pixel click per target (validated on

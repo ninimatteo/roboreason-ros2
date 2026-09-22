@@ -1,0 +1,184 @@
+\ff{To shed light on where LLM/VLM planning actually breaks on a real
+robot, we ran a structured investigation of the baseline on
+pick-and-place, leaving every numeric parameter definition to the planner
+itself rather than a geometric solver, consistent with the model-free
+design motivated in Sec.~\ref{sec:related-work}.} \rev{We exercised
+both planner implementations across all three task families,} and
+traced every hardware failure back to its root cause using the
+baseline's per-run debug artifacts: the raw model response, the active
+configuration, and, in VLM mode, the captured camera frame.
+% TODO-VERIFY: "exercised both planner implementations across all
+% three task families" — confermare dai log che la copertura è stata
+% davvero completa (entrambe le implementazioni x tutte le famiglie di
+% task), altrimenti ammorbidire.
+The investigation yielded six recurring failure modes, summarized in
+Table~\ref{tab:taxonomy}. They fall into three families:
+\begin{itemize}
+  \item \textbf{Measurement failures}: the plan uses a quantity
+    only a sensor can know, but takes the model's guess instead
+    (double-counted stacking height, silhouette-edge width sampling).
+  \item \textbf{Embodiment failures}: the plan's abstraction of
+    the robot or the scene is simpler than the real thing, a point
+    where the target has extent, a constant where the gripper's
+    geometry varies (phantom top-surface grasp, point-distance target
+    matching, width-dependent tool offset).
+  \item \textbf{Contact-dynamics failures}: the plan constrains
+    final positions but not what bodies do over time (sequential
+    multi-object placement collision, still \rev{unresolved}).
+\end{itemize}
+
+\mn{One finding shapes everything that follows. Two of the six modes,
+the only two confirmed to recur in both implementations, show that the
+problem is not confined to one grounding modality.} The phantom
+top-surface grasp appeared first in the VLM \rev{implementation}, was
+fixed there, and then recurred independently in the LLM
+\rev{implementation}, whose scene description is exact by
+construction. The benchmark of Section~\ref{sec:evaluation} later
+confirmed the same pattern for the placement collision: it dominates
+\emph{both} \rev{implementations}. \mn{For these two modes,} the
+problem is how the model reasons about physical quantities when
+turning a decision into numbers, not how the scene was perceived. This
+is why the harness of Section~\ref{sec:harness} operates at the
+execution level, correcting the numbers a plan carries, and not at the
+perception level.
+
+\begin{table*}[t]
+\centering
+\caption{The six failure modes. ``Physical property required'' marks
+what makes each failure impossible to observe in a symbolic or
+scripted simulator.}
+\label{tab:taxonomy}
+\begin{tabularx}{\textwidth}{@{}p{3.1cm}Xp{3.9cm}@{}}
+\toprule
+\textbf{Failure} & \textbf{Symptom and root cause} & \textbf{Physical property required} \\
+\midrule
+Phantom top-surface grasp &
+  The release lift is set to the object's full height, assuming the
+  object was grasped at its top. The executor actually grasps mid-body,
+  descending by $\descent = \min(0.5\height, \descent_{\max})$. Net
+  effect: a systematic release overshoot of roughly half the object's
+  height. Recurred independently in both \rev{implementations}. &
+  Real gripper kinematics: mid-body grasping is a deliberate stability
+  choice, not a simulator default. \\
+\addlinespace
+Double-counted stacking height &
+  \rev{During camera-based scene grounding, the target's top surface
+  was already measured correctly from depth. The planner's stacking
+  rule then added the model's separate, unverified height estimate on
+  top of it a second time.} &
+  A real depth measurement of an already-correct surface height. \\
+\addlinespace
+Point-distance target matching &
+  A \rev{placement} genuinely inside the tray's real footprint, but
+  far from its registered center, was scored as a miss by a
+  point-distance check. &
+  A real target with spatial extent of tens of centimeters, not a
+  point. \\
+\addlinespace
+Silhouette-edge width sampling &
+  Grasp width was read from depth exactly on the object's silhouette
+  boundary, the single worst location for valid depth due to occlusion
+  and parallax. One failed edge sample aborted an otherwise valid
+  plan. &
+  Real depth noise at object boundaries; absent for a rendered or
+  symbolic bounding box. \\
+\addlinespace
+Width-dependent tool offset &
+  The gripper's fingers pivot, so the flange-to-contact distance is a
+  function of the commanded opening width, not a constant. A single
+  calibrated offset is wrong for any object of a different width. &
+  Real finger kinematics, absent from a symbolic action space. \\
+\addlinespace
+Sequential-placement collision \textbf{(\rev{unresolved})} &
+  Zone-aware spacing keeps a zone's \emph{final} release positions from
+  overlapping. It does not stop the arm clipping an already-placed
+  object en route to the next release, nor a released object settling
+  into a neighbor. \mn{Dominant residual failure in the 120-trial
+  benchmark: 15 of the 22 non-empty operator notes describe a
+  collision, in \textbf{both} implementations (all 4 LLM notes, 11 of
+  18 VLM notes).} &
+  Real multi-body contact between placed objects and the approach
+  trajectory, over time. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\rev{Below we develop the two most instructive resolved cases in
+full, then treat the still-unresolved collision failure on its own.}
+
+\subsection{Case study 1: phantom top-surface grasp}
+\label{sec:case-phantom}
+
+The executor deliberately grasps objects mid-body rather than at the
+top surface. The pick descent is $\descent = \min(0.5\height,
+\descent_{\max})$, where $\height$ is the object's height and
+$\descent_{\max}$ is a clamp that keeps the gripper's rigid mounting
+body away from tall objects. A mid-body grasp is simply more stable
+than pinching a top edge.
+
+The paired release action, however, computes the lift height from
+the object's \emph{full} height. That computation silently assumes a
+top-surface grasp. The assumption is wrong by construction whenever
+the pick descended mid-body, which is always. The result is a
+systematic overshoot of roughly $0.5\height$: objects are dropped from
+a height proportional to half their own size, rather than from
+fractions of a centimeter.
+
+We first fixed this in the VLM \rev{implementation}, by deriving the
+object's height from measured depth instead of the model's reported
+size. \rev{The same failure then recurred, independently, in the LLM
+implementation:} its prompt still asked the model to compute the lift
+from the scene's declared object height, the exact assumption the
+earlier fix had already identified as wrong. Fixing the failure once,
+in one \rev{implementation}, did not fix it everywhere it existed. The
+error is not a mistake one prompt makes. It is a mismatch between what
+the model is asked to assume and what the gripper actually does, and
+it therefore needs an architectural fix, not a prompt fix.
+
+\subsection{Case study 2: double-counted stacking height}
+\label{sec:case-doublecount}
+
+The scene convention represents each object by a base reference height
+and a size, so base plus height reconstructs the top surface. Every
+stacking prompt relies on this formula. \rev{In the camera-grounded
+pipeline, the scene-grounding step deprojects the target's pixel
+location into a depth-measured world coordinate. An early version
+wrote that measured value, already the true top surface, into the
+scene description as the target's base reference, while leaving the
+model's separate, unverified height estimate untouched. The planner
+then applied its normal stacking formula and added the guessed height
+on top of an already-correct value.} Every stack-on-target release was
+inflated by however wrong that guess happened to be.
+% TODO-VERIFY: caso riscritto senza citare la modalità ibrida VLM->LLM
+% (commento MN). Confermare che la descrizione "camera-grounded
+% pipeline / scene-grounding step" corrisponde anche al code path
+% della modalità VLM pura; se il bug esisteva SOLO nella modalità
+% ibrida, decidere se tenere questo failure mode nella tassonomia
+% (toglierlo cambierebbe i conteggi 6/5 in tutto il paper).
+
+The lesson generalizes Case study 1. A sensor-measured quantity must be
+inserted \emph{into the representation the planner already expects},
+consistently with its conventions, rather than mixed with model
+guesses that the planner will keep combining by formula.
+
+\subsection{The \rev{unresolved} case: sequential-placement collision}
+\label{sec:case-collision}
+
+Unlike the five other failures, this one is not \rev{resolved} by the
+harness. When a task places several objects into the same zone in
+sequence, the harness spaces the \emph{final} release positions so
+they cannot overlap. That is only the static half of the problem.
+Nothing constrains the arm's trajectory while it approaches the
+$n$-th release past the $(n-1)$ objects already in the zone. Nothing
+constrains a released object's residual motion from displacing a
+neighbor afterward, either. Both halves are three-dimensional,
+time-dependent contact problems. They cannot be solved by correcting a
+single scalar, which is exactly what makes them different in kind from
+Case studies 1 and 2.
+
+We diagnosed this failure from the same debug artifacts as the others,
+but by the time it was isolated it had already become the dominant
+failure mode of the benchmark, in both \rev{implementations}. We
+report it as an identified, partially mitigated, \rev{unresolved}
+problem; Section~\ref{sec:discussion} returns to what \rev{resolving}
+it would require.

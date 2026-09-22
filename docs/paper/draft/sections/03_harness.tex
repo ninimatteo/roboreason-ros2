@@ -1,0 +1,108 @@
+\rev{This section describes our experimental baseline:} a
+two-layer Sense-Plan-Act stack, a high-level planner over a low-level
+skill executor, with no correction layer in between. The baseline is
+what we investigate in Section~\ref{sec:failures}; understanding what
+it trusts, and from whom, is what makes the harness's role clear.
+
+\subsection{Architecture}
+\label{sec:baseline-architecture}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth, keepaspectratio]{images/fig1_roboreason_horizontal_cropped.pdf}
+\caption{The experimental baseline and the \harness{} harness. A
+high-level LLM/VLM planner decomposes a natural-language command into a
+plan of parameterized skills; a low-level executor drives the UR5cb.
+\harness{} (Section~\ref{sec:harness}) sits between the two and
+overrides the plan's numeric geometry before execution.}
+\label{fig:architecture}
+\end{figure*}
+
+The baseline is a ROS2 stack organized as a Sense-Plan-Act pipeline
+(Figure~\ref{fig:architecture}). A task interface, a terminal client or
+a web GUI, forwards a natural-language command to a planner node. The
+planner decomposes the command into a plan: an ordered sequence drawn
+from a small, fixed set of parameterized skills, \code{approach},
+\code{pick}, \code{release}, \code{move\_home}, and \code{wait}. A
+plan-manager node validates and sequences the plan, then drives a
+skill-executor node \rev{that commands} the real UR5cb driver. Every
+planning call supports six interchangeable reasoning strategies, from
+a single-step reactive baseline to self-consistency voting and tree
+search, selectable without touching the pipeline itself.
+
+\subsection{\rev{Two implementations, two perception regimes}}
+\label{sec:baseline-arms}
+
+The baseline supports two planner \rev{implementations} that differ
+only in how the scene enters the plan.
+
+% \textbf{LLM \rev{implementation}: perfect perception.} The
+% static-scene LLM planner reads a hand-authored scene description that
+% lists every object's identity, position, and size exactly. Perception
+% is perfect by construction: there is no camera, no noise, and no
+% detection error. Whatever goes wrong in this \rev{implementation}
+% cannot be blamed on perception.
+\textbf{LLM \rev{implementation}: \ff{noise-free perception, up to human registration error.}} The
+static-scene LLM planner reads a hand-authored scene description that
+lists every object's identity, position, and size. \ff{Perception is
+noise-free by construction: there is no camera, no sensor noise, and
+no automated detection pipeline that could fail. The only remaining
+source of imprecision is human registration error when the scene was
+authored, moreover we bound this below the order of centimeters.} As a result, whatever goes wrong in this
+\rev{implementation} cannot be attributed to perceptual noise or
+detection error\ff{, and is too large to be explained by registration
+error alone}.
+
+\textbf{VLM \rev{implementation}: real perception.} The
+camera-grounded VLM planner perceives the scene through a calibrated
+RGB-D camera. Object positions and sizes come from detection and depth
+deprojection, so they carry real sensor noise, occlusion, and parallax
+error.
+
+% NOTE (double-blind): nella foto del setup si leggono sullo sfondo
+% poster con loghi e nomi (UNIMORE, ICRA). Valutare un crop o un blur
+% dello sfondo prima della sottomissione anonima.
+\begin{figure}[b]
+    \centering
+    \includegraphics[width=0.95\linewidth]{images/setup_sperimentale.jpeg}
+    \caption{\rev{The physical rig: the UR5cb manipulator with the
+    OnRobot RG2 parallel gripper, the RGB-D camera on its tripod
+    (right), the calibration board used for camera-robot registration,
+    and the color-distinguished cubes on the workspace table.}}
+    \label{fig:setup}
+\end{figure}
+
+Both \rev{implementations} plan over the same physical rig\rev{, shown
+in Figure~\ref{fig:setup}}: a UR5cb manipulator with an OnRobot RG2
+parallel gripper and a calibrated RGB-D camera, acting on a tabletop
+scene of four color-distinguished cubes and a tray. \rev{The tray is
+registered in the scene as a target zone: a placement region with real
+spatial extent, which several tasks use as their destination.} The
+task families are pick-and-place, sorting and stacking, and arithmetic
+value-mapping, in which the object to move must be computed from a
+stated numeric rule rather than named. The evaluation
+(Section~\ref{sec:evaluation}) details the full protocol.
+
+\subsection{Instrumentation}
+\label{sec:baseline-instrumentation}
+
+\rev{Two design choices make the pipeline reproducible and easy to
+instrument.} First, every runtime parameter, model choice, reasoning
+strategy, grounding modality, timeouts, robot address, is a field on
+one centralized settings object, overridable by environment variable
+with no code change. Experimental conditions are therefore
+configuration, not code branches. Second, every planning call records a
+per-run debug artifact: the command, the active configuration, the raw
+model response, the execution log, and, in VLM modes, the camera frame
+the plan was grounded in. This is what made the failure investigation
+possible: each failure in Section~\ref{sec:failures} was traced from a
+hardware event back to a specific field in a specific logged response,
+not inferred after the fact.
+
+One property of the baseline deserves emphasis, because the rest
+of the paper turns on it. As described here, the baseline trusts every
+numeric field of a generated plan. If the model says an object is
+9\,cm tall, the executor lifts 9\,cm. The next section shows what that
+trust costs on real hardware; Section~\ref{sec:harness} then inserts
+\harness{} between plan validation and skill execution, exactly at the
+point where those numbers stop being suggestions and become motion.

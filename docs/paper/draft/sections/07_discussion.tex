@@ -1,0 +1,43 @@
+\textbf{Implication for evaluation practice.} Symbolic and scripted
+simulation is necessary but not sufficient for validating an LLM/VLM
+robot planner. It validates reasoning strategy and task decomposition.
+By construction it cannot exercise the failure modes of
+Section~\ref{sec:failures}, because it never asks the model to compute
+a quantity a physical sensor could contradict. We therefore
+propose a \emph{geometry-grounding audit} as a standard step before
+hardware deployment: identify every numeric quantity a prompt asks the
+model to compute itself, and ask whether a sensor or a paired action
+already determines it more reliably. Each quantity that fails the
+audit is a candidate for a \harness{}-style correction.
+
+\textbf{The cost of the architectural choice.} The related work argued
+for a decoupled Sense-Plan-Act architecture over an end-to-end VLA on
+data-efficiency and diagnosability grounds. The failure investigation
+is the other half of that trade. \rev{The decoupled architecture asks
+the model for physical quantities it was never trained to estimate,
+and the six documented failure modes are the consequence; the harness
+is the extra layer this architecture needs to be reliable in
+practice.} We read this as a cost worth paying, not a case against the
+architecture. \rev{Every resolved failure was fixable once diagnosed,}
+precisely because the pipeline stayed decoupled enough to diagnose it.
+
+\rev{\textbf{The unresolved collision case.} The sequential-placement
+collision is a trajectory-level, multi-body contact problem, and the
+static spacing mitigation of Section~\ref{sec:harness} does not
+address its dynamic half. The most natural extension is an
+obstacle-aware approach skill that treats already-placed objects as
+static obstacles, optionally paired with a settle-time check after
+each placement. This is the next addition we plan.}
+
+\textbf{Generalizability.} Our evidence comes from one manipulator
+(UR5cb), one gripper, one camera rig, and a single underlying model
+(\code{kimi-k2.6}) used for both \rev{implementations}. We do not
+claim that the six specific failures of Table~\ref{tab:taxonomy} recur
+verbatim on different hardware. We claim that the structural pattern
+is a property of the architecture, not of this robot: geometry
+computed by a model instead of measured, and multiple real bodies
+sharing space over time. Grasp width is the one quantity we still
+cannot cross-check against depth in every case, since a single
+top-down sample determines height unambiguously but not left-right
+extent; the best-effort inset sampling of Section~\ref{sec:harness}
+reduces this gap without \rev{eliminating} it.

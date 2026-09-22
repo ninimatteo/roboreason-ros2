@@ -1261,6 +1261,43 @@ underlying numbers until the git history collided.
 
 ---
 
+## 9. ROBOAI-30 ablation: `distribute_zone_releases` is not LLM-only, and a "hard" arm was deferred for time
+
+While adding a second ablation flag on top of the existing
+`DISABLE_GEOMETRY_FIX` (soft arm: `_fix_object_height`/`_fix_release_height`
+in `llm_planner_node.py`), reading `distribute_zone_releases`'s own
+docstring (`schemas.py`) corrected an assumption made mid-session: it is
+not LLM-specific. It runs unconditionally in `plan_manager_node.py`
+downstream of all three planner modes (LLM, VLM, VLM_LLM). The real
+difference is narrower: `targets` bounds clamping (`_centered_zone_offset`)
+only fires for LLM, since VLM/VLM_LLM pass an empty or non-matching
+`targets` dict and fall back to the unbounded `_zone_slot_offset`.
+
+A `DISABLE_ZONE_DISTRIBUTION` flag (`config.py`, gated call in
+`plan_manager_node.py`, recorded in `config.json` and both benchmark CSVs
+alongside `disable_geometry_fix`) was added and verified at the function
+level, but a real "hard" ablation arm (soft flag plus this one together)
+was not run. Checked against Jira before starting it: ICRA deadline is
+2026-09-15, `ROBOAI-27` (internal draft) was already a day past its own
+due date, `ROBOAI-9` (related work) overdue since 09-07 and still To Do.
+Recommendation given to the user: skip it for this submission. The
+draft's own six-bug taxonomy (`ROBOAI-27`) already documents multi-object
+collision as the dominant failure mode *even with* `distribute_zone_releases`
+active across the existing 3-arm data, so a fresh OFF condition would
+likely confirm rather than surface a new finding, at the cost of roughly
+another 15-30 real trials the remaining runway doesn't obviously support.
+The flag stays in the code (default off, no behavior change) for a
+possible rebuttal or follow-up study; it was not used for data collection
+as of this entry. User had not yet responded to the recommendation when
+the session paused.
+
+**Lesson for next time**: check Jira due dates before scoping new
+experimental work, not just the new work's own time estimate — ROBOAI-30's
+Option A/B estimates were written 2026-09-09 assuming more runway than
+was actually left by 09-11.
+
+---
+
 ## Known Open Issues (updated 2026-09-04)
 
 - **`targets.table`'s y-range still slightly exceeds the workspace
@@ -1283,3 +1320,55 @@ underlying numbers until the git history collided.
   have coverage (`test_schemas.py`). Worth a Jira issue of its own.
 - The GUI camera-frame proxy readiness bug from 2026-09-03 §4 is still
   not investigated and still has no Jira issue.
+
+---
+
+## 10. ICRA 2027 submitted (2026-09-16): re-annotated collision notes flipped
+the "dominant residual failure" claim from false to true
+
+`ROBOAI-7` closed as Done, submission sent. The last working session before
+submission (2026-09-15/16) caught two claims in the draft that a reviewer's
+own note-by-note check would have contradicted, both traced back to
+`benchmark/results_2026-09_3arm.csv`'s free-text `notes` column.
+
+**What changed in the data.** The user re-annotated several `notes` entries
+to specify a cause that was real but had been left out the first time
+(e.g. "Failed to grasp one of the cube, so it was not in the line" became
+"...because of a former collision..."). `benchmark/plot_results.py`'s
+`NOTE_CATEGORY` dict is hand-curated per `run_id` by design, precisely to
+avoid a keyword classifier misfiling notes (see its own header comment) —
+re-annotating the CSV text alone did not update the categorization used to
+generate `failure_modes.png`. Five `run_id`s moved from `GRASP` to
+`COLLISION` after a manual re-check against the new note text.
+
+**Effect on the paper's claims.** Before: 10 collision notes vs. 12
+grasp/execution notes (LLM 1 vs 3), which does not support "the collision
+dominates, in both implementations" — it doesn't even hold in the LLM arm
+alone. After: 15 vs. 7 (LLM 4 vs. 0), which does. Separately, the "neither
+a grasp-geometry gap" claim in §VI.C was contradicted by the corrected
+split too: 7 of 22 notes are grasp/execution failures unrelated to
+collision, all 7 on the VLM implementation, none on the LLM one — a real,
+data-supported grasp-geometry difference between the two grounding
+modalities, not absence of one. Both were fixed in the submitted draft
+(`docs/paper/draft/sections/04_taxonomy.tex`,
+`docs/paper/draft/sections/06_evaluation.tex`); `benchmark/plot_results.py`
+had an unrelated crash on the now-empty `VLM_LLM` group (stray pilot rows
+removed from the CSV as part of the same cleanup), fixed with a
+skip-if-empty guard in `print_tables()`.
+
+**Concurrent-editing note.** A co-author was editing `docs/paper/draft/`'s
+Overleaf project live during this same window — see the overlapping-work
+convention this file's own §8 (2026-09-09) documents. It surfaced as a
+literal Italian question left inside a `\subsection{}` argument
+(`03_harness.tex`) that would have rendered in the compiled PDF verbatim,
+and a grammar error in a `\section{}` title (`main.tex`, "A Investigation"
+for "A Structured Investigation") — both caught and fixed only because a
+full read-through was done immediately before submission, not because
+either side flagged the other's in-flight edit. Worth a standing habit for
+any paper with more than one Overleaf editor: a full-document read
+immediately before the deadline, not just of your own last diff.
+
+**Lesson for next time**: when free-text annotation data is corrected
+after the fact, check whether anything derives a *separate* hand-curated
+structure from that same text (here, `NOTE_CATEGORY`) — the two silently
+drifted apart until someone recomputed by hand.

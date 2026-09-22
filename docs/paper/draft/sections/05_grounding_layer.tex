@@ -1,0 +1,118 @@
+\rev{The failures of Table~\ref{tab:taxonomy} share one root cause:
+the plan relies on the model to compute physical quantities that could
+instead be obtained exactly, either from a sensor measurement or from
+an action the plan has already committed to. This observation
+motivates the paper's main contribution. We extend the pipeline from
+two layers to three by inserting \harness{} (\harnesslong{}) between
+the high-level planner and the low-level executor. \harness{} is a
+deterministic layer: it receives each validated plan before execution
+and replaces the numeric parameters most exposed to the identified
+failure modes with values it computes itself, using only information
+available at plan time.}
+
+The design principle fits in one sentence: \emph{the model decides
+what to do and where; \harness{} computes how much.} The model still
+chooses which object to pick and which zone to place it in. Geometric
+arithmetic is pulled out of the model and into code wherever the
+answer is computable from a sensor measurement or from a paired action
+already in the plan. The harness is implemented as a small set of
+deterministic correction functions; each is described below, together
+with the failure it \rev{resolves}.
+
+\subsection{Heights anchored to committed actions and measured depth}
+\label{sec:fix-height}
+
+Two corrections govern vertical geometry. The first \rev{resolves} the
+phantom top-surface grasp. For every release, \harness{} recomputes
+the lift height from the \emph{same} descent the executor actually
+commanded during the paired pick, $\height - \descent$ in the notation
+of Case study 1. A value derived from the plan's own committed action
+cannot disagree with what the arm did; a separately model-computed
+value can, and did.
+
+The second \rev{resolves} the double-counted stacking height. For a
+stacking target, \rev{\harness{} measures the target's real height
+directly: it takes the depth-measured top surface and the table plane,
+and uses the vertical distance between the two as the height. The
+height is never taken as negative, and no minimum is imposed, so a
+flat zone marked on the table correctly reads as having near-zero
+height.} It then rewrites the target's base reference so that the
+planner's usual reconstruction of the top surface becomes correct. The
+measured value is inserted into the representation the planner already
+expects, instead of being mixed with the model's own guess.
+
+\subsection{Footprint-based target matching}
+\label{sec:fix-footprint}
+
+\rev{To decide whether a planned placement position falls within a
+registered target zone, \harness{} checks whether the position lies
+inside the zone's real footprint, the rectangle spanned by the zone's
+size around its center, rather than measuring the distance to the
+zone's center point. This resolves the point-distance matching
+failure: the tray introduced in the experimental baseline
+(Section~\ref{sec:baseline}), a target zone tens of centimeters wide,
+accepts any placement inside its bounds.} A \rev{placement} that
+exactly echoes a target's registered coordinates is treated as
+intentional and left untouched. One that merely drifted into a zone's
+footprint is nudged back out along the axis needing the smaller
+correction. The nudge only fires when the zone's surface sits
+meaningfully above the bare table; otherwise the near-table-height
+generic ``table'' zone, which legitimately contains most of the
+workspace, would push objects off the table's edge.
+
+\subsection{Width-aware tool offset}
+\label{sec:fix-tcp}
+
+Because the gripper's fingers pivot, the flange-to-contact distance
+depends on the commanded opening width. \harness{} measures this
+distance at three representative widths: fully closed, mid-open, and
+fully open. At plan time, it uses piecewise-linear interpolation
+between these measurements and sets the executor's tool transform for
+each pick according to the planned grasp width. Pick descent is
+additionally capped so that tall objects are gripped nearer their top,
+keeping the gripper's rigid mounting body clear. This \rev{resolves}
+the width-dependent tool offset failure.
+
+\subsection{Best-effort grasp-width estimation}
+\label{sec:fix-width}
+
+In the VLM \rev{implementation}, grasp width is estimated by
+deprojecting the left and right edges of a detected bounding box.
+Sampling exactly on the silhouette boundary is the worst location for
+valid depth, and one failed sample used to abort the whole plan, over
+a parameter that does not even affect whether pick and release are
+safe. \harness{} samples slightly inset from the silhouette edge, and
+isolates width estimation into its own best-effort call that degrades
+to the model's estimate on failure instead of aborting. This
+\rev{resolves} the silhouette-edge sampling failure, without yet
+making width depth-verified in every case, a limitation
+Section~\ref{sec:discussion} returns to.
+
+\subsection{Zone-aware spacing: a partial mitigation}
+\label{sec:zone-spacing}
+
+For a zone that receives multiple \rev{placements} in one plan,
+\harness{} lays the occupants out on a grid centered on the zone's
+anchor and clamped to its registered bounds, falling back to an
+unbounded grid only when no known zone matches. This \rev{addresses}
+the \emph{static} half of the sequential-placement collision: final
+positions no longer overlap, nor overflow a zone smaller than the
+model's unclamped guess. The \emph{dynamic} half remains
+\rev{unresolved}. The approach trajectory is not checked against
+already-placed objects, and a released object's residual motion is not
+constrained at all. The evaluation confirms this as the dominant
+residual failure.
+
+\subsection{Validation of the corrections}
+\label{sec:validation}
+
+Each correction was developed against real, previously failing
+production runs, not synthetic cases. The baseline's per-run debug
+artifacts let us replay the exact inputs that produced a given
+hardware failure and confirm that the corrected pipeline now produces
+the hand-derived expected geometry for the same input. This
+retrospective replay, together with a unit-level regression suite
+(45/45 passing across all reasoning-strategy implementations at the
+time of writing), gives us confidence that each correction addresses
+its diagnosed root cause. What remains is to measure the harness's
+effect end to end, which is the subject of the next section.

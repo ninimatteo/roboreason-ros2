@@ -1,0 +1,158 @@
+This section validates the harness. With \harness{} in place, we
+ran a 120-trial real-hardware study comparing the two
+\rev{implementations} of the baseline: the static-scene LLM planner
+and the camera-grounded VLM planner. The study answers two questions.
+First, how reliable is the full three-layer system on real hardware?
+Second, what fails once the five \rev{corrections} are active, and
+does it match the one failure \harness{} does not \rev{resolve}?
+
+\subsection{Design}
+\label{sec:eval-design}
+
+The study is anchored to the task and environment complexity taxonomy
+and the TS/TSR/AETS metrics of Favali et al.~\cite{favaliRAS}, adapted
+to a physical rig. Six task conditions cross three difficulty axes,
+task length, reference specificity, and affordance and perception
+load, each at an easy and a hard level, over the real scene of four
+color-distinguished cubes and a tray:
+\code{pp\_easy}/\code{pp\_hard} (pick-and-place, one vs.\ four
+objects), \code{sort\_easy}/\code{sort\_hard} (stacking and sorting),
+and \code{arith\_easy}/\code{arith\_hard} (the object to move must be
+computed from a stated numeric mapping rather than named, isolating
+reasoning load from perception load). Each condition ran 10 times per
+\rev{implementation}, 120 trials in total. A single reasoning
+strategy, chain-of-thought with self-consistency, was held fixed
+throughout: the most safety-robust strategy in~\cite{favaliRAS},
+chosen so that strategy variance is not stacked on top of the
+comparison under test. Both \rev{implementations} use the same
+underlying model (\code{kimi-k2.6}), text-only and image-grounded
+respectively, so grounding modality is the only variable between
+them.
+The accompanying video presents the physical rig and
+representative trials from all six conditions.
+
+\subsection{Metrics, adapted for physical ground truth}
+\label{sec:eval-metrics}
+
+TS (task safety), TSR (task success rate), and AETS (action efficiency
+on task success) are fully automatic in a symbolic simulator, where
+damage and completion are exactly derivable from simulator state. Our
+UR5cb has no collision or force-fault sensing in its control path, and
+no vision-based verification of the final scene. We therefore adapt
+the same three metrics to a semi-automatic protocol. Everything the
+system can know automatically is logged per trial by the baseline's
+debug instrumentation. Immediately after each trial, the operator
+supplies exactly two numbers, whether the trial was safe and how many
+sub-tasks completed, from which TS, TSR, and AETS are computed
+identically to their original definitions.
+
+At $n=10$ per cell, point estimates alone invite justified pushback,
+so every reported TS and TSR carries a 95\% Wilson score interval (TS
+is an exact per-trial proportion; TSR pools successes over
+$\text{sub-tasks required} \times n$). \mn{TSR's interval treats each
+sub-task as an independent draw; because sub-tasks within a trial are
+correlated rather than independent, as the trial-level binarization
+below reflects, this interval understates the true uncertainty and
+should be read as descriptive rather than a calibrated guarantee.} One
+comparison was declared
+before any data was collected: a two-sided Fisher's exact test, LLM
+vs.\ VLM, on \code{arith\_hard} full-trial success, at $\alpha=0.05$.
+It is binarized per trial rather than pooled across sub-tasks, since
+sub-tasks are not independent: one wrong decision tends to misplace
+every object in a trial together. Everything else is reported
+descriptively.
+
+\subsection{Results}
+\label{sec:eval-results}
+
+\begin{table}[t]
+\centering
+\caption{Overall results, 60 trials per \rev{planner implementation}
+(120 total), with \harness{} in place.}
+\label{tab:overall}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{\rev{Planner}} & \textbf{n} & \textbf{TS} & \textbf{TSR} & \textbf{AETS} \\
+\midrule
+LLM (\code{kimi-k2.6}) & 60 & 98.3\% & 98.3\% & 0.1269 \\
+VLM (\code{kimi-k2.6}) & 60 & 85.0\% & 89.2\% & 0.1149 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{overall_summary.png}
+\caption{Overall TS/TSR/AETS summary, LLM vs.\ VLM
+\rev{implementation}, with \harness{} in place.}
+\label{fig:overall}
+\end{figure}
+
+Table~\ref{tab:overall} reports the headline result. Both
+\rev{implementations} share the same harness and the same underlying
+model, so the gap is not a model-capability gap. \mn{It is
+attributable to grounding modality, and grounding modality does
+include a real grasp-geometry difference: of the 22 failure notes, 7
+are grasp or execution failures unrelated to collision, all 7 on the
+VLM implementation and none on the LLM implementation, consistent with
+grasp width being estimated from noisy depth in one arm and given
+exactly in the other.} By task condition (Figure~\ref{fig:by-task}), the gap
+concentrates on the two hardest multi-object conditions, and
+predominantly in safety. TS is 100\% for both \rev{implementations} on
+every easy condition and on \code{pp\_hard} and \code{sort\_hard} for
+the LLM \rev{implementation}, but drops to 50\% (VLM,
+\code{sort\_hard}) and 60\%/90\% (VLM/LLM, \code{arith\_hard}), the
+conditions where the most objects share a zone at once. Neither
+\rev{implementation} shows the sharp success-rate collapse an earlier
+pilot on this task matrix, run with different per-modality models, had
+found on the arithmetic conditions (30\%/25\% VLM TSR against
+100\%/97\% LLM). With a single unified model, \code{arith\_easy} is
+100\%/100\% and \code{arith\_hard} is 90\%/85\% (TSR, LLM/VLM): a real
+but modest gap, not a collapse. The one pre-registered test, Fisher's
+exact on \code{arith\_hard} full-trial success, shows no detectable
+difference at this sample size (LLM 6/10, VLM 4/10, $p=0.66$),
+consistent with a modest gap that $n=10$ per cell cannot resolve to
+significance.
+
+\begin{figure}[t]
+\vspace*{2mm}
+\centering
+\includegraphics[width=0.95\linewidth]{ts_tsr_by_task.png}
+\caption{Task safety and task success rate by task condition, with
+95\% Wilson intervals.}
+\label{fig:by-task}
+\end{figure}
+
+\subsection{What fails with the harness in place}
+\label{sec:eval-failures}
+
+\mn{The aggregate metrics alone do not explain what failed; reading
+all 22 failure notes from the 120 trials individually does.} Every
+note describes either a collision between objects (15) or an
+execution or grasp failure, a slipped grasp, a dropped object (7),
+during a multi-object task. Zero notes describe a
+wrong object chosen for reasoning or value-mapping reasons, and zero
+an incomplete enumeration (Figure~\ref{fig:failure-modes}). The
+pattern holds in both \rev{implementations}: the LLM
+\rev{implementation} contributes 4 of the 22 notes, all on
+\code{arith\_hard}, and the VLM \rev{implementation} the remaining 18,
+spread across the three multi-object conditions roughly in proportion
+to trial counts.
+
+\begin{figure}[t]
+\vspace*{2mm}
+\centering
+\includegraphics[width=0.85\linewidth]{failure_modes.png}
+\caption{Failure-mode breakdown, derived from the 22 non-empty
+operator notes out of 120 trials.}
+\label{fig:failure-modes}
+\end{figure}
+
+This is the validation the section set out to obtain. With the
+five corrections active, the dominant residual failure is
+precisely the one \harness{} does not yet \rev{resolve}, the
+sequential-placement collision, and it dominates \emph{both}
+\rev{implementations}, regardless of which planner grounded the scene.
+Zero notes implicate the model's choice of object or its task
+decomposition. The residual failure is a property of the \rev{unresolved}
+contact-dynamics problem, not of a perception modality.

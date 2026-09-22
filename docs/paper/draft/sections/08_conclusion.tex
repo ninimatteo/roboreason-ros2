@@ -1,0 +1,22 @@
+We presented \harness{} (\harnesslong{}), an execution harness
+that turns a two-layer LLM/VLM Sense-Plan-Act pipeline into a
+three-layer one. \rev{The planner keeps the symbolic decisions;
+\harness{} recomputes each action's physical quantities from sensor
+measurements or from actions already committed in the plan; the
+executor turns the corrected plan into motion.} The harness is
+motivated by a structured investigation of pick-and-place on a real
+UR5cb manipulator, which surfaced six recurring failure modes,
+invisible to symbolic simulation by construction. The failures arise
+even under perfect perception, so the problem lies in reasoning about
+physical quantities, not in perceiving the scene, and the harness
+accordingly operates at the execution level. \rev{By applying
+\harness{}, we resolve five of the six failure modes.} A 120-trial
+real-hardware benchmark, using a single unified model for both
+grounding modalities, validates the harness and shows the sixth
+failure, a multi-object placement collision, as the dominant residual
+failure in both \rev{implementations}. \rev{Resolving} that failure's
+dynamic, trajectory-level half as a new skill, and a depth-verified
+treatment of grasp width, are the most direct next steps. More
+broadly, we propose the geometry-grounding audit as a standard
+companion to task-complexity benchmarking for any LLM/VLM planner
+headed to physical hardware.

@@ -79,6 +79,8 @@ class LLMPlannerNode(Node):
             'model_name': self.get_parameter('model_name').value,
             'temperature': self.get_parameter('temperature').value,
             'scene_json': scene_json,
+            'disable_geometry_fix': settings.DISABLE_GEOMETRY_FIX,
+            'disable_zone_distribution': settings.DISABLE_ZONE_DISTRIBUTION,
         })
 
         grounded, err = check_command_grounding(user_command, scene_json)
@@ -136,8 +138,13 @@ class LLMPlannerNode(Node):
         run.log(f'Starting plan with {observation}')
 
         plan_steps = run_plan_loop(agent, observation)
-        plan_steps = self._fix_object_height(plan_steps, scene_json)
-        plan_steps = self._fix_release_height(plan_steps, scene_json)
+        if settings.DISABLE_GEOMETRY_FIX:
+            # ROBOAI-30 ablation: skip the deterministic geometry fixes,
+            # leaving the model's own computed heights/positions untouched.
+            run.log('[LLMPlannerNode] DISABLE_GEOMETRY_FIX set — geometry fixes skipped')
+        else:
+            plan_steps = self._fix_object_height(plan_steps, scene_json)
+            plan_steps = self._fix_release_height(plan_steps, scene_json)
 
         self.get_logger().info(
             f'[LLMPlannerNode] Plan done — "{user_command}", '
