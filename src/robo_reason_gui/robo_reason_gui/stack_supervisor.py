@@ -41,28 +41,41 @@ def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict
     """Build the ``ros2 launch gui_stack.launch.py ...`` argv for the selection."""
     mode = (mode or 'LLM').upper()
     use_mock_llm = 'true' if config.get('use_mock_llm', True) else 'false'
-    return [
+
+    def value(key, default):
+        # The GUI config may carry keys explicitly set to None (e.g. VLM fields
+        # left blank), which dict.get(key, default) would pass through as "None".
+        v = config.get(key)
+        return default if v is None else v
+
+    command = [
         'ros2', 'launch', 'robo_reason_bringup', 'gui_stack.launch.py',
         f'mode:={mode}',
         f'use_mock_llm:={use_mock_llm}',
         f"mock_robot:={'true' if mock_robot else 'false'}",
         f"mock_camera:={'true' if mock_camera else 'false'}",
-        f"reasoning_method:={config.get('reasoning_method', settings.REASONING_METHOD)}",
-        f"model_name:={config.get('model_name', settings.MODEL_NAME)}",
-        f"temperature:={config.get('temperature', settings.TEMPERATURE)}",
+    ]
+    optional = [
+        ('reasoning_method', value('reasoning_method', settings.REASONING_METHOD)),
+        ('model_name', value('model_name', settings.MODEL_NAME)),
+        ('temperature', value('temperature', settings.TEMPERATURE)),
         # Only used by the VLM_LLM planner's scene-grounding call; harmless
         # (declared-but-unused launch arg) in LLM/VLM mode.
-        f"vlm_model_name:={config.get('vlm_model_name', settings.VLM_MODEL_NAME)}",
-        f"vlm_temperature:={config.get('vlm_temperature', settings.VLM_TEMPERATURE)}",
+        ('vlm_model_name', value('vlm_model_name', settings.VLM_MODEL_NAME)),
+        ('vlm_temperature', value('vlm_temperature', settings.VLM_TEMPERATURE)),
         # Only used by the VLM planner's direct pixel pipeline; harmless
         # (declared-but-unused launch arg) in LLM/VLM_LLM mode.
-        f"grounding_mode:={config.get('grounding_mode', settings.VLM_GROUNDING_MODE)}",
+        ('grounding_mode', value('grounding_mode', settings.VLM_GROUNDING_MODE)),
         # Used by both the VLM planner and the VLM_LLM scene-grounding call;
         # harmless (declared-but-unused launch arg) in LLM mode. Empty string
         # (default) omits the param, leaving the model's default behavior
         # unchanged.
-        f"reasoning_effort:={config.get('reasoning_effort', settings.VLM_REASONING_EFFORT)}",
+        ('reasoning_effort', value('reasoning_effort', settings.VLM_REASONING_EFFORT)),
     ]
+    # `ros2 launch` rejects empty `name:=` args, so leave those out and let the
+    # launch file's DeclareLaunchArgument default apply.
+    command += [f'{name}:={v}' for name, v in optional if str(v) != '']
+    return command
 
 
 class StackSupervisor:

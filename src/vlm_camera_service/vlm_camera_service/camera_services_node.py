@@ -372,6 +372,7 @@ class CameraServicesNode(Node):
             response.success = True
             response.points = base_points
             response.frame_id = "base_link"
+            response.error_message = ""
         else:
             self.get_logger().warn(
                 "No camera→base_link transform yet — refusing Deproject request. "
@@ -380,8 +381,8 @@ class CameraServicesNode(Node):
             response.success = False
             response.error_message = "Camera not calibrated — no base_link transform available."
             response.points = []
+            return response
 
-        response.error_message = ""
         self.get_logger().info(
             f"Deproject -> {len(points)} points in {response.frame_id}, "
             f"charuco_pose_available={response.charuco_pose_available}"

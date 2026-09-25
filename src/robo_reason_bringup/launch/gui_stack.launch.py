@@ -28,6 +28,7 @@ from launch.conditions import IfCondition, LaunchConfigurationEquals, UnlessCond
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -41,7 +42,8 @@ def generate_launch_description():
     vlm_model_name = LaunchConfiguration('vlm_model_name')
     vlm_temperature = LaunchConfiguration('vlm_temperature')
     grounding_mode = LaunchConfiguration('grounding_mode')
-    reasoning_effort = LaunchConfiguration('reasoning_effort')
+    # Forced to str: an empty default would otherwise be YAML-parsed to None.
+    reasoning_effort = ParameterValue(LaunchConfiguration('reasoning_effort'), value_type=str)
     robot_ip = LaunchConfiguration('robot_ip')
     images_dir = LaunchConfiguration('images_dir')
 
