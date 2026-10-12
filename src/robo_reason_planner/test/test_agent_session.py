@@ -172,3 +172,21 @@ def test_norm1000_coordinates_are_scaled_to_pixels(tmp_path):
     # 100 px of 640 = 156.25/1000, 100 px of 480 = 208.3/1000
     res = json.loads(tb.run('inspect_object', {'bbox': [140, 190, 172, 227]}).text)
     assert res['height_m'] == 0.04
+
+
+def test_actions_after_a_failed_one_in_the_same_turn_are_skipped(tmp_path):
+    backend, lines = FakeBackend(tmp_path, fail_first_pick=True), []
+    client = ScriptedClient([
+        PLAN,
+        [('pick', {'grasp_point': [0.1, -0.4, 0.02], 'grasp_width': 0.04}),
+         ('place', {'position': [0.3, -0.3, 0.0], 'held_height': 0.02}),
+         ('inspect_object', {'bbox': [85, 85, 115, 115]})],
+        [('finish', {'success': False, 'summary': 'stop'})],
+    ])
+    session = AgentSession(client, _toolbox(backend, lines), 'x', log=lines.append)
+    session.draft_plan()
+    session.execute()
+    assert 'release' not in [s[0] for s in backend.skills]
+    results = [m['content'] for m in client.seen[2][1] if m['role'] == 'tool'][-3:]
+    assert results[0].startswith('ERROR') and results[1].startswith('SKIPPED')
+    assert '"height_m"' in results[2]      # perception still runs

@@ -22,6 +22,8 @@ SCENARIOS = {  # id: (task, extra args)
     'sort_easy+slip': ('sort_easy', ['--slip', '1']),
 }
 CUBES = ['red_cube', 'blue_cube', 'white_cube', 'orange_cube']
+COMMIT = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True,
+                        cwd=Path(__file__).parent).stdout.strip()
 
 def on_tray(p): return 0.24 <= p[0] <= 0.46 and -0.43 <= p[1] <= -0.12 and p[2] > 0.03
 def on_table(p): return p[2] < 0.01 and not on_tray(p) and -0.6 <= p[0] <= 0.6 and -0.8 <= p[1] <= 0.0
@@ -54,7 +56,21 @@ def grade(task, P):
         subs = [on_tray(P['orange_cube'])] + [on_table(P[c]) and line for c in rest]
     return sum(subs), len(subs)
 
+def regrade(log_dir: Path):
+    """Grade every saved run log again with the current rules (prints a table)."""
+    for log in sorted(log_dir.glob('*.log')):
+        line = next((l for l in log.read_text().splitlines() if l.startswith('RESULT_JSON')), None)
+        sid = log.stem.split('_', 3)[-1]
+        if line is None:
+            print(f'{log.stem:55s} no result'); continue
+        r = json.loads(line[len('RESULT_JSON '):])
+        done, req = grade(SCENARIOS[sid][0], r['poses'])
+        print(f'{log.stem:55s} {done}/{req} agent={r["agent_success"]}')
+
+
 def main():
+    if sys.argv[1] == '--regrade':
+        return regrade(Path(sys.argv[2]))
     model, out = sys.argv[1], Path(sys.argv[2]); ids = sys.argv[3:] or list(SCENARIOS)
     subprocess.run(['docker', 'exec', 'roboreason_ur_gui', 'bash', '-c',
                     f'source /tmp/ouroenv.sh; ros2 param set /sim/agent_node model_name {model}'], capture_output=True)
@@ -70,7 +86,8 @@ def main():
         Path(out.parent / 'logs').mkdir(exist_ok=True)
         (out.parent / 'logs' / f'{time.strftime("%H%M%S")}_{model.replace("/", "_")}_{sid}.log').write_text(log)
         line = next((l for l in log.splitlines() if l.startswith('RESULT_JSON')), None)
-        row = {'time': time.strftime('%Y-%m-%d %H:%M'), 'model': model, 'scenario': sid, 'task': task}
+        row = {'time': time.strftime('%Y-%m-%d %H:%M'), 'commit': COMMIT, 'model': model,
+               'scenario': sid, 'task': task}
         if line is None:
             err = next((l for l in log.splitlines() if 'success=False' in l or 'Error' in l), log.strip().splitlines()[-1:] or [''])
             row.update(agent_success='', subtasks='0', required='', ok=False, plan_s='', exec_s='',

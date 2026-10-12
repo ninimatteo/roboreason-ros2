@@ -34,6 +34,9 @@ Closed loop rules:
   done, in the same turn as your next tool call. Call update_plan if the plan must change.
 - When the goal is reached and verified, call move_home, then finish(success=true).
   If it cannot be achieved, call finish(success=false) and say why.
+You may make several tool calls in one turn when none depends on a result you have not seen
+yet (e.g. inspect_object on every object at once). If an action fails, the rest of that turn's
+actions are skipped.
 Always write in English. Be brief in your text; spend your effort on correct tool calls."""
 
 PLAN_REQUEST = """Operator request: "{command}"

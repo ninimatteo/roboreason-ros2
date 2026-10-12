@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from robo_reason_planner.agent import prompts
-from robo_reason_planner.agent.tools import EXECUTION_TOOLS, SUBMIT_PLAN, Toolbox, ToolResult
+from robo_reason_planner.agent.tools import ACTION_TOOLS, EXECUTION_TOOLS, SUBMIT_PLAN, Toolbox, ToolResult
 from robo_reason_planner.planning_cancel import PlanningCancelled
 
 
@@ -102,9 +102,17 @@ class AgentSession:
             nudges = 0
 
             new_image = None
+            action_failed = False
             for call in reply.tool_calls:
                 self._check_cancel(cancelled)
+                if action_failed and call.name in ACTION_TOOLS:
+                    # Its preconditions were decided before the failure was known.
+                    self._skip_call(call, 'SKIPPED: an earlier action in this turn failed; '
+                                          'look at the latest image and decide again.')
+                    continue
                 result = self._run_call(call)
+                if call.name in ACTION_TOOLS and result.text.startswith(('ERROR', 'REFUSED')):
+                    action_failed = True
                 if result.image_path:
                     new_image = result.image_path
                 if result.finished:
@@ -147,6 +155,12 @@ class AgentSession:
         self.transcript.append({'role': 'tool', 'name': call.name, 'arguments': call.arguments,
                                 'content': result.text, 'image': result.image_path})
         return result
+
+    def _skip_call(self, call, text):
+        self.tool_calls += 1
+        self.messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': text})
+        self.transcript.append({'role': 'tool', 'name': call.name, 'arguments': call.arguments,
+                                'content': text, 'image': None})
 
     def _add_user(self, text, image_path=None):
         if image_path is None:
