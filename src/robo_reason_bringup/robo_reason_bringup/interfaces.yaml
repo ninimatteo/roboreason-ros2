@@ -1,0 +1,65 @@
+# ROS names of every topic, service and action RoboReason uses.
+#
+# This is the one place to edit a name. No node hardcodes one: each reads it
+# from here through robo_reason_bringup.interfaces.
+#
+# Two sections:
+#   internal  interfaces created by RoboReason's own nodes. They are the same
+#             in every profile.
+#   profiles  interfaces owned by software we don't control (the robot driver,
+#             the camera driver, the simulator). These are what differ between
+#             the real robot and the simulation.
+#
+# Names are relative (no leading slash) on purpose: ROS resolves a relative
+# name inside the namespace its node runs in. The real stack runs in the root
+# namespace, so "plan_task" resolves to /plan_task exactly as before. The
+# simulated stack runs in /sim, so the same name resolves to /sim/plan_task.
+# That is what lets the real and the simulated stack run at the same time
+# (digital twin) in one ROS graph without any name clashing.
+#
+# Pick the profile with ROBOREASON_PROFILE=real|sim (default: real), or with
+# profile:=sim on gui_stack.launch.py. Point ROBOREASON_INTERFACES_FILE at a
+# copy of this file to use a different set of names without editing this one.
+
+internal:
+  plan_task: plan_task
+  execute_plan: execute_plan
+  cancel_execution: cancel_execution
+  execute_skill: execute_skill
+  world_state: world_state
+  execution_log: execution_log
+  terminal_logs: gui/get_terminal_logs
+  get_image: camera/get_image
+  deproject: camera/deproject
+  recalibrate: camera/recalibrate
+  pixel_debug: camera/debug_pixels
+  charuco_axis: camera/charuco_axis
+  calibration_status: camera/calibration_status
+
+profiles:
+  real:
+    namespace: ""
+    robot:
+      # ur_robot_driver (ur_control.launch.py)
+      joint_states: joint_states
+      trajectory_action: scaled_joint_trajectory_controller/follow_joint_trajectory
+      gripper_io: io_and_status_controller/set_io
+    camera:
+      # Orbbec driver
+      color: camera/color/image_raw
+      depth: camera/depth/image_raw
+      camera_info: camera/color/camera_info
+
+  sim:
+    namespace: sim
+    robot:
+      # gz_ros2_control has no speed scaling, so the plain trajectory controller
+      joint_states: joint_states
+      trajectory_action: joint_trajectory_controller/follow_joint_trajectory
+      # served by the simulation's gripper shim, mimicking the UR driver
+      gripper_io: io_and_status_controller/set_io
+    camera:
+      # Gazebo RGB-D sensor, bridged by ros_gz_bridge
+      color: camera/color/image_raw
+      depth: camera/depth/image_raw
+      camera_info: camera/color/camera_info

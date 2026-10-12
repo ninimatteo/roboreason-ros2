@@ -26,6 +26,13 @@ class Settings(BaseSettings):
         extra='ignore',
     )
 
+    # ── Profile: real robot or simulation ────────────────────────────────────
+    # Selects which set of ROS names interfaces.yaml provides (see
+    # robo_reason_bringup/interfaces.py). 'real' or 'sim'.
+    PROFILE: str = 'real'
+    # Alternative interfaces.yaml to read instead of the packaged one.
+    INTERFACES_FILE: str = ''
+
     # ── Planner (LLM + VLM) ──────────────────────────────────────────────────
     USE_MOCK_LLM: bool = True
     REASONING_METHOD: str = 'cot_sc'
@@ -146,16 +153,6 @@ class Settings(BaseSettings):
     # down. Used to cap pick-target descent depth for tall objects.
     TCP_CLAMP_CLEARANCE_M: float = 0.15
 
-    # ── Camera topics / services ──────────────────────────────────────────────
-    COLOR_TOPIC: str = '/camera/color/image_raw'
-    DEPTH_TOPIC: str = '/camera/depth/image_raw'
-    CAMERA_INFO_TOPIC: str = '/camera/color/camera_info'
-    GET_IMAGE_SERVICE: str = '/camera/get_image'
-    DEPROJECT_SERVICE: str = '/camera/deproject'
-    PIXEL_DEBUG_TOPIC: str = '/camera/debug_pixels'
-    CHARUCO_AXIS_TOPIC: str = '/camera/charuco_axis'
-    CALIBRATION_STATUS_TOPIC: str = '/camera/calibration_status'
-
     # ── Depth filtering ───────────────────────────────────────────────────────
     WINDOW_SIZE: int = 7
     MIN_DEPTH_M: float = 0.15
@@ -212,11 +209,7 @@ class Settings(BaseSettings):
     GUI_HOST: str = '0.0.0.0'
     GUI_PORT: int = 8080
 
-    # ── GUI bridge (bridge_node.py) — topics/services/timeouts ────────────────
-    EXECUTION_LOG_TOPIC: str = '/execution_log'
-    # The /execute_skill action server publishes this status topic exactly once
-    # per server, so its publisher count == number of skill-executor servers.
-    EXECUTE_SKILL_STATUS_TOPIC: str = '/execute_skill/_action/status'
+    # ── GUI bridge (bridge_node.py) — timeouts ───────────────────────────────
     # Planner node names per mode — targets for live parameter updates.
     PLANNER_NODE_BY_MODE: Dict[str, str] = Field(default={
         'LLM': 'llm_planner_node',
@@ -224,13 +217,9 @@ class Settings(BaseSettings):
         'VLM_LLM': 'vlm_llm_planner_node',
     })
     SET_PARAM_TIMEOUT_S: float = 5.0
-    TRAJ_ACTION: str = '/scaled_joint_trajectory_controller/follow_joint_trajectory'
-    GRIPPER_IO_SERVICE: str = '/io_and_status_controller/set_io'
-    JOINT_STATES_TOPIC: str = '/joint_states'
     # A /joint_states message older than this (seconds) is considered stale.
     JOINT_STATES_TIMEOUT_S: float = 2.0
     CAMERA_TIMEOUT_S: float = 4.0
-    RECALIBRATE_SERVICE: str = '/camera/recalibrate'
     # Service-call budgets (planning may involve a slow LLM/VLM round-trip).
     PLAN_TIMEOUT_S: float = 300.0
     EXECUTE_TIMEOUT_S: float = 300.0

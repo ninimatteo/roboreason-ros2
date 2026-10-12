@@ -16,6 +16,7 @@ import time
 
 from robo_reason_interfaces.action import ExecuteSkill
 from robo_reason_manager.schemas import ALLOWED_SKILLS, SKILL_REQUIRED_ARGS
+from robo_reason_bringup.interfaces import names
 
 
 class FakeSkillExecutorNode(Node):
@@ -28,7 +29,7 @@ class FakeSkillExecutorNode(Node):
         self._action_server = ActionServer(
             self,
             ExecuteSkill,
-            '/execute_skill',
+            names.execute_skill,
             self._execute_skill_callback,
             cancel_callback=self._handle_cancel_request,
             callback_group=self._cb_group,

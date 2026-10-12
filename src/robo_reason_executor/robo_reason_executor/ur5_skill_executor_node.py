@@ -33,6 +33,7 @@ from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from robo_reason_bringup.grasp_geometry import tcp_offset_z_for_width
 from robo_reason_interfaces.action import ExecuteSkill
 from sensor_msgs.msg import JointState
@@ -133,7 +134,7 @@ class UR5SkillExecutorNode(Node):
         self._last_approach_hover = None  # hover position [x, y, z]
         self.create_subscription(
             JointState,
-            '/joint_states',
+            names.joint_states,
             self._joint_state_cb,
             10,
         )
@@ -142,14 +143,14 @@ class UR5SkillExecutorNode(Node):
         self._traj_client = ActionClient(
             self,
             FollowJointTrajectory,
-            '/scaled_joint_trajectory_controller/follow_joint_trajectory',
+            names.trajectory_action,
             callback_group=self._cb_group,
         )
 
         # --- Service client: gripper via digital output ---
         self._set_io_client = self.create_client(
             SetIO,
-            '/io_and_status_controller/set_io',
+            names.gripper_io,
             callback_group=self._cb_group,
         )
 
@@ -157,7 +158,7 @@ class UR5SkillExecutorNode(Node):
         self._action_server = ActionServer(
             self,
             ExecuteSkill,
-            '/execute_skill',
+            names.execute_skill,
             self._execute_skill_callback,
             cancel_callback=self._handle_cancel_request,
             callback_group=self._cb_group,

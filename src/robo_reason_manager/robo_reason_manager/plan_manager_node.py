@@ -19,6 +19,7 @@ import threading
 import time
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.srv import ExecutePlan, CancelExecution
 from robo_reason_interfaces.action import ExecuteSkill
 from robo_reason_manager.world_state import WorldState
@@ -37,19 +38,19 @@ class PlanManagerNode(Node):
         self._cb_group = ReentrantCallbackGroup()
 
         self._service = self.create_service(
-            ExecutePlan, '/execute_plan',
+            ExecutePlan, names.execute_plan,
             self._execute_plan_callback,
             callback_group=self._cb_group
         )
 
         self._cancel_service = self.create_service(
-            CancelExecution, '/cancel_execution',
+            CancelExecution, names.cancel_execution,
             self._cancel_execution_callback,
             callback_group=self._cb_group
         )
 
         self._skill_client = ActionClient(
-            self, ExecuteSkill, '/execute_skill',
+            self, ExecuteSkill, names.execute_skill,
             callback_group=self._cb_group
         )
 
@@ -68,8 +69,8 @@ class PlanManagerNode(Node):
         # mid-cancel of the first.
         self._plan_lock = threading.Lock()
 
-        self._world_state_pub = self.create_publisher(String, '/world_state', 10)
-        self._log_pub = self.create_publisher(String, '/execution_log', 10)
+        self._world_state_pub = self.create_publisher(String, names.world_state, 10)
+        self._log_pub = self.create_publisher(String, names.execution_log, 10)
 
         self.get_logger().info('[PlanManagerNode] Ready.')
 

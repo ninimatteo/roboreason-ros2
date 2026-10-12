@@ -16,6 +16,7 @@ from robo_reason_interfaces.srv import Deproject, GetImage
 from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from vlm_camera_service.charuco_utils import (
     CharucoConfig,
     T_to_transform_stamped,
@@ -37,17 +38,17 @@ class CameraServicesNode(Node):
     def __init__(self) -> None:
         super().__init__("camera_services_node")
 
-        self.declare_parameter("color_topic", settings.COLOR_TOPIC)
-        self.declare_parameter("depth_topic", settings.DEPTH_TOPIC)
-        self.declare_parameter("camera_info_topic", settings.CAMERA_INFO_TOPIC)
+        self.declare_parameter("color_topic", names.color)
+        self.declare_parameter("depth_topic", names.depth)
+        self.declare_parameter("camera_info_topic", names.camera_info)
         self.declare_parameter("window_size", settings.WINDOW_SIZE)
         self.declare_parameter("min_depth_m", settings.MIN_DEPTH_M)
         self.declare_parameter("max_depth_m", settings.MAX_DEPTH_M)
-        self.declare_parameter("get_image_service", settings.GET_IMAGE_SERVICE)
-        self.declare_parameter("deproject_service", settings.DEPROJECT_SERVICE)
-        self.declare_parameter("pixel_debug_topic", settings.PIXEL_DEBUG_TOPIC)
-        self.declare_parameter("charuco_axis_topic", settings.CHARUCO_AXIS_TOPIC)
-        self.declare_parameter("calibration_status_topic", settings.CALIBRATION_STATUS_TOPIC)
+        self.declare_parameter("get_image_service", names.get_image)
+        self.declare_parameter("deproject_service", names.deproject)
+        self.declare_parameter("pixel_debug_topic", names.pixel_debug)
+        self.declare_parameter("charuco_axis_topic", names.charuco_axis)
+        self.declare_parameter("calibration_status_topic", names.calibration_status)
         self.declare_parameter("charuco_enabled", settings.CHARUCO_ENABLED)
         self.declare_parameter("charuco_dictionary", settings.CHARUCO_DICTIONARY)
         self.declare_parameter("charuco_squares_x", settings.CHARUCO_SQUARES_X)
@@ -153,7 +154,7 @@ class CameraServicesNode(Node):
         self._calibration_status_pub = self.create_publisher(Bool, calibration_status_topic, 10)
         self.create_service(GetImage, get_image_service, self._handle_get_image)
         self.create_service(Deproject, deproject_service, self._handle_deproject)
-        self.create_service(Trigger, '/camera/recalibrate', self._handle_recalibrate)
+        self.create_service(Trigger, names.recalibrate, self._handle_recalibrate)
 
         self.get_logger().info("Camera service bridge started")
         self.get_logger().info(f"color_topic={color_topic}")

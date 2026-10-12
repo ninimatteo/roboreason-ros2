@@ -11,6 +11,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from robo_reason_interfaces.msg import PixelArray
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from vlm_camera_service.charuco_utils import (
     CharucoConfig,
     detect_charuco_pose,
@@ -24,9 +25,9 @@ class PixelOverlayViewerNode(Node):
     def __init__(self) -> None:
         super().__init__("pixel_overlay_viewer_node")
 
-        self.declare_parameter("color_topic", settings.COLOR_TOPIC)
-        self.declare_parameter("camera_info_topic", settings.CAMERA_INFO_TOPIC)
-        self.declare_parameter("pixel_topic", settings.PIXEL_DEBUG_TOPIC)
+        self.declare_parameter("color_topic", names.color)
+        self.declare_parameter("camera_info_topic", names.camera_info)
+        self.declare_parameter("pixel_topic", names.pixel_debug)
         self.declare_parameter("window_name", settings.VIEWER_WINDOW_NAME)
         self.declare_parameter("marker_size", settings.VIEWER_MARKER_SIZE)
         self.declare_parameter("line_thickness", settings.VIEWER_LINE_THICKNESS)

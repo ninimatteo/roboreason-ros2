@@ -17,6 +17,7 @@ import time
 import os
 
 from robo_reason_interfaces.srv import PlanTask, ExecutePlan
+from robo_reason_bringup.interfaces import names
 
 
 class TaskInterfaceNode(Node):
@@ -24,8 +25,8 @@ class TaskInterfaceNode(Node):
     def __init__(self):
         super().__init__('task_interface_node')
 
-        self._plan_client = self.create_client(PlanTask, '/plan_task')
-        self._exec_client = self.create_client(ExecutePlan, '/execute_plan')
+        self._plan_client = self.create_client(PlanTask, names.plan_task)
+        self._exec_client = self.create_client(ExecutePlan, names.execute_plan)
 
         pkg_share = get_package_share_directory('robo_reason_task_interface')
         scene_path = os.path.join(pkg_share, 'config', 'scene_mock.json')

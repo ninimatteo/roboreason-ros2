@@ -26,6 +26,7 @@ from rclpy.node import Node
 from std_msgs.msg import Header
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.srv import Deproject, GetImage
 
 
@@ -68,10 +69,10 @@ class MockCameraServiceNode(Node):
         self._bridge = CvBridge()
 
         self._get_image_srv = self.create_service(
-            GetImage, '/camera/get_image', self._get_image_callback
+            GetImage, names.get_image, self._get_image_callback
         )
         self._deproject_srv = self.create_service(
-            Deproject, '/camera/deproject', self._deproject_callback
+            Deproject, names.deproject, self._deproject_callback
         )
 
         self.get_logger().info(

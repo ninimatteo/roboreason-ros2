@@ -38,6 +38,7 @@ from rclpy.node import Node
 from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
@@ -83,17 +84,17 @@ class VLMPlannerNode(Node):
         self._cb_group = ReentrantCallbackGroup()
 
         self._service = self.create_service(
-            PlanTask, '/plan_task', self._plan_task_callback,
+            PlanTask, names.plan_task, self._plan_task_callback,
             callback_group=self._cb_group,
         )
         self._get_image_client = self.create_client(
-            GetImage, '/camera/get_image', callback_group=self._cb_group,
+            GetImage, names.get_image, callback_group=self._cb_group,
         )
         self._deproject_client = self.create_client(
-            Deproject, '/camera/deproject', callback_group=self._cb_group,
+            Deproject, names.deproject, callback_group=self._cb_group,
         )
         self._terminal_logs_client = self.create_client(
-            Trigger, '/gui/get_terminal_logs', callback_group=self._cb_group,
+            Trigger, names.terminal_logs, callback_group=self._cb_group,
         )
 
         self.get_logger().info(
@@ -221,9 +222,9 @@ class VLMPlannerNode(Node):
     def _call_get_image(self):
         """Call /camera/get_image asynchronously, polling until the future resolves."""
         if not self._get_image_client.wait_for_service(timeout_sec=5.0):
-            raise RuntimeError('/camera/get_image service not available (timeout 5 s)')
+            raise RuntimeError(f'{names.get_image} service not available (timeout 5 s)')
         future = self._get_image_client.call_async(GetImage.Request())
-        return self._wait_for_future(future, '/camera/get_image')
+        return self._wait_for_future(future, names.get_image)
 
     def _save_debug_frame(self, source_path: str, pixel_steps: list, task_dir: Path) -> 'Path | None':
         """Overlay VLM pixel predictions on the raw saved frame and write debug.png.
@@ -429,9 +430,9 @@ class VLMPlannerNode(Node):
         req.v = req_v
 
         if not self._deproject_client.wait_for_service(timeout_sec=5.0):
-            raise RuntimeError('/camera/deproject service not available (timeout 5 s)')
+            raise RuntimeError(f'{names.deproject} service not available (timeout 5 s)')
         future = self._deproject_client.call_async(req)
-        dep = self._wait_for_future(future, '/camera/deproject')
+        dep = self._wait_for_future(future, names.deproject)
 
         if not dep.success:
             raise RuntimeError(f'Deproject failed: {dep.error_message}')
@@ -511,7 +512,7 @@ class VLMPlannerNode(Node):
             req.u = req_u
             req.v = req_v
             future = self._deproject_client.call_async(req)
-            dep = self._wait_for_future(future, '/camera/deproject (grasp_width)')
+            dep = self._wait_for_future(future, f'{names.deproject} (grasp_width)')
             if not dep.success or dep.frame_id != 'base_link':
                 self.get_logger().warn(
                     f'[VLMPlannerNode] grasp_width refinement skipped ({dep.error_message or dep.frame_id}); '

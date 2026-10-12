@@ -23,17 +23,18 @@ from ur_msgs.srv import SetIO
 from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.msg import PixelArray
 from robo_reason_interfaces.srv import CancelExecution, ExecutePlan, GetImage, PlanTask
 
 # Topic the plan manager publishes per-step execution progress on.
-EXECUTION_LOG_TOPIC = settings.EXECUTION_LOG_TOPIC
+EXECUTION_LOG_TOPIC = names.execution_log
 
 # The /execute_skill action server publishes this status topic exactly once per
 # server, so its publisher count == number of skill-executor servers. >1 means a
 # duplicate executor is on the graph (e.g. an orphan from a previous stack),
 # which makes every skill run twice and corrupts shared robot state.
-EXECUTE_SKILL_STATUS_TOPIC = settings.EXECUTE_SKILL_STATUS_TOPIC
+EXECUTE_SKILL_STATUS_TOPIC = names.execute_skill_status
 
 # Planner node names per mode — targets for live parameter updates.
 PLANNER_NODE_BY_MODE = settings.PLANNER_NODE_BY_MODE
@@ -42,22 +43,22 @@ PLANNER_NODE_BY_MODE = settings.PLANNER_NODE_BY_MODE
 SET_PARAM_TIMEOUT_S = settings.SET_PARAM_TIMEOUT_S
 
 # Endpoints that indicate the UR5cb / gripper are reachable.
-TRAJ_ACTION = settings.TRAJ_ACTION
-GRIPPER_IO_SERVICE = settings.GRIPPER_IO_SERVICE
-JOINT_STATES_TOPIC = settings.JOINT_STATES_TOPIC
+TRAJ_ACTION = names.trajectory_action
+GRIPPER_IO_SERVICE = names.gripper_io
+JOINT_STATES_TOPIC = names.joint_states
 
 # Unified camera frame grab — exposed by both the mock and real camera nodes.
-CAMERA_GET_IMAGE_SERVICE = settings.GET_IMAGE_SERVICE
+CAMERA_GET_IMAGE_SERVICE = names.get_image
 CAMERA_TIMEOUT_S = settings.CAMERA_TIMEOUT_S
 
 # Debug pixel overlay — published by camera_services_node on every Deproject call.
-PIXEL_DEBUG_TOPIC = settings.PIXEL_DEBUG_TOPIC
+PIXEL_DEBUG_TOPIC = names.pixel_debug
 # ChArUco axis keypoints — 4 projected pixel coords (origin, X, Y, Z) at ~2 Hz.
-CHARUCO_AXIS_TOPIC = settings.CHARUCO_AXIS_TOPIC
+CHARUCO_AXIS_TOPIC = names.charuco_axis
 # Service to force ChArUco re-calibration without restarting the camera node.
-CAMERA_RECALIBRATE_SERVICE = settings.RECALIBRATE_SERVICE
+CAMERA_RECALIBRATE_SERVICE = names.recalibrate
 # Whether the camera→base_link transform is currently locked, published at ~2 Hz.
-CALIBRATION_STATUS_TOPIC = settings.CALIBRATION_STATUS_TOPIC
+CALIBRATION_STATUS_TOPIC = names.calibration_status
 
 # A /joint_states message older than this (seconds) is considered stale.
 JOINT_STATES_TIMEOUT_S = settings.JOINT_STATES_TIMEOUT_S
@@ -179,7 +180,8 @@ class GuiBridgeNode(Node):
     """
 
     def __init__(self):
-        super().__init__('gui_bridge_node')
+        # Same namespace as the stack it drives, so its relative names match.
+        super().__init__('gui_bridge_node', namespace=names.namespace)
 
         # --- connectivity probes ---
         self._traj_client = ActionClient(self, FollowJointTrajectory, TRAJ_ACTION)
@@ -229,9 +231,9 @@ class GuiBridgeNode(Node):
         self._recalibrate_client = self.create_client(Trigger, CAMERA_RECALIBRATE_SERVICE)
 
         # --- planning / execution ---
-        self._plan_client = self.create_client(PlanTask, '/plan_task')
-        self._exec_client = self.create_client(ExecutePlan, '/execute_plan')
-        self._cancel_client = self.create_client(CancelExecution, '/cancel_execution')
+        self._plan_client = self.create_client(PlanTask, names.plan_task)
+        self._exec_client = self.create_client(ExecutePlan, names.execute_plan)
+        self._cancel_client = self.create_client(CancelExecution, names.cancel_execution)
         self._command_lock = threading.Lock()
         self._scene_json = self._load_scene()
         # Set by plan_command() to the DebugRun folder its /plan_task call
@@ -261,7 +263,7 @@ class GuiBridgeNode(Node):
         # supervisors, so it's None (-> empty logs) until then.
         self._log_sources = {'stack': None, 'camera': None, 'robot': None}
         self.create_service(
-            Trigger, '/gui/get_terminal_logs', self._handle_get_terminal_logs
+            Trigger, names.terminal_logs, self._handle_get_terminal_logs
         )
 
         self.get_logger().info('[GuiBridgeNode] started')
@@ -878,7 +880,7 @@ class GuiBridgeNode(Node):
     def _param_client(self, node_name: str):
         client = self._param_clients.get(node_name)
         if client is None:
-            client = self.create_client(SetParameters, f'/{node_name}/set_parameters')
+            client = self.create_client(SetParameters, f'{node_name}/set_parameters')
             self._param_clients[node_name] = client
         return client
 
