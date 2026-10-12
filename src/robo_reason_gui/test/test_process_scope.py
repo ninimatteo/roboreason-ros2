@@ -14,8 +14,13 @@ def child():
 
     def spawn(**overrides):
         env = dict(os.environ, **overrides)
-        proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], env=env)
+        proc = subprocess.Popen(
+            [sys.executable, '-c', 'import time; print("ready", flush=True); time.sleep(30)'],
+            env=env, stdout=subprocess.PIPE, text=True,
+        )
         procs.append(proc)
+        # Until the child has exec'd, /proc/<pid>/environ can read empty.
+        proc.stdout.readline()
         return proc.pid
 
     yield spawn
