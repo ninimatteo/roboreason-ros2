@@ -405,6 +405,8 @@ class VLMLLMPlannerNode(Node):
 
         if not dep.success:
             raise RuntimeError(f'Deproject failed: {dep.error_message}')
+        if dep.frame_id != 'base_link':
+            raise RuntimeError(f"Deproject returned points in '{dep.frame_id}', expected 'base_link'")
 
         return list(dep.points)
 

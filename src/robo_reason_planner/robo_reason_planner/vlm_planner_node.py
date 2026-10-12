@@ -435,6 +435,8 @@ class VLMPlannerNode(Node):
 
         if not dep.success:
             raise RuntimeError(f'Deproject failed: {dep.error_message}')
+        if dep.frame_id != 'base_link':
+            raise RuntimeError(f"Deproject returned points in '{dep.frame_id}', expected 'base_link'")
 
         plan_steps = copy.deepcopy(pixel_steps)
         for i, field, center_idx in entries:
@@ -510,9 +512,9 @@ class VLMPlannerNode(Node):
             req.v = req_v
             future = self._deproject_client.call_async(req)
             dep = self._wait_for_future(future, '/camera/deproject (grasp_width)')
-            if not dep.success:
+            if not dep.success or dep.frame_id != 'base_link':
                 self.get_logger().warn(
-                    f'[VLMPlannerNode] grasp_width refinement skipped ({dep.error_message}); '
+                    f'[VLMPlannerNode] grasp_width refinement skipped ({dep.error_message or dep.frame_id}); '
                     "keeping the VLM's own width estimate."
                 )
                 return
