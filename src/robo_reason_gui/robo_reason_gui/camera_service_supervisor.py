@@ -101,7 +101,7 @@ class CameraServiceSupervisor:
         for raw in iter(proc.stdout.readline, ''):
             self._logs.append({'t': time.strftime('%H:%M:%S'), 'line': raw.rstrip('\n')})
         rc = proc.wait()
-        self._log(f'camera process exited (returncode={rc})')
+        self._log(f'{self.LOG_PREFIX} process exited (returncode={rc})')
 
     # ------------------------------------------------------------ readiness
     def _safe_ready(self) -> bool:

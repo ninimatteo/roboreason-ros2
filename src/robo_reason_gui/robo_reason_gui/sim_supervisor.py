@@ -12,6 +12,7 @@ import subprocess
 import threading
 
 from robo_reason_gui.camera_service_supervisor import CameraServiceSupervisor
+from robo_reason_gui.process_scope import same_environment
 
 # Leftovers of a simulation whose GUI died without stopping it. A second
 # Gazebo server would publish a second set of joint states and camera frames.
@@ -55,7 +56,7 @@ class SimSupervisor(CameraServiceSupervisor):
             out = subprocess.run(['pgrep', '-f', pattern], capture_output=True, text=True)
             for token in out.stdout.split():
                 pid = int(token)
-                if pid in own:
+                if pid in own or not same_environment(pid):
                     continue
                 try:
                     os.kill(pid, signal.SIGKILL)

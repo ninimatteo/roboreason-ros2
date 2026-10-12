@@ -20,6 +20,7 @@ from collections import deque
 
 from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import load_interfaces, names
+from robo_reason_gui.process_scope import same_environment
 
 # Node executables (and the launch file itself) that gui_stack.launch.py spawns.
 # The GUI is the sole owner of the stack (B1), so before launching we sweep for
@@ -35,6 +36,7 @@ _STACK_PROCESS_PATTERNS = (
     'lib/robo_reason_executor/fake_skill_executor_node',
     'lib/robo_reason_executor/ur5_skill_executor_node',
     'lib/vlm_camera_service/mock_camera_service_node',
+    'lib/vlm_camera_service/camera_services_node',
 )
 
 
@@ -281,9 +283,10 @@ class StackSupervisor:
             for pid in self._pgrep(pattern):
                 if pid in own:
                     continue
-                # Only our own profile's stack: a real-robot stack running next
-                # to a simulated one (digital twin) is not a leftover.
-                if _process_namespace(pid) != names.namespace:
+                # Only our own profile's stack, in our own ROS domain: a
+                # real-robot stack next to a simulated one (digital twin), or
+                # another GUI's stack in another domain, is not a leftover.
+                if _process_namespace(pid) != names.namespace or not same_environment(pid):
                     continue
                 try:
                     os.kill(pid, signal.SIGKILL)
