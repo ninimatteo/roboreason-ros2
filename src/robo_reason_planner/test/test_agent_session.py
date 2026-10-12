@@ -190,3 +190,24 @@ def test_actions_after_a_failed_one_in_the_same_turn_are_skipped(tmp_path):
     results = [m['content'] for m in client.seen[2][1] if m['role'] == 'tool'][-3:]
     assert results[0].startswith('ERROR') and results[1].startswith('SKIPPED')
     assert '"height_m"' in results[2]      # perception still runs
+
+
+def test_stop_does_not_wait_for_a_slow_model_call(tmp_path):
+    import time
+
+    class SlowClient(ScriptedClient):
+        def chat(self, messages, tools, tool_choice='auto'):
+            if len(self.seen) == 1:
+                time.sleep(3)
+            return super().chat(messages, tools, tool_choice)
+
+    backend, lines = FakeBackend(tmp_path), []
+    client = SlowClient([PLAN, [('look', {})]])
+    session = AgentSession(client, _toolbox(backend, lines), 'x', log=lines.append)
+    session.draft_plan()
+    stop = threading.Event()
+    threading.Timer(0.3, stop.set).start()
+    t0 = time.monotonic()
+    with pytest.raises(AgentCancelled):
+        session.execute(cancelled=stop)
+    assert time.monotonic() - t0 < 1.5

@@ -376,6 +376,8 @@ function syncPixelGroundingVisibility() {
 function syncReasoningEffortVisibility() {
   const mode = (selMode.value || 'LLM').toUpperCase();
   reasoningEffortFields.hidden = !['VLM', 'VLM_LLM', 'AGENT'].includes(mode);
+  // The AGENT is a single tool calling loop: no reasoning method to pick.
+  selReasoning.closest('label').hidden = mode === 'AGENT';
 }
 
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show

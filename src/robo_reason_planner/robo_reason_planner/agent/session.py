@@ -7,6 +7,7 @@ through the Toolbox backend, the model through a ToolChatClient (or a fake).
 """
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 import json
 import time
 from dataclasses import dataclass, field
@@ -61,7 +62,7 @@ class AgentSession:
 
         for _ in range(3):
             self._check_cancel(cancelled)
-            reply = self._chat([SUBMIT_PLAN], tool_choice='required')
+            reply = self._chat([SUBMIT_PLAN], tool_choice='required', cancelled=cancelled)
             submitted = False
             for call in reply.tool_calls:
                 result = self._run_call(call)
@@ -89,7 +90,7 @@ class AgentSession:
                 summary = f'gave up: exceeded {self.max_duration_s:.0f} s'
                 break
 
-            reply = self._chat(EXECUTION_TOOLS)
+            reply = self._chat(EXECUTION_TOOLS, cancelled=cancelled)
             if reply.content.strip():
                 self.log(f'[Agent] says: {reply.content.strip()[:300]}')
             if not reply.tool_calls:
@@ -129,9 +130,22 @@ class AgentSession:
 
     # ── plumbing ───────────────────────────────────────────────────────────
 
-    def _chat(self, tools, tool_choice='auto'):
+    def _chat(self, tools, tool_choice='auto', cancelled=None):
         self.model_calls += 1
-        reply = self.client.chat(self.messages, tools, tool_choice=tool_choice)
+        if cancelled is None:
+            reply = self.client.chat(self.messages, tools, tool_choice=tool_choice)
+        else:
+            # Run the call aside so a stop doesn't wait for a slow (or rate
+            # limited, retrying) model: the late reply is simply dropped.
+            pool = ThreadPoolExecutor(max_workers=1)
+            future = pool.submit(self.client.chat, list(self.messages), tools, tool_choice=tool_choice)
+            pool.shutdown(wait=False)
+            while True:
+                try:
+                    reply = future.result(timeout=0.2)
+                    break
+                except FuturesTimeout:
+                    self._check_cancel(cancelled)
         self.messages.append(reply.message)
         self.transcript.append({
             **{k: v for k, v in reply.message.items() if k != 'reasoning_content'},

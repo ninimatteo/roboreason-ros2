@@ -124,3 +124,35 @@ ros2 param set /sim/gripper_shim_node drop_next_grasp_after_s 2.0 # il cubo cade
 Vedi `benchmark/agent_sim/`: i sei task del benchmark (stessa formulazione di
 `benchmark/PLAN.md`) più varianti con guasti, valutati in automatico sulle pose
 di ground truth di Gazebo, non sul giudizio del modello.
+
+### Risultati della notte del 2026-10-12
+
+Simulazione Gazebo, verdetto sulle pose di ground truth. Ogni riga dei CSV ha
+commit, modello, scenario, sub task completati, tempi e numero di chiamate.
+
+| Modello | Scenari superati | Note |
+|---|---|---|
+| `nebius/kimi-k3` | 10/10 in due giri completi (`results_first_pass.csv` e `results.csv`) | chiamate da 1 a 2 s; esecuzione mediana circa 2 minuti, da 51 s per `sort_easy` a 4 minuti per `pp_hard` |
+| `nebius/deepseek-v4.1-flash` | 3/3 (`pp_easy`, `pp_hard`, `sort_easy`) | poi il budget gratuito Nebius è finito (HTTP 402) |
+| `groq/qwen3.8-27b` | non valutabile | il free tier Groq ha un limite di 7000 input token al minuto e una sola chiamata di esecuzione ne usa circa 7000 |
+
+Costo: da 60 mila a 470 mila input token per task (cresce con la
+conversazione), circa 2 milioni per un giro dei 10 scenari.
+
+Cosa ha mostrato la valutazione, e cosa è stato corretto strada facendo:
+
+* un grasp fallito viene notato (il vecchio bbox risulta ancora occupato) e
+  ripetuto; un cubo che cade durante il trasporto viene ritrovato e ripreso;
+  un cubo spostato a metà task viene preso dalla nuova posizione
+* il modello confondeva il cubo appeso al polso in home con un cubo sul
+  tavolo: da qui lo stato del gripper nei risultati e la nota sulle letture
+  alte in `inspect_object`
+* il modello si inventava le posizioni della fila in `sort_hard`: da qui
+  `find_free_spot` con `count` e `arrangement='line'`
+* le larghezze erano sempre 0: `local_plane_centroid` del camera node fa
+  collassare i pixel di bordo sul centro della faccia, ora la larghezza viene
+  da bbox, intrinseci e TF. I bbox dei modelli sono larghi (includono le facce
+  laterali), quindi la larghezza è sovrastimata, circa 6.7 cm per un cubo da
+  4.5 cm
+* posizioni oltre il reach mandavano l'IK in errore: ora vengono rifiutate e
+  `find_free_spot` non le propone più
