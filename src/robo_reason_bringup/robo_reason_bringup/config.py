@@ -153,6 +153,14 @@ class Settings(BaseSettings):
     # down. Used to cap pick-target descent depth for tall objects.
     TCP_CLAMP_CLEARANCE_M: float = 0.15
 
+    # Known pose of the camera optical frame in base_link, as
+    # [x, y, z, roll, pitch, yaw] (metres, radians, same RPY convention as the
+    # board_in_base_* parameters). When set, camera_services_node takes the
+    # camera→base_link transform as given and skips ChArUco calibration. Empty
+    # (the default) means calibrate from the board, as on the real robot. The
+    # simulation sets it, since its camera pose is known exactly.
+    FIXED_CAMERA_POSE: List[float] = []
+
     # ── Depth filtering ───────────────────────────────────────────────────────
     WINDOW_SIZE: int = 7
     MIN_DEPTH_M: float = 0.15

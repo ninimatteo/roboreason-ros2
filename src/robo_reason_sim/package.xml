@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robo_reason_sim</name>
+  <version>0.1.0</version>
+  <description>Gazebo virtual test environment: the scene_mock.json scene with a simulated UR5, a live RGB-D camera and a "magic" gripper.</description>
+  <maintainer email="matteo.nini@example.com">Matteo Nini</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>robo_reason_bringup</depend>
+  <depend>robo_reason_executor</depend>
+  <depend>robo_reason_task_interface</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_msgs</depend>
+  <depend>ur_msgs</depend>
+  <exec_depend>ur_description</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>gz_ros2_control</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

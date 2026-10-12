@@ -16,6 +16,7 @@ Indice della documentazione di `roboreason-ros2`. Le cartelle sono divise per
 **`guide/`**
 - `operator-guide.md` — guida operativa completa: modalità, launch file, GUI.
 - `docker-setup.md` — setup del container. Non tracciato da git, vedi nota sotto.
+- `simulation.md` — la simulazione Gazebo: avvio, gripper simulato, differenze dal robot vero.
 
 **`reference/`**
 - `grasp-geometry-pipeline.md` — come vengono calcolate geometria di presa e di rilascio nelle tre modalità.

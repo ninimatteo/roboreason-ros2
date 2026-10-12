@@ -187,6 +187,10 @@ class CameraServicesNode(Node):
         # One-shot calibration: try every 0.5 s until the board is detected once,
         # then lock the transform and cancel this timer.
         self._calib_timer = self.create_timer(0.5, self._try_calibrate)
+        # A known camera pose (simulation) replaces calibration entirely:
+        # _try_calibrate sees the lock and cancels itself on its first tick.
+        if settings.FIXED_CAMERA_POSE:
+            self._apply_fixed_camera_pose()
         # Publish projected ChArUco axis keypoints at ~2 Hz for the GUI overlay.
         self.create_timer(0.5, self._publish_charuco_axis)
         self.get_logger().info(f"charuco_axis_topic={charuco_axis_topic}")
@@ -477,6 +481,17 @@ class CameraServicesNode(Node):
         )
         self._publish_camera_tf(T_locked)
 
+    def _apply_fixed_camera_pose(self) -> None:
+        """Lock T_base_camera to settings.FIXED_CAMERA_POSE, skipping ChArUco."""
+        x, y, z, roll, pitch, yaw = (float(v) for v in settings.FIXED_CAMERA_POSE)
+        self._T_base_camera = board_pose_to_matrix(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw)
+        self._charuco_calibrated = True
+        self.get_logger().info(
+            '[CameraServicesNode] Using fixed camera pose from FIXED_CAMERA_POSE; '
+            'ChArUco calibration disabled.'
+        )
+        self._publish_camera_tf(self._T_base_camera)
+
     def _handle_recalibrate(self, _request: Trigger.Request, response: Trigger.Response):
         """Reset calibration state and restart the detection loop.
 
@@ -486,6 +501,11 @@ class CameraServicesNode(Node):
         never stopped), silently leaking timers and letting a stale in-flight
         callback race the fresh calibration attempt.
         """
+        if settings.FIXED_CAMERA_POSE:
+            self._apply_fixed_camera_pose()
+            response.success = True
+            response.message = 'Camera pose is fixed (FIXED_CAMERA_POSE); nothing to recalibrate.'
+            return response
         self._T_base_camera = None
         self._charuco_calibrated = False
         self._calib_hits = []

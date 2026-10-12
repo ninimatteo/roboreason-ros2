@@ -1,0 +1,33 @@
+# Settings of the Gazebo virtual test environment (ROBOAI-33).
+#
+# The objects and zones are NOT here: the world is generated from
+# robo_reason_task_interface/config/scene_mock.json at launch, so the
+# simulation always matches the scene the LLM mode plans on.
+
+world_name: roboreason
+
+camera:
+  # Pose of the camera body in base_link: [x, y, z, roll, pitch, yaw]
+  # (metres, radians). Gazebo cameras look along their body +x, so
+  # pitch = pi/2 points it straight down. Above the middle of the work area.
+  pose: [0.0, -0.45, 1.10, 0.0, 1.5708, 1.5708]
+  width: 640
+  height: 480
+  horizontal_fov: 1.2   # rad, about 69 degrees like the Orbbec colour stream
+  update_rate: 10       # Hz
+  near: 0.1
+  far: 3.0
+
+robot:
+  ur_type: ur5
+  # The executor's IK works in the UR controller "base" frame, which
+  # ur_description rotates by pi about z from base_link. Spawning base_link
+  # with this yaw makes "base" coincide with the world frame, so scene
+  # coordinates, world coordinates and IK coordinates are all the same.
+  spawn_yaw: 3.14159265
+
+gripper:
+  # The gripper closes "magically": the nearest cube is attached to the
+  # wrist if its centre is within this distance of the TCP, otherwise the
+  # gripper closes on nothing and the cube stays where it is.
+  grasp_tolerance_m: 0.035
