@@ -923,6 +923,14 @@ function renderPlanPanel(plan) {
   });
   planContent.appendChild(list);
 
+  // AGENT mode: the plan is only a draft; what the agent actually does
+  // (tool calls, plan revisions, what it says) streams in below it.
+  if (plan.reasoning_method === 'agent') {
+    planContent.appendChild(el('div', 'label', 'agent trace'));
+    stepEls.__trace = el('ol', 'agent-trace');
+    planContent.appendChild(stepEls.__trace);
+  }
+
   const details = el('details', 'raw-plan');
   details.appendChild(el('summary', null, 'raw JSON'));
   details.appendChild(el('pre', null, JSON.stringify(plan, null, 2)));
@@ -1034,6 +1042,15 @@ function setStepState(li, state) {
 function applyLogLine(stepEls, line) {
   const m = line.match(/\[Step\s+(\S+?)\]/);
   if (m && line.includes('-> OK')) setStepState(stepEls[m[1]], 'done');
+  if (m && line.includes('-> FAILED')) setStepState(stepEls[m[1]], 'failed');
+  if (m && line.includes('-> RETRYING')) setStepState(stepEls[m[1]], 'running');
+  const trace = stepEls.__trace;
+  if (trace && (line.startsWith('[Agent]') || line.startsWith('[Plan]') || m)) {
+    const kind = line.includes('FAILED') || line.includes('refused') ? 'bad'
+      : line.startsWith('[Plan]') ? 'plan' : line.includes('-> done') ? 'act' : '';
+    trace.appendChild(el('li', kind, line.replace(/^\[Agent\]\s*/, '')));
+    trace.scrollTop = trace.scrollHeight;
+  }
 }
 
 async function sendCommand(command) {

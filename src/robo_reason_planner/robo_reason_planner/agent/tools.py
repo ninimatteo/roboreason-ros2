@@ -137,6 +137,9 @@ class Toolbox:
     image_size: tuple = (640, 480)
     images: list = field(default_factory=list)
     actions: list = field(default_factory=list)   # (tool, args, ok, error) of every action
+    # What the gripper was last commanded to do. Not a sensor: after a pick it
+    # is closed whether or not the object came along.
+    gripper: str = 'open'
 
     # ── entry point ────────────────────────────────────────────────────────
 
@@ -257,6 +260,12 @@ class Toolbox:
     def _sequence(self, tool, summary_args, skills):
         for skill, args in skills:
             ok, error = self.backend.run_skill(skill, args)
+            if skill == 'pick':
+                # The executor opens the gripper before closing it, so even a
+                # failed pick may have dropped what was held.
+                self.gripper = 'closed' if ok else 'unknown'
+            elif skill == 'release' and ok:
+                self.gripper = 'open'
             if not ok:
                 self.actions.append((tool, summary_args, False, f'{skill}: {error}'))
                 self.log(f'[Agent] {tool} {json.dumps(summary_args)} -> FAILED at {skill}: {error}')
@@ -266,6 +275,7 @@ class Toolbox:
         return self._after_action(f'{tool} completed.')
 
     def _after_action(self, text):
+        text += ' ' + _GRIPPER_STATE[self.gripper]
         if not self.config.auto_look_after_action:
             return ToolResult(text)
         path = self.capture()
@@ -300,6 +310,14 @@ class Toolbox:
         if x1 < 0 or y1 < 0 or x0 > w or y0 > h:
             raise ValueError(f'bbox {bbox} is outside the {w}x{h} image')
         return [max(x0, 0.0), max(y0, 0.0), min(x1, w - 1.0), min(y1, h - 1.0)]
+
+
+_GRIPPER_STATE = {
+    'open': 'Gripper: open, holding nothing.',
+    'closed': ('Gripper: closed since the last pick. If the pick worked, the object hangs under the '
+               'gripper and moves with the arm; a new pick would open the gripper and drop it.'),
+    'unknown': 'Gripper: unknown after a failed pick; anything held may have been dropped.',
+}
 
 
 def _clean_steps(steps):

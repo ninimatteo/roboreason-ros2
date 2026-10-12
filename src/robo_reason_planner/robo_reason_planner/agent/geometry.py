@@ -14,6 +14,11 @@ import math
 from dataclasses import dataclass
 
 
+# Anything seen higher than this above the table is reported as probably the
+# arm (or what it holds) rather than an object standing on the table.
+ABOVE_TABLE_NOTE_M = 0.20
+
+
 @dataclass
 class GraspGeometry:
     pick_fraction: float        # how far down the object to grasp (0 = top, 1 = bottom)
@@ -58,6 +63,9 @@ def object_measurement(center, edges: dict, table_z: float, geo: GraspGeometry) 
         'held_height_below_grasp_m': round(height - descent, 4),
         'looks_empty': (top_z - table_z) < 0.01,
     }
+    if top_z - table_z > ABOVE_TABLE_NOTE_M:
+        out['note'] = (f'this surface is {top_z - table_z:.2f} m above the table: probably the arm, '
+                       'or an object held in the gripper, not something standing on the table')
     if 'left' in edges and 'right' in edges:
         out['width_m'] = round(_dist_xy(edges['left'], edges['right']), 4)
     if 'top' in edges and 'bottom' in edges:
