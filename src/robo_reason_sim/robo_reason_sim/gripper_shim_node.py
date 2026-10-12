@@ -89,6 +89,8 @@ class GripperShimNode(Node):
                                tcp_offset_z_for_width(None))
 
         self._held = None
+        self._reader = rclpy.create_node('gripper_shim_reader', namespace=self.get_namespace())
+        self._read_lock = threading.Lock()
 
         group = ReentrantCallbackGroup()
         ns = self.get_namespace().strip('/')
@@ -120,7 +122,11 @@ class GripperShimNode(Node):
             self.get_logger().info('[GripperShim] Released all cubes from the startup attach.')
 
     def _read(self, msg_type, topic):
-        ok, msg = wait_for_message(msg_type, self, topic, time_to_wait=_READ_TIMEOUT_S)
+        # On a private node the executor never spins: wait_for_message creates
+        # and destroys a subscription, and doing that on this node raced the
+        # MultiThreadedExecutor (InvalidHandle, the shim died mid benchmark).
+        with self._read_lock:
+            ok, msg = wait_for_message(msg_type, self._reader, topic, time_to_wait=_READ_TIMEOUT_S)
         return msg if ok else None
 
     def _read_cube_positions(self) -> dict:
