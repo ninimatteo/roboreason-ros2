@@ -320,6 +320,16 @@ All runtime settings live in `robo_reason_bringup/config.py` as a single `pydant
 
 ROS names (every topic, service and action) are **not** in `config.py`: they live in `robo_reason_bringup/robo_reason_bringup/interfaces.yaml`, read through `robo_reason_bringup.interfaces.names`. Never hardcode a name in a node. The file has one profile per environment (`real`, `sim`) selected by `ROBOREASON_PROFILE` or `profile:=` on `gui_stack.launch.py`. All names are relative and each profile runs in its own namespace (`real` in the root, `sim` in `/sim`), which is what lets a real and a simulated stack run at the same time.
 
+### AGENT mode (branch `ouroboros` only, never merged into main)
+
+`agent_node` (in `robo_reason_planner`) replaces both the planner and the plan
+manager behind the same service names: `plan_task` returns a draft plan,
+`execute_plan` runs a closed loop where a VLM with native tool calling
+measures with the depth camera, acts one skill sequence at a time and checks
+a fresh image after each action. The deterministic geometry lives in
+`agent/geometry.py` as tools the model calls, not as silent post processing.
+See `docs/reference/agentic-mode.md`; sim evaluation in `benchmark/agent_sim/`.
+
 ### Reasoning layer (`robo_reason_reasoning`)
 
 `EmbodiedAgent` is the entry point: it selects one of 7 reasoning method classes (`FHP`, `React`, `CoTSC`, `StepAction`, `SelfRefine`, `TreeOfThought`) based on `reasoning_mode`, and instantiates either `LLMClient` or `VLMClient`.
