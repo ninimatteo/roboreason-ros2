@@ -960,7 +960,8 @@ class GuiBridgeNode(Node):
         # reasoning_effort exists on both the VLM planner and the VLM_LLM
         # scene-grounding call — see VLM_REASONING_EFFORT in config.py.
         params = []
-        if config.get('reasoning_method') is not None:
+        # The AGENT has no reasoning method: it is one tool calling loop.
+        if config.get('reasoning_method') is not None and mode != 'AGENT':
             params.append(('reasoning_method', str(config['reasoning_method'])))
         if config.get('model_name') is not None:
             params.append(('model_name', str(config['model_name'])))
@@ -975,7 +976,7 @@ class GuiBridgeNode(Node):
                 params.append(('vlm_temperature', float(config['vlm_temperature'])))
         if mode == 'VLM' and config.get('grounding_mode') is not None:
             params.append(('grounding_mode', str(config['grounding_mode'])))
-        if mode in ('VLM', 'VLM_LLM') and config.get('reasoning_effort') is not None:
+        if mode in ('VLM', 'VLM_LLM', 'AGENT') and config.get('reasoning_effort') is not None:
             params.append(('reasoning_effort', str(config['reasoning_effort'])))
 
         if not params:

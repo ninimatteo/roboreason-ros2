@@ -27,7 +27,7 @@ REASONING_METHODS = ['fhp', 'ffhp', 'react', 'cot_sc', 'tot', 'always_act', 'sel
 
 GUI_PROVIDERS = ('groq', 'nebius')
 
-MODES = ['LLM', 'VLM', 'VLM_LLM']
+MODES = ['LLM', 'VLM', 'VLM_LLM', 'AGENT']
 
 DEFAULT_TEMPERATURE = 0.1
 
@@ -60,7 +60,8 @@ DEFAULT_TEMPERATURE = 0.1
 # time before trusting an entry here, not just once.
 VISION_MODELS: dict = {
     'groq':   ['qwen3.6-27b', 'qwen3.8-27b'],
-    'nebius': ['kimi-k2.6', 'nvidia-cosmos3-33b', 'minicpm-v-4.5'],
+    'nebius': ['kimi-k2.6', 'nvidia-cosmos3-33b', 'minicpm-v-4.5',
+               'kimi-k3', 'deepseek-v4.1-flash', 'glm-5.3-flash'],
 }
 
 # Models present in ModelRegistry that are NOT chat-capable (e.g. embeddings).

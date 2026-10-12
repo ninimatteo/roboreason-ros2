@@ -85,7 +85,7 @@ let llmProviderModels = {};
 let vlmProviderModels = {};
 
 function currentProviderModels() {
-  return (selMode.value || 'LLM').toUpperCase() === 'VLM'
+  return ['VLM', 'AGENT'].includes((selMode.value || 'LLM').toUpperCase())
     ? vlmProviderModels
     : llmProviderModels;
 }
@@ -281,7 +281,7 @@ function currentConfig() {
   if ((selMode.value || 'LLM').toUpperCase() === 'VLM') {
     config.grounding_mode = selGroundingMode.value;
   }
-  if (['VLM', 'VLM_LLM'].includes((selMode.value || 'LLM').toUpperCase())) {
+  if (['VLM', 'VLM_LLM', 'AGENT'].includes((selMode.value || 'LLM').toUpperCase())) {
     config.reasoning_effort = selReasoningEffort.value;
   }
   return config;
@@ -353,7 +353,7 @@ function stackPayload() {
 // modes that actually use a camera / an LLM, so hide them otherwise.
 function syncCameraToggle() {
   const mode = (selMode.value || 'LLM').toUpperCase();
-  const usesCamera = mode === 'VLM' || mode === 'VLM_LLM';
+  const usesCamera = mode === 'VLM' || mode === 'VLM_LLM' || mode === 'AGENT';
   const usesLlm = mode === 'LLM';
   wrapMockCamera.hidden = !usesCamera;
   wrapMockLlm.hidden = !usesLlm;
@@ -375,7 +375,7 @@ function syncPixelGroundingVisibility() {
 // VLM_LLM (scene-grounding call) — anywhere a VLM client is used.
 function syncReasoningEffortVisibility() {
   const mode = (selMode.value || 'LLM').toUpperCase();
-  reasoningEffortFields.hidden = mode !== 'VLM' && mode !== 'VLM_LLM';
+  reasoningEffortFields.hidden = !['VLM', 'VLM_LLM', 'AGENT'].includes(mode);
 }
 
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
@@ -430,7 +430,7 @@ function renderStack(status) {
     const parts = [
       t.mode,
       `robot:${t.mock_robot ? 'mock' : 'real'}`,
-      (t.mode === 'VLM' || t.mode === 'VLM_LLM') ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
+      ['VLM', 'VLM_LLM', 'AGENT'].includes(t.mode) ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
       t.mock_llm ? 'llm:mock' : 'llm:real',
     ].filter(Boolean);
     stackInfo.textContent =
