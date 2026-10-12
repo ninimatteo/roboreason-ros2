@@ -67,6 +67,8 @@ JOINT_STATES_TIMEOUT_S = settings.JOINT_STATES_TIMEOUT_S
 PLAN_TIMEOUT_S = settings.PLAN_TIMEOUT_S
 EXECUTE_TIMEOUT_S = settings.EXECUTE_TIMEOUT_S
 CANCEL_TIMEOUT_S = settings.CANCEL_TIMEOUT_S
+# The reset waits for the arm to drive home (about 4 s) before moving the cubes.
+SIM_RESET_TIMEOUT_S = 30.0
 
 # task_id -> (label, sub_tasks_required) for the GUI's inline benchmark
 # annotation form (see record_benchmark_annotation). Must stay in sync with
@@ -234,6 +236,8 @@ class GuiBridgeNode(Node):
         self._plan_client = self.create_client(PlanTask, names.plan_task)
         self._exec_client = self.create_client(ExecutePlan, names.execute_plan)
         self._cancel_client = self.create_client(CancelExecution, names.cancel_execution)
+        # Only served by the simulation (sim profile).
+        self._reset_sim_client = self.create_client(Trigger, names.reset_simulation)
         self._command_lock = threading.Lock()
         self._scene_json = self._load_scene()
         # Set by plan_command() to the DebugRun folder its /plan_task call
@@ -861,6 +865,14 @@ class GuiBridgeNode(Node):
         """
         try:
             resp = self._call(self._cancel_client, CancelExecution.Request(), CANCEL_TIMEOUT_S)
+            return {'ok': resp.success, 'message': resp.message}
+        except Exception as exc:
+            return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
+
+    def reset_simulation(self) -> dict:
+        """Put the simulated scene back to its initial state (sim profile only)."""
+        try:
+            resp = self._call(self._reset_sim_client, Trigger.Request(), SIM_RESET_TIMEOUT_S)
             return {'ok': resp.success, 'message': resp.message}
         except Exception as exc:
             return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}

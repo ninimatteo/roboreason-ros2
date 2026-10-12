@@ -21,7 +21,8 @@ COLORS = {
     'red': (0.80, 0.08, 0.08),
     'blue': (0.10, 0.25, 0.85),
     'white': (0.95, 0.95, 0.95),
-    'orange': (1.00, 0.50, 0.05),
+    # Deep orange: a lighter one renders yellowish and the VLM calls it yellow.
+    'orange': (0.95, 0.30, 0.00),
     'brown': (0.45, 0.28, 0.12),
     'green': (0.10, 0.65, 0.20),
     'yellow': (0.95, 0.85, 0.10),
@@ -84,6 +85,18 @@ def graspable_objects(scene: dict) -> dict:
     return {name: obj for name, obj in scene.get('objects', {}).items() if obj.get('graspable')}
 
 
+def object_rest_positions(scene: dict) -> dict:
+    """Where each graspable object starts: on the table, centred on its scene x, y.
+
+    Used both to build the world and to put the objects back on a reset.
+    """
+    surface_z = float(scene['workspace']['table']['surface_z'])
+    return {
+        name: (obj['position'][0], obj['position'][1], surface_z + obj['size'][2] / 2)
+        for name, obj in graspable_objects(scene).items()
+    }
+
+
 def _material(rgb) -> str:
     r, g, b = rgb
     return (f'<material><ambient>{r} {g} {b} 1</ambient><diffuse>{r} {g} {b} 1</diffuse>'
@@ -140,11 +153,11 @@ def build_world_sdf(scene: dict, cfg: dict, namespace: str) -> str:
             COLORS.get(target.get('color'), TABLE_COLOR),
         ))
     # Objects rest on the table, centred on their scene x, y.
+    rest = object_rest_positions(scene)
     for name, obj in graspable_objects(scene).items():
         size = obj['size']
-        x, y = obj['position'][0], obj['position'][1]
         models.append(_box_model(
-            name, (x, y, surface_z + size[2] / 2), size,
+            name, rest[name], size,
             COLORS.get(obj.get('color'), (0.5, 0.5, 0.5)), static=False, mass=CUBE_MASS_KG,
         ))
 
@@ -251,7 +264,7 @@ def bridge_config(cfg: dict, names, namespace: str, cube_names) -> list:
         (ros(names.depth), f'{cam}/depth_image', 'sensor_msgs/msg/Image', 'ignition.msgs.Image', 'GZ_TO_ROS'),
         (ros(names.camera_info), f'{cam}/camera_info', 'sensor_msgs/msg/CameraInfo',
          'ignition.msgs.CameraInfo', 'GZ_TO_ROS'),
-        (ros('ground_truth/poses'), f"/world/{cfg['world_name']}/pose/info",
+        (ros('ground_truth/poses'), f"/world/{cfg['world_name']}/dynamic_pose/info",
          'tf2_msgs/msg/TFMessage', 'ignition.msgs.Pose_V', 'GZ_TO_ROS'),
     ]
     for cube in cube_names:

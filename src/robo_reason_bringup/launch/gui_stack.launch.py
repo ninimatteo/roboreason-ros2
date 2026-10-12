@@ -31,7 +31,7 @@ from launch.actions import (
 from launch.conditions import IfCondition, LaunchConfigurationEquals, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node, PushRosNamespace, SetParameter, SetRemap
+from launch_ros.actions import Node, PushRosNamespace, SetRemap
 
 from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import load_interfaces
@@ -51,10 +51,6 @@ def _in_profile_scope(context, actions):
         # TF is global by default; keep it in the namespace like everything else.
         scope += [PushRosNamespace(namespace),
                   SetRemap('/tf', 'tf'), SetRemap('/tf_static', 'tf_static')]
-    if profile == 'sim':
-        # Gazebo stamps sensor data with simulation time; the stack must run on
-        # the same clock or every camera frame looks hours old.
-        scope.append(SetParameter(name='use_sim_time', value=True))
     if profile == 'sim' and not settings.FIXED_CAMERA_POSE:
         # The simulated camera's pose is known exactly: no ChArUco calibration.
         from robo_reason_sim.world_builder import camera_optical_pose, load_sim_config

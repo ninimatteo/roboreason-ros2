@@ -12,6 +12,10 @@
   <depend>robo_reason_task_interface</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>control_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>builtin_interfaces</depend>
   <depend>tf2_msgs</depend>
   <depend>ur_msgs</depend>
   <exec_depend>ur_description</exec_depend>

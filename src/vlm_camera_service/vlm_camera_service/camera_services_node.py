@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import numpy as np
@@ -138,6 +139,7 @@ class CameraServicesNode(Node):
         self._tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
 
         self._latest_color: Optional[Image] = None
+        self._latest_color_received = 0.0  # time.monotonic() of the latest frame
         self._latest_depth: Optional[Image] = None
         self._latest_camera_info: Optional[CameraInfo] = None
 
@@ -206,6 +208,7 @@ class CameraServicesNode(Node):
                 f"encoding={msg.encoding}, frame={msg.header.frame_id}"
             )
         self._latest_color = msg
+        self._latest_color_received = time.monotonic()
 
     def _on_depth(self, msg: Image) -> None:
         if self._latest_depth is None:
@@ -236,7 +239,11 @@ class CameraServicesNode(Node):
                 "waiting for camera inputs: " + ", ".join(missing)
             )
 
-    _MAX_FRAME_AGE_NS = 5_000_000_000  # 5 s; frames older than this are treated as stale
+    # Frames received longer ago than this are treated as stale. Measured on
+    # this host's monotonic clock from when the frame arrived, not from its
+    # header stamp: the camera driver's clock (or Gazebo's simulation time) need
+    # not match ours, and a stopped stream is what this check is for.
+    _MAX_FRAME_AGE_S = 5.0
 
     def _handle_get_image(
         self, _request: GetImage.Request, response: GetImage.Response
@@ -247,15 +254,12 @@ class CameraServicesNode(Node):
             response.error_message = "RGB image not received yet"
             return response
 
-        age_ns = (
-            self.get_clock().now()
-            - rclpy.time.Time.from_msg(self._latest_color.header.stamp)
-        ).nanoseconds
-        if age_ns > self._MAX_FRAME_AGE_NS:
+        age_s = time.monotonic() - self._latest_color_received
+        if age_s > self._MAX_FRAME_AGE_S:
             response.success = False
             response.frame_id = ""
             response.error_message = (
-                f"Camera frame is stale ({age_ns / 1e9:.1f} s old) — "
+                f"Camera frame is stale (last one received {age_s:.1f} s ago) — "
                 "check that the Orbbec driver is still publishing."
             )
             return response

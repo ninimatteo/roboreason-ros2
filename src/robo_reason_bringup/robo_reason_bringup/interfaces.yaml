@@ -35,6 +35,8 @@ internal:
   pixel_debug: camera/debug_pixels
   charuco_axis: camera/charuco_axis
   calibration_status: camera/calibration_status
+  # Served only by the simulation (robo_reason_sim): back to the initial scene.
+  reset_simulation: reset_simulation
 
 profiles:
   real:

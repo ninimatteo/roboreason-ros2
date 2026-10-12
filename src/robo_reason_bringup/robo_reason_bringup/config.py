@@ -232,7 +232,9 @@ class Settings(BaseSettings):
     JOINT_STATES_TIMEOUT_S: float = 2.0
     CAMERA_TIMEOUT_S: float = 4.0
     # Service-call budgets (planning may involve a slow LLM/VLM round-trip).
-    PLAN_TIMEOUT_S: float = 300.0
+    # 600 rather than 300: kimi-k2.6 planning took up to 299 s in the
+    # September benchmark (median 100 s), so 300 s cut slow runs off.
+    PLAN_TIMEOUT_S: float = 600.0
     EXECUTE_TIMEOUT_S: float = 300.0
     CANCEL_TIMEOUT_S: float = 20.0
 

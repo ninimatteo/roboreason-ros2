@@ -683,6 +683,7 @@ const simInfo = document.getElementById('sim-info');
 const simLogs = document.getElementById('sim-logs');
 const simStart = document.getElementById('sim-start');
 const simStop = document.getElementById('sim-stop');
+const simReset = document.getElementById('sim-reset');
 const chkSimGazebo = document.getElementById('chk-sim-gazebo');
 
 async function loadProfile() {
@@ -712,6 +713,9 @@ function renderSim(status) {
   simState.className = 'badge ' + (ready ? 'badge-on' : (running ? 'badge-amber' : 'badge-off'));
   simStart.disabled = running;
   simStop.disabled = !running;
+  // Not while a command is in flight (the Stop button is live exactly then):
+  // the reset drives the arm and would fight the executor.
+  simReset.disabled = !ready || !chatEstop.disabled;
   chkSimGazebo.disabled = running;
   popoverDriver.textContent = 'simulation: ' + simState.textContent;
 
@@ -755,6 +759,17 @@ async function simAction(url, body) {
 
 simStart.addEventListener('click', () => simAction('/api/sim/start', { show_gazebo: chkSimGazebo.checked }));
 simStop.addEventListener('click', () => simAction('/api/sim/stop', {}));
+simReset.addEventListener('click', async () => {
+  simReset.disabled = true;
+  try {
+    const data = await postJSON('/api/sim/reset', {});
+    toast('Simulation: ' + (data.message || data.error || 'reset'), data.ok ? 'success' : 'error');
+  } catch (err) {
+    toast('Simulation reset failed: ' + err, 'error');
+  } finally {
+    pollSim();
+  }
+});
 document.getElementById('sim-copy').addEventListener('click', () =>
   copyText(simLogs.textContent, 'Simulation logs'));
 

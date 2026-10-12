@@ -85,10 +85,15 @@ Topic utili in più rispetto al robot vero:
 - **Calibration:** niente ChArUco. La posa della camera è nota esattamente e
   arriva al camera node tramite `FIXED_CAMERA_POSE`, impostata da
   `gui_stack.launch.py` quando il profilo è `sim`.
-- **Clock:** con il profilo `sim` tutti i nodi usano il tempo di simulazione
-  (`use_sim_time`), perché Gazebo timbra i frame camera con quello.
+- **Clock:** lo stack non usa il tempo di simulazione. Il camera node giudica
+  se un frame è vecchio da quando l'ha ricevuto (orologio monotonic dell'host),
+  non dal timestamp del frame, che in Gazebo è in tempo simulato. Con
+  `use_sim_time` ogni nodo riceveva `/clock` a 1000 Hz e restava al 60, 80% di
+  CPU anche da fermo.
 - **Controller:** `joint_trajectory_controller` invece dello
   `scaled_joint_trajectory_controller` (in simulazione non c'è speed scaling).
+  I controller girano a 100 Hz invece dei 500 del driver vero, quindi anche
+  `joint_states` esce a 100 Hz.
   Le tolleranze in `src/robo_reason_sim/config/ur_controllers.yaml` decidono
   quando una trajectory va in abort, l'equivalente simulato di un protective
   stop: stringendole si provocano abort voluti.
@@ -106,3 +111,8 @@ Topic utili in più rispetto al robot vero:
   più (è successo con `robo_reason_real` e `robo_reason_prompts`). Se ricompare
   un errore `package '...' not found`, cancellare `install/<package>` e
   `build/<package>`.
+- **Più simulazioni sulla stessa macchina:** il `ROS_DOMAIN_ID` isola ROS ma
+  **non** Gazebo, che ha i suoi canali. Una seconda istanza (per esempio di
+  test) va avviata anche con un `IGN_PARTITION` diverso, altrimenti camera e
+  gripper delle due si mescolano. Le GUI ripuliscono solo i processi rimasti
+  nel proprio dominio e nella propria partizione.

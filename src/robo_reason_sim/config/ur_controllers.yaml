@@ -3,7 +3,10 @@
 # the /sim namespace.
 /**/controller_manager:
   ros__parameters:
-    update_rate: 500
+    # 100 Hz rather than the real driver's 500: joint_states comes out at this
+    # rate, and every Python node subscribed to it pays for each message. 100 Hz
+    # is plenty for trajectory tracking in simulation.
+    update_rate: 100
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
     joint_trajectory_controller:

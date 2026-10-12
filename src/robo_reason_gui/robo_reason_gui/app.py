@@ -96,6 +96,12 @@ def create_app(bridge, supervisor, driver, camera=None, sim=None):
         return sim.start(req.show_gazebo) if sim else {
             'ok': False, 'error': 'the simulation needs a GUI started with ROBOREASON_PROFILE=sim'}
 
+    @app.post('/api/sim/reset')
+    def sim_reset():
+        # Release, arm home, cubes back to scene_mock.json: ready for a new run.
+        return bridge.reset_simulation() if sim else {
+            'ok': False, 'error': 'no simulation in this profile'}
+
     @app.post('/api/sim/stop')
     def sim_stop():
         return sim.stop() if sim else {'ok': True}

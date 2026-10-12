@@ -48,6 +48,7 @@ class Interfaces:
     pixel_debug: str
     charuco_axis: str
     calibration_status: str
+    reset_simulation: str
 
     @property
     def execute_skill_status(self) -> str:
