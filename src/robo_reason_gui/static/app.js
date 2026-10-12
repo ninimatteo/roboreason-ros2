@@ -3,6 +3,8 @@ const robotLed = document.getElementById('robot-led');
 const ledToggle = document.getElementById('led-toggle');
 const robotPopover = document.getElementById('robot-popover');
 const popoverDriver = document.getElementById('popover-driver');
+// True when this GUI was started with the sim profile (set by loadProfile).
+let isSim = false;
 const probeTraj = document.getElementById('probe-traj');
 const probeJoints = document.getElementById('probe-joints');
 const probeIo = document.getElementById('probe-io');
@@ -408,9 +410,9 @@ function updateStackStartGate() {
   const blockedByDriver = needsRealRobot && !robotReady;
   stackStart.disabled = stackRunning || blockedByDriver;
   stackRestart.disabled = blockedByDriver;
-  stackStart.title = blockedByDriver
-    ? 'Start the UR driver and wait for it to connect (green LED) before starting the stack in real-robot mode.'
-    : '';
+  stackStart.title = !blockedByDriver ? '' : (isSim
+    ? 'Start the simulation and wait for it to come up (green LED) before starting the stack.'
+    : 'Start the UR driver and wait for it to connect (green LED) before starting the stack in real-robot mode.');
 }
 chkMockRobot.addEventListener('change', updateStackStartGate);
 
@@ -572,6 +574,7 @@ function renderDriver(status) {
 }
 
 async function pollDriver() {
+  if (isSim) return;
   try {
     renderDriver(await (await fetch('/api/driver')).json());
   } catch (_e) { /* backend unreachable — health poll already flags it */ }
@@ -630,6 +633,7 @@ function renderCameraService(status) {
 }
 
 async function pollCameraService() {
+  if (isSim) return;
   try {
     renderCameraService(await (await fetch('/api/camera/service')).json());
   } catch (_e) {}
@@ -668,6 +672,91 @@ document.getElementById('cam-recalibrate').addEventListener('click', async funct
     this.disabled = false;
   }
 });
+
+// ---- simulation supervisor (sim profile only) ----
+// A GUI started with ROBOREASON_PROFILE=sim drives the Gazebo simulation
+// instead of the real robot: the Simulation card replaces the UR driver and
+// camera cards, and the stack runs against the simulated robot and camera.
+// (isSim is declared at the top, next to the other shared state.)
+const simState = document.getElementById('sim-state');
+const simInfo = document.getElementById('sim-info');
+const simLogs = document.getElementById('sim-logs');
+const simStart = document.getElementById('sim-start');
+const simStop = document.getElementById('sim-stop');
+const chkSimGazebo = document.getElementById('chk-sim-gazebo');
+
+async function loadProfile() {
+  try {
+    const data = await (await fetch('/api/profile')).json();
+    isSim = data.profile === 'sim';
+  } catch (_e) { isSim = false; }
+  document.getElementById('profile-badge').hidden = !isSim;
+  document.getElementById('sim-card').hidden = !isSim;
+  document.getElementById('driver-card').hidden = isSim;
+  document.getElementById('cam-svc-card').hidden = isSim;
+  document.getElementById('probe-pendant-row').hidden = isSim;
+  headerReconnect.hidden = isSim;
+  if (isSim) {
+    // The simulated robot and camera are "real" to the stack.
+    chkMockRobot.checked = false;
+    chkMockCamera.checked = false;
+    document.title = 'RoboReason GUI (simulation)';
+    updateStackStartGate();
+  }
+}
+
+function renderSim(status) {
+  const running = !!status.running;
+  const ready = !!status.ready;
+  simState.textContent = ready ? 'ready' : (running ? 'starting…' : 'stopped');
+  simState.className = 'badge ' + (ready ? 'badge-on' : (running ? 'badge-amber' : 'badge-off'));
+  simStart.disabled = running;
+  simStop.disabled = !running;
+  chkSimGazebo.disabled = running;
+  popoverDriver.textContent = 'simulation: ' + simState.textContent;
+
+  const bits = [];
+  if (status.pid) bits.push(`pid ${status.pid}`);
+  if (running && status.show_gazebo === false) bits.push('headless');
+  if (status.returncode != null) bits.push(`exit ${status.returncode}`);
+  simInfo.textContent = bits.join(' · ');
+
+  const logs = status.logs || [];
+  simLogs.textContent = logs.length
+    ? logs.map((l) => `${l.t}  ${l.line}`).join('\n')
+    : '(simulation not started)';
+  simLogs.scrollTop = simLogs.scrollHeight;
+}
+
+async function pollSim() {
+  if (!isSim) return;
+  try {
+    renderSim(await (await fetch('/api/sim')).json());
+  } catch (_e) {}
+}
+
+async function simAction(url, body) {
+  [simStart, simStop].forEach((b) => (b.disabled = true));
+  try {
+    const data = await postJSON(url, body);
+    if (data.error) {
+      simInfo.textContent = data.error;
+      toast('Simulation: ' + data.error, 'error');
+    } else if (data.status) {
+      renderSim(data.status);
+    }
+  } catch (err) {
+    simInfo.textContent = 'request failed: ' + err;
+    toast('Simulation request failed: ' + err, 'error');
+  } finally {
+    pollSim();
+  }
+}
+
+simStart.addEventListener('click', () => simAction('/api/sim/start', { show_gazebo: chkSimGazebo.checked }));
+simStop.addEventListener('click', () => simAction('/api/sim/stop', {}));
+document.getElementById('sim-copy').addEventListener('click', () =>
+  copyText(simLogs.textContent, 'Simulation logs'));
 
 // ---- health (polled) ----
 async function pollHealth() {
@@ -1032,13 +1121,17 @@ chatForm.addEventListener('submit', async (e) => {
 
 loadOptions();
 loadBenchmarkTasks();
+loadProfile().then(() => {
+  pollDriver();
+  pollCameraService();
+  pollSim();
+});
 pollHealth();
 pollStack();
-pollDriver();
-pollCameraService();
 pollCamera();
 checkPreflight();
 setInterval(pollHealth, 2000);
+setInterval(pollSim, 2000);
 setInterval(pollStack, 2000);
 setInterval(pollDriver, 2000);
 setInterval(pollCameraService, 2000);

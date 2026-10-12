@@ -216,6 +216,9 @@ class Settings(BaseSettings):
     # hits this.
     GUI_HOST: str = '0.0.0.0'
     GUI_PORT: int = 8080
+    # Port of the GUI started with the sim profile, so a real-robot GUI and a
+    # simulation GUI can run side by side (digital twin).
+    GUI_PORT_SIM: int = 8081
 
     # ── GUI bridge (bridge_node.py) — timeouts ───────────────────────────────
     # Planner node names per mode — targets for live parameter updates.

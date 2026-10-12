@@ -25,6 +25,10 @@ header {
 
 header h1 { font-size: 20px; margin: 0; }
 
+.brand { display: flex; align-items: center; gap: 10px; }
+/* .badge sets display, which would otherwise override the hidden attribute. */
+#profile-badge[hidden] { display: none; }
+
 .status { display: flex; align-items: center; gap: 8px; }
 
 .led {

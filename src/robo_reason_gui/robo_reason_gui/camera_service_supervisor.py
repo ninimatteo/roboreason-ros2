@@ -24,6 +24,7 @@ class CameraServiceSupervisor:
     LOG_CAPACITY = settings.CAMERA_SERVICE_LOG_CAPACITY
     STOP_GRACE_S = settings.CAMERA_SERVICE_STOP_GRACE_S
     FORCE_KILL_GRACE_S = settings.PROCESS_FORCE_KILL_GRACE_S
+    LOG_PREFIX = 'camera'
 
     def __init__(self, script_path: str, ready_check=None, logger=None):
         """
@@ -47,7 +48,7 @@ class CameraServiceSupervisor:
     def _log(self, line: str):
         self._logs.append({'t': time.strftime('%H:%M:%S'), 'line': line})
         if self._logger:
-            self._logger.info(f'[camera] {line}')
+            self._logger.info(f'[{self.LOG_PREFIX}] {line}')
 
     # ------------------------------------------------------------------ control
     def is_running(self) -> bool:

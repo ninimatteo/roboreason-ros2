@@ -8,7 +8,24 @@ Non è un gemello fisico fedele, ed è voluto: serve a vedere che plan fa il
 modello, come viene eseguito e come si comporta il sistema quando qualcosa va
 storto.
 
-## Avvio
+## Avvio dalla GUI
+
+```bash
+ROBOREASON_PROFILE=sim ros2 run robo_reason_gui gui_node
+```
+
+e poi http://localhost:8081. La GUI avviata con il profilo `sim` ha il badge
+**SIMULATION** nell'header e una card **Simulation** al posto delle card UR
+driver e Camera: Gazebo sostituisce entrambi i driver. Si preme Start (con o
+senza finestra di Gazebo), si aspetta il LED verde, poi si avvia lo stack come
+sempre, con "Mock robot" e "Mock camera" già disattivati.
+
+La GUI della simulazione usa la porta 8081 (`GUI_PORT_SIM`), quella del robot
+la 8080: per il digital twin si aprono **due GUI**, una per profilo, che
+convivono. Ognuna, quando avvia il suo stack, ripulisce solo i processi
+rimasti nel proprio namespace, mai quelli dell'altra.
+
+## Avvio a mano
 
 Due comandi, in due terminali del container:
 
