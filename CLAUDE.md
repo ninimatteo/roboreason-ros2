@@ -318,6 +318,8 @@ VLM and VLM_LLM planners also call `/camera/get_image` and `/camera/deproject` o
 
 All runtime settings live in `robo_reason_bringup/config.py` as a single `pydantic-settings` `Settings` class. Every field is overridable via a `ROBOREASON_` env var or `.env` file — no code changes needed for tuning (model, temperature, robot IP, timeouts, etc.).
 
+ROS names (every topic, service and action) are **not** in `config.py`: they live in `robo_reason_bringup/robo_reason_bringup/interfaces.yaml`, read through `robo_reason_bringup.interfaces.names`. Never hardcode a name in a node. The file has one profile per environment (`real`, `sim`) selected by `ROBOREASON_PROFILE` or `profile:=` on `gui_stack.launch.py`. All names are relative and each profile runs in its own namespace (`real` in the root, `sim` in `/sim`), which is what lets a real and a simulated stack run at the same time.
+
 ### Reasoning layer (`robo_reason_reasoning`)
 
 `EmbodiedAgent` is the entry point: it selects one of 7 reasoning method classes (`FHP`, `React`, `CoTSC`, `StepAction`, `SelfRefine`, `TreeOfThought`) based on `reasoning_mode`, and instantiates either `LLMClient` or `VLMClient`.

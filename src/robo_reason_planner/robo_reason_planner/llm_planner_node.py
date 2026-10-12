@@ -22,6 +22,7 @@ from rclpy.node import Node
 from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.srv import PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner.command_grounding import check_command_grounding
@@ -50,11 +51,11 @@ class LLMPlannerNode(Node):
         self._cb_group = ReentrantCallbackGroup()
 
         self._service = self.create_service(
-            PlanTask, '/plan_task', self._plan_task_callback,
+            PlanTask, names.plan_task, self._plan_task_callback,
             callback_group=self._cb_group,
         )
         self._terminal_logs_client = self.create_client(
-            Trigger, '/gui/get_terminal_logs', callback_group=self._cb_group,
+            Trigger, names.terminal_logs, callback_group=self._cb_group,
         )
 
         use_mock = self.get_parameter('use_mock_llm').value

@@ -113,3 +113,25 @@ $ roboreason-ur                     $ roboreason-shell
 ```
 
 Inside the container you can build the workspace, launch nodes, run scripts, etc. All changes made inside `~/docker_ws/ros2_humble` on the host are immediately reflected at `/root/ws` inside the container, and vice versa.
+
+---
+
+## 7. The `roboreason` venv and numpy
+
+`.bashrc_docker` activates the venv at `/root/ws/roboreason`. It is created with
+`include-system-site-packages = true`, so it sees everything the image installs
+from `requirements.txt`, including `roboticstoolbox`, `spatialmath` and
+`cv_bridge`, which are compiled against **numpy 1.x**.
+
+Never `pip install` numpy or OpenCV inside the venv: a copy there shadows the
+image's, and `opencv-python` 4.12 or newer drags in numpy 2, which breaks every
+import of `roboticstoolbox` with `numpy.dtype size changed, may indicate binary
+incompatibility`. This happened in October 2026 and was fixed by removing both
+from the venv:
+
+```bash
+/root/ws/roboreason/bin/pip uninstall -y numpy opencv-python
+```
+
+Python dependencies belong in `requirements.txt` (which pins `numpy<2`), not in
+the venv.

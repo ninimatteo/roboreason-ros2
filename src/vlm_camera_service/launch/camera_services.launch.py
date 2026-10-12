@@ -6,10 +6,6 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
-    color_topic = LaunchConfiguration("color_topic")
-    depth_topic = LaunchConfiguration("depth_topic")
-    camera_info_topic = LaunchConfiguration("camera_info_topic")
-    pixel_debug_topic = LaunchConfiguration("pixel_debug_topic")
     show_overlay = LaunchConfiguration("show_overlay")
     charuco_enabled = LaunchConfiguration("charuco_enabled")
     charuco_dictionary = LaunchConfiguration("charuco_dictionary")
@@ -34,22 +30,6 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument(
-                "color_topic",
-                default_value="/camera/color/image_raw",
-            ),
-            DeclareLaunchArgument(
-                "depth_topic",
-                default_value="/camera/depth/image_raw",
-            ),
-            DeclareLaunchArgument(
-                "camera_info_topic",
-                default_value="/camera/color/camera_info",
-            ),
-            DeclareLaunchArgument(
-                "pixel_debug_topic",
-                default_value="/camera/debug_pixels",
-            ),
             DeclareLaunchArgument("show_overlay", default_value="false"),
             DeclareLaunchArgument("charuco_enabled", default_value="true"),
             DeclareLaunchArgument("charuco_dictionary", default_value="DICT_6X6_250"),
@@ -66,6 +46,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("window_size", default_value="7"),
             DeclareLaunchArgument("min_depth_m", default_value="0.15"),
             DeclareLaunchArgument("max_depth_m", default_value="3.0"),
+            # Camera topic names come from robo_reason_bringup/interfaces.yaml.
             # Known pose of the ArUco board in robot base_link frame.
             # Measure this once with a ruler/CAD and set it at launch time.
             # Position in metres, rotation as intrinsic RPY in radians.
@@ -85,10 +66,6 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     {
-                        "color_topic": color_topic,
-                        "depth_topic": depth_topic,
-                        "camera_info_topic": camera_info_topic,
-                        "pixel_debug_topic": pixel_debug_topic,
                         "charuco_enabled": charuco_enabled,
                         "charuco_dictionary": charuco_dictionary,
                         "charuco_squares_x": charuco_squares_x,
@@ -120,9 +97,6 @@ def generate_launch_description() -> LaunchDescription:
                 condition=IfCondition(show_overlay),
                 parameters=[
                     {
-                        "color_topic": color_topic,
-                        "camera_info_topic": camera_info_topic,
-                        "pixel_topic": pixel_debug_topic,
                         "charuco_enabled": charuco_enabled,
                         "charuco_dictionary": charuco_dictionary,
                         "charuco_squares_x": charuco_squares_x,

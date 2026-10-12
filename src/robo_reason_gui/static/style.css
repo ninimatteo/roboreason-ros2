@@ -1,3 +1,8 @@
+/* The hidden attribute must win over component display rules (.grid,
+   .check, .badge, .grounding-section set display, which used to override it and
+   left e.g. the VLM-only fields visible in LLM mode). */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #0f1115;
   --card: #1a1d24;
@@ -24,6 +29,8 @@ header {
 }
 
 header h1 { font-size: 20px; margin: 0; }
+
+.brand { display: flex; align-items: center; gap: 10px; }
 
 .status { display: flex; align-items: center; gap: 8px; }
 

@@ -19,6 +19,8 @@ import time
 from collections import deque
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import load_interfaces, names
+from robo_reason_gui.process_scope import same_environment
 
 # Node executables (and the launch file itself) that gui_stack.launch.py spawns.
 # The GUI is the sole owner of the stack (B1), so before launching we sweep for
@@ -34,35 +36,68 @@ _STACK_PROCESS_PATTERNS = (
     'lib/robo_reason_executor/fake_skill_executor_node',
     'lib/robo_reason_executor/ur5_skill_executor_node',
     'lib/vlm_camera_service/mock_camera_service_node',
+    'lib/vlm_camera_service/camera_services_node',
 )
+
+
+def _process_namespace(pid: int):
+    """ROS namespace a stack process belongs to ('' = root), None if unknown.
+
+    Nodes started in a namespace carry ``__ns:=/ns`` on their command line, the
+    launch process carries ``profile:=...``; anything else is in the root.
+    """
+    try:
+        with open(f'/proc/{pid}/cmdline', 'rb') as f:
+            args = [a.decode(errors='replace') for a in f.read().split(b'\0')]
+    except OSError:
+        return None
+    for arg in args:
+        if arg.startswith('__ns:='):
+            return arg[len('__ns:='):].strip('/')
+        if arg.startswith('profile:='):
+            try:
+                return load_interfaces(arg[len('profile:='):]).namespace
+            except (ValueError, KeyError):
+                return None
+    return ''
+
+
+def _arg(config: dict, key: str, default):
+    """Value for a launch argument; fields the GUI didn't send arrive as None."""
+    value = config.get(key)
+    return default if value is None else value
 
 
 def _launch_command(mode: str, mock_robot: bool, mock_camera: bool, config: dict) -> list:
     """Build the ``ros2 launch gui_stack.launch.py ...`` argv for the selection."""
     mode = (mode or 'LLM').upper()
-    use_mock_llm = 'true' if config.get('use_mock_llm', True) else 'false'
-    return [
+    use_mock_llm = 'true' if _arg(config, 'use_mock_llm', True) else 'false'
+    command = [
         'ros2', 'launch', 'robo_reason_bringup', 'gui_stack.launch.py',
+        # Explicit, so _process_namespace() can tell whose stack a launch is.
+        f'profile:={names.profile}',
         f'mode:={mode}',
         f'use_mock_llm:={use_mock_llm}',
         f"mock_robot:={'true' if mock_robot else 'false'}",
         f"mock_camera:={'true' if mock_camera else 'false'}",
-        f"reasoning_method:={config.get('reasoning_method', settings.REASONING_METHOD)}",
-        f"model_name:={config.get('model_name', settings.MODEL_NAME)}",
-        f"temperature:={config.get('temperature', settings.TEMPERATURE)}",
+        f"reasoning_method:={_arg(config, 'reasoning_method', settings.REASONING_METHOD)}",
+        f"model_name:={_arg(config, 'model_name', settings.MODEL_NAME)}",
+        f"temperature:={_arg(config, 'temperature', settings.TEMPERATURE)}",
         # Only used by the VLM_LLM planner's scene-grounding call; harmless
         # (declared-but-unused launch arg) in LLM/VLM mode.
-        f"vlm_model_name:={config.get('vlm_model_name', settings.VLM_MODEL_NAME)}",
-        f"vlm_temperature:={config.get('vlm_temperature', settings.VLM_TEMPERATURE)}",
+        f"vlm_model_name:={_arg(config, 'vlm_model_name', settings.VLM_MODEL_NAME)}",
+        f"vlm_temperature:={_arg(config, 'vlm_temperature', settings.VLM_TEMPERATURE)}",
         # Only used by the VLM planner's direct pixel pipeline; harmless
         # (declared-but-unused launch arg) in LLM/VLM_LLM mode.
-        f"grounding_mode:={config.get('grounding_mode', settings.VLM_GROUNDING_MODE)}",
-        # Used by both the VLM planner and the VLM_LLM scene-grounding call;
-        # harmless (declared-but-unused launch arg) in LLM mode. Empty string
-        # (default) omits the param, leaving the model's default behavior
-        # unchanged.
-        f"reasoning_effort:={config.get('reasoning_effort', settings.VLM_REASONING_EFFORT)}",
+        f"grounding_mode:={_arg(config, 'grounding_mode', settings.VLM_GROUNDING_MODE)}",
     ]
+    # Used by both the VLM planner and the VLM_LLM scene-grounding call. Empty
+    # (the GUI's "Default (unset)") leaves the model's default behavior: the
+    # argument is then omitted, since ros2 launch rejects 'reasoning_effort:='.
+    reasoning_effort = _arg(config, 'reasoning_effort', settings.VLM_REASONING_EFFORT)
+    if reasoning_effort:
+        command.append(f'reasoning_effort:={reasoning_effort}')
+    return command
 
 
 class StackSupervisor:
@@ -237,7 +272,8 @@ class StackSupervisor:
     def _reap_stale(self) -> list:
         """SIGKILL leftover stack processes from a previous (crashed) session.
 
-        Matches the launch file and each node executable by command line. We
+        Matches the launch file and each node executable by command line, in
+        this GUI's profile namespace only. We
         exclude our own GUI process group so we never kill the server we run in.
         Returns the (pid, pattern) pairs that were killed.
         """
@@ -246,6 +282,11 @@ class StackSupervisor:
         for pattern in _STACK_PROCESS_PATTERNS:
             for pid in self._pgrep(pattern):
                 if pid in own:
+                    continue
+                # Only our own profile's stack, in our own ROS domain: a
+                # real-robot stack next to a simulated one (digital twin), or
+                # another GUI's stack in another domain, is not a leftover.
+                if _process_namespace(pid) != names.namespace or not same_environment(pid):
                     continue
                 try:
                     os.kill(pid, signal.SIGKILL)

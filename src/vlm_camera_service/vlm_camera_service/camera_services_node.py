@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import numpy as np
@@ -16,6 +17,7 @@ from robo_reason_interfaces.srv import Deproject, GetImage
 from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import names
 from vlm_camera_service.charuco_utils import (
     CharucoConfig,
     T_to_transform_stamped,
@@ -37,17 +39,17 @@ class CameraServicesNode(Node):
     def __init__(self) -> None:
         super().__init__("camera_services_node")
 
-        self.declare_parameter("color_topic", settings.COLOR_TOPIC)
-        self.declare_parameter("depth_topic", settings.DEPTH_TOPIC)
-        self.declare_parameter("camera_info_topic", settings.CAMERA_INFO_TOPIC)
+        self.declare_parameter("color_topic", names.color)
+        self.declare_parameter("depth_topic", names.depth)
+        self.declare_parameter("camera_info_topic", names.camera_info)
         self.declare_parameter("window_size", settings.WINDOW_SIZE)
         self.declare_parameter("min_depth_m", settings.MIN_DEPTH_M)
         self.declare_parameter("max_depth_m", settings.MAX_DEPTH_M)
-        self.declare_parameter("get_image_service", settings.GET_IMAGE_SERVICE)
-        self.declare_parameter("deproject_service", settings.DEPROJECT_SERVICE)
-        self.declare_parameter("pixel_debug_topic", settings.PIXEL_DEBUG_TOPIC)
-        self.declare_parameter("charuco_axis_topic", settings.CHARUCO_AXIS_TOPIC)
-        self.declare_parameter("calibration_status_topic", settings.CALIBRATION_STATUS_TOPIC)
+        self.declare_parameter("get_image_service", names.get_image)
+        self.declare_parameter("deproject_service", names.deproject)
+        self.declare_parameter("pixel_debug_topic", names.pixel_debug)
+        self.declare_parameter("charuco_axis_topic", names.charuco_axis)
+        self.declare_parameter("calibration_status_topic", names.calibration_status)
         self.declare_parameter("charuco_enabled", settings.CHARUCO_ENABLED)
         self.declare_parameter("charuco_dictionary", settings.CHARUCO_DICTIONARY)
         self.declare_parameter("charuco_squares_x", settings.CHARUCO_SQUARES_X)
@@ -137,6 +139,7 @@ class CameraServicesNode(Node):
         self._tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
 
         self._latest_color: Optional[Image] = None
+        self._latest_color_received = 0.0  # time.monotonic() of the latest frame
         self._latest_depth: Optional[Image] = None
         self._latest_camera_info: Optional[CameraInfo] = None
 
@@ -153,7 +156,7 @@ class CameraServicesNode(Node):
         self._calibration_status_pub = self.create_publisher(Bool, calibration_status_topic, 10)
         self.create_service(GetImage, get_image_service, self._handle_get_image)
         self.create_service(Deproject, deproject_service, self._handle_deproject)
-        self.create_service(Trigger, '/camera/recalibrate', self._handle_recalibrate)
+        self.create_service(Trigger, names.recalibrate, self._handle_recalibrate)
 
         self.get_logger().info("Camera service bridge started")
         self.get_logger().info(f"color_topic={color_topic}")
@@ -186,6 +189,10 @@ class CameraServicesNode(Node):
         # One-shot calibration: try every 0.5 s until the board is detected once,
         # then lock the transform and cancel this timer.
         self._calib_timer = self.create_timer(0.5, self._try_calibrate)
+        # A known camera pose (simulation) replaces calibration entirely:
+        # _try_calibrate sees the lock and cancels itself on its first tick.
+        if settings.FIXED_CAMERA_POSE:
+            self._apply_fixed_camera_pose()
         # Publish projected ChArUco axis keypoints at ~2 Hz for the GUI overlay.
         self.create_timer(0.5, self._publish_charuco_axis)
         self.get_logger().info(f"charuco_axis_topic={charuco_axis_topic}")
@@ -201,6 +208,7 @@ class CameraServicesNode(Node):
                 f"encoding={msg.encoding}, frame={msg.header.frame_id}"
             )
         self._latest_color = msg
+        self._latest_color_received = time.monotonic()
 
     def _on_depth(self, msg: Image) -> None:
         if self._latest_depth is None:
@@ -231,7 +239,11 @@ class CameraServicesNode(Node):
                 "waiting for camera inputs: " + ", ".join(missing)
             )
 
-    _MAX_FRAME_AGE_NS = 5_000_000_000  # 5 s; frames older than this are treated as stale
+    # Frames received longer ago than this are treated as stale. Measured on
+    # this host's monotonic clock from when the frame arrived, not from its
+    # header stamp: the camera driver's clock (or Gazebo's simulation time) need
+    # not match ours, and a stopped stream is what this check is for.
+    _MAX_FRAME_AGE_S = 5.0
 
     def _handle_get_image(
         self, _request: GetImage.Request, response: GetImage.Response
@@ -242,15 +254,12 @@ class CameraServicesNode(Node):
             response.error_message = "RGB image not received yet"
             return response
 
-        age_ns = (
-            self.get_clock().now()
-            - rclpy.time.Time.from_msg(self._latest_color.header.stamp)
-        ).nanoseconds
-        if age_ns > self._MAX_FRAME_AGE_NS:
+        age_s = time.monotonic() - self._latest_color_received
+        if age_s > self._MAX_FRAME_AGE_S:
             response.success = False
             response.frame_id = ""
             response.error_message = (
-                f"Camera frame is stale ({age_ns / 1e9:.1f} s old) — "
+                f"Camera frame is stale (last one received {age_s:.1f} s ago) — "
                 "check that the Orbbec driver is still publishing."
             )
             return response
@@ -476,6 +485,17 @@ class CameraServicesNode(Node):
         )
         self._publish_camera_tf(T_locked)
 
+    def _apply_fixed_camera_pose(self) -> None:
+        """Lock T_base_camera to settings.FIXED_CAMERA_POSE, skipping ChArUco."""
+        x, y, z, roll, pitch, yaw = (float(v) for v in settings.FIXED_CAMERA_POSE)
+        self._T_base_camera = board_pose_to_matrix(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw)
+        self._charuco_calibrated = True
+        self.get_logger().info(
+            '[CameraServicesNode] Using fixed camera pose from FIXED_CAMERA_POSE; '
+            'ChArUco calibration disabled.'
+        )
+        self._publish_camera_tf(self._T_base_camera)
+
     def _handle_recalibrate(self, _request: Trigger.Request, response: Trigger.Response):
         """Reset calibration state and restart the detection loop.
 
@@ -485,6 +505,11 @@ class CameraServicesNode(Node):
         never stopped), silently leaking timers and letting a stale in-flight
         callback race the fresh calibration attempt.
         """
+        if settings.FIXED_CAMERA_POSE:
+            self._apply_fixed_camera_pose()
+            response.success = True
+            response.message = 'Camera pose is fixed (FIXED_CAMERA_POSE); nothing to recalibrate.'
+            return response
         self._T_base_camera = None
         self._charuco_calibrated = False
         self._calib_hits = []

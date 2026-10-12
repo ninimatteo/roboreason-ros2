@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from robo_reason_bringup.interfaces import names
 from robo_reason_gui.options import get_options
 
 
@@ -51,6 +52,10 @@ class DriverRequest(BaseModel):
     reverse_ip: Optional[str] = None
 
 
+class SimRequest(BaseModel):
+    show_gazebo: bool = True
+
+
 class BenchmarkAnnotationRequest(BaseModel):
     run_id: str
     task_id: str
@@ -59,8 +64,13 @@ class BenchmarkAnnotationRequest(BaseModel):
     notes: str = ''
 
 
-def create_app(bridge, supervisor, driver, camera=None):
-    """Build the FastAPI app, wired to the bridge, stack and UR driver."""
+def create_app(bridge, supervisor, driver, camera=None, sim=None):
+    """Build the FastAPI app, wired to the bridge, stack and UR driver.
+
+    With the sim profile ``sim`` is the Gazebo supervisor and ``driver`` and
+    ``camera`` are None: the simulation replaces both.
+    """
+    no_driver = {'ok': False, 'error': 'no UR driver in the sim profile: start the simulation instead'}
     app = FastAPI(title='RoboReason GUI', version='0.1.0')
 
     static_dir = os.path.join(
@@ -72,6 +82,29 @@ def create_app(bridge, supervisor, driver, camera=None):
         # Hand the running asyncio loop to the bridge so its ROS callbacks can
         # push /execution_log lines onto the WebSocket queues thread-safely.
         bridge.set_event_loop(asyncio.get_running_loop())
+
+    @app.get('/api/profile')
+    def profile():
+        return {'profile': names.profile, 'namespace': names.namespace}
+
+    @app.get('/api/sim')
+    def sim_status():
+        return sim.status() if sim else {'running': False, 'ready': False, 'logs': []}
+
+    @app.post('/api/sim/start')
+    def sim_start(req: SimRequest):
+        return sim.start(req.show_gazebo) if sim else {
+            'ok': False, 'error': 'the simulation needs a GUI started with ROBOREASON_PROFILE=sim'}
+
+    @app.post('/api/sim/reset')
+    def sim_reset():
+        # Release, arm home, cubes back to scene_mock.json: ready for a new run.
+        return bridge.reset_simulation() if sim else {
+            'ok': False, 'error': 'no simulation in this profile'}
+
+    @app.post('/api/sim/stop')
+    def sim_stop():
+        return sim.stop() if sim else {'ok': True}
 
     @app.get('/api/health')
     def health():
@@ -139,19 +172,19 @@ def create_app(bridge, supervisor, driver, camera=None):
 
     @app.get('/api/driver')
     def driver_status():
-        return driver.status()
+        return driver.status() if driver else {'state': 'stopped', 'logs': [], 'history': []}
 
     @app.post('/api/driver/start')
     def driver_start(req: DriverRequest):
-        return driver.start(req.model_dump())
+        return driver.start(req.model_dump()) if driver else no_driver
 
     @app.post('/api/driver/stop')
     def driver_stop():
-        return driver.stop()
+        return driver.stop() if driver else {'ok': True}
 
     @app.post('/api/driver/reconnect')
     def driver_reconnect(req: DriverRequest):
-        return driver.reconnect(req.model_dump())
+        return driver.reconnect(req.model_dump()) if driver else no_driver
 
     @app.get('/api/camera/status')
     def camera_status():

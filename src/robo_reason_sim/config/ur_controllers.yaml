@@ -1,0 +1,42 @@
+# Controllers of the simulated UR5. Same as ur_simulation_gz's file, but with
+# wildcard node keys so they still match once the controller manager runs in
+# the /sim namespace.
+/**/controller_manager:
+  ros__parameters:
+    # 100 Hz rather than the real driver's 500: joint_states comes out at this
+    # rate, and every Python node subscribed to it pays for each message. 100 Hz
+    # is plenty for trajectory tracking in simulation.
+    update_rate: 100
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+/**/joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    # Tolerances decide when a goal aborts (the simulated equivalent of a UR
+    # protective stop). Tighten them to provoke aborts on purpose.
+    constraints:
+      stopped_velocity_tolerance: 0.2
+      goal_time: 0.0
+      shoulder_pan_joint: { trajectory: 0.2, goal: 0.1 }
+      shoulder_lift_joint: { trajectory: 0.2, goal: 0.1 }
+      elbow_joint: { trajectory: 0.2, goal: 0.1 }
+      wrist_1_joint: { trajectory: 0.2, goal: 0.1 }
+      wrist_2_joint: { trajectory: 0.2, goal: 0.1 }
+      wrist_3_joint: { trajectory: 0.2, goal: 0.1 }

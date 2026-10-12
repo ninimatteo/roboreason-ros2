@@ -19,15 +19,44 @@ Example:
     mode:=VLM mock_robot:=true mock_camera:=false
 """
 
+import json
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, OpaqueFunction,
+    SetEnvironmentVariable,
+)
 from launch.conditions import IfCondition, LaunchConfigurationEquals, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import Node, PushRosNamespace, SetRemap
+
+from robo_reason_bringup.config import settings
+from robo_reason_bringup.interfaces import load_interfaces
+
+
+def _in_profile_scope(context, actions):
+    """Run the stack under the selected profile: its ROS namespace, and
+    ROBOREASON_PROFILE exported so every node reads the same names.
+
+    The namespace is what lets a real and a simulated stack run side by side
+    (see interfaces.yaml).
+    """
+    profile = LaunchConfiguration('profile').perform(context)
+    namespace = load_interfaces(profile).namespace
+    scope = [SetEnvironmentVariable('ROBOREASON_PROFILE', profile)]
+    if namespace:
+        # TF is global by default; keep it in the namespace like everything else.
+        scope += [PushRosNamespace(namespace),
+                  SetRemap('/tf', 'tf'), SetRemap('/tf_static', 'tf_static')]
+    if profile == 'sim' and not settings.FIXED_CAMERA_POSE:
+        # The simulated camera's pose is known exactly: no ChArUco calibration.
+        from robo_reason_sim.world_builder import camera_optical_pose, load_sim_config
+        pose = camera_optical_pose(load_sim_config())
+        scope.append(SetEnvironmentVariable('ROBOREASON_FIXED_CAMERA_POSE', json.dumps(pose)))
+    return [GroupAction(scope + actions)]
 
 
 def generate_launch_description():
@@ -60,7 +89,7 @@ def generate_launch_description():
         'launch', 'camera_services.launch.py',
     )
 
-    return LaunchDescription([
+    actions = [
         DeclareLaunchArgument('mode', default_value='LLM'),
         DeclareLaunchArgument('use_mock_llm', default_value='true'),
         DeclareLaunchArgument('mock_robot', default_value='true'),
@@ -161,4 +190,12 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(camera_services_launch),
             condition=IfCondition(vlm_real_camera),
         ),
+    ]
+
+    declared = [a for a in actions if isinstance(a, DeclareLaunchArgument)]
+    stack = [a for a in actions if not isinstance(a, DeclareLaunchArgument)]
+    return LaunchDescription(declared + [
+        DeclareLaunchArgument('profile', default_value=settings.PROFILE,
+                              description='real | sim, see interfaces.yaml'),
+        OpaqueFunction(function=_in_profile_scope, args=[stack]),
     ])

@@ -8,7 +8,11 @@
 </head>
 <body>
   <header>
-    <h1>RoboReason</h1>
+    <div class="brand">
+      <h1>RoboReason</h1>
+      <span id="profile-badge" class="badge badge-amber" hidden
+            title="This GUI drives the Gazebo simulation (ROBOREASON_PROFILE=sim), not the real robot">SIMULATION</span>
+    </div>
     <div class="status">
       <button id="led-toggle" type="button" class="led-toggle" aria-expanded="false"
               title="Robot connection details">
@@ -24,7 +28,7 @@
           <li><span id="probe-traj" class="dot dot-red"></span> Trajectory controller</li>
           <li><span id="probe-joints" class="dot dot-red"></span> Joint states</li>
           <li><span id="probe-io" class="dot dot-red"></span> Gripper I/O service</li>
-          <li><span id="probe-pendant" class="dot dot-red"></span> Teach pendant (reverse interface)</li>
+          <li id="probe-pendant-row"><span id="probe-pendant" class="dot dot-red"></span> Teach pendant (reverse interface)</li>
         </ul>
         <p id="popover-driver" class="muted">driver: stopped</p>
       </div>
@@ -137,7 +141,32 @@
       <p id="options-error" class="error" hidden></p>
     </section>
 
-    <section class="card">
+    <section class="card" id="sim-card" hidden>
+      <h2>Simulation
+        <span class="head-actions">
+          <button id="sim-copy" type="button" class="icon-btn" title="Copy simulation logs">Copy</button>
+          <span id="sim-state" class="badge badge-off">stopped</span>
+        </span>
+      </h2>
+      <p class="muted">Gazebo replaces the UR driver and the camera: start it, wait for the green LED, then start the stack.</p>
+      <div class="mock-toggles">
+        <label class="check">
+          <input id="chk-sim-gazebo" type="checkbox" checked /> Show Gazebo window
+        </label>
+      </div>
+      <div class="actions">
+        <button id="sim-start" type="button">Start</button>
+        <button id="sim-stop" type="button" class="danger">Stop</button>
+        <button id="sim-reset" type="button"
+                title="Release the gripper, send the arm home and put every cube back where scene_mock.json places it">Reset scene</button>
+        <span id="sim-info" class="muted"></span>
+      </div>
+      <details class="log-details">
+        <summary>Logs</summary>
+        <pre id="sim-logs" class="logs">(simulation not started)</pre>
+      </details>
+    </section>
+    <section class="card" id="cam-svc-card">
       <h2>Camera
         <span class="head-actions">
           <button id="cam-svc-copy" type="button" class="icon-btn" title="Copy camera logs">Copy</button>
@@ -160,7 +189,7 @@
       </details>
     </section>
 
-    <section class="card">
+    <section class="card" id="driver-card">
       <h2>UR driver
         <span class="head-actions">
           <button id="driver-copy" type="button" class="icon-btn" title="Copy driver logs">Copy</button>
