@@ -23,6 +23,7 @@
 
 internal:
   plan_task: plan_task
+  cancel_planning: cancel_planning
   execute_plan: execute_plan
   cancel_execution: cancel_execution
   execute_skill: execute_skill

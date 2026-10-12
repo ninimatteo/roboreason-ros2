@@ -27,6 +27,7 @@ from robo_reason_interfaces.srv import PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner.command_grounding import check_command_grounding
 from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
+from robo_reason_planner.planning_cancel import PlanningCancellation, PlanningCancelled
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
 
@@ -54,6 +55,8 @@ class LLMPlannerNode(Node):
             PlanTask, names.plan_task, self._plan_task_callback,
             callback_group=self._cb_group,
         )
+        # Lets the GUI stop a request that is still being planned (ROBOAI-34).
+        self._cancellation = PlanningCancellation(self, self._cb_group)
         self._terminal_logs_client = self.create_client(
             Trigger, names.terminal_logs, callback_group=self._cb_group,
         )
@@ -92,12 +95,13 @@ class LLMPlannerNode(Node):
             run.finish(success=False, error=err)
             return response
 
+        cancelled = self._cancellation.begin()
         try:
             if use_mock:
                 plan_data = self._mock_plan(user_command, scene_json)
                 self.get_logger().info('[LLMPlannerNode] Generated mock plan.')
             else:
-                plan_data = self._llm_plan(user_command, scene_json, run)
+                plan_data = self._llm_plan(user_command, scene_json, run, cancelled)
                 self.get_logger().info('[LLMPlannerNode] Generated LLM plan.')
 
             response.success = True
@@ -105,6 +109,12 @@ class LLMPlannerNode(Node):
             run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=True, response=plan_data)
 
+        except PlanningCancelled as exc:
+            self.get_logger().warn(f'[LLMPlannerNode] {exc}')
+            response.success = False
+            response.error_message = str(exc)
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
+            run.finish(success=False, error=str(exc))
         except Exception:
             tb = traceback.format_exc()
             self.get_logger().error(f'[LLMPlannerNode] Planning error:\n{tb}')
@@ -112,12 +122,14 @@ class LLMPlannerNode(Node):
             response.error_message = tb
             run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=False, error=tb)
+        finally:
+            self._cancellation.end(cancelled)
 
         return response
 
     # ── LLM plan ───────────────────────────────────────────────────────────────
 
-    def _llm_plan(self, user_command: str, scene_json: str, run: DebugRun) -> dict:
+    def _llm_plan(self, user_command: str, scene_json: str, run: DebugRun, cancelled=None) -> dict:
         reasoning_method = self.get_parameter('reasoning_method').value
         model_name = self.get_parameter('model_name').value
         temperature = self.get_parameter('temperature').value
@@ -138,7 +150,7 @@ class LLMPlannerNode(Node):
         self.get_logger().info(f'[LLMPlannerNode] Starting plan with\n{observation}')
         run.log(f'Starting plan with {observation}')
 
-        plan_steps = run_plan_loop(agent, observation)
+        plan_steps = run_plan_loop(agent, observation, cancelled=cancelled)
         if settings.DISABLE_GEOMETRY_FIX:
             # ROBOAI-30 ablation: skip the deterministic geometry fixes,
             # leaving the model's own computed heights/positions untouched.

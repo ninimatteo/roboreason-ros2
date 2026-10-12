@@ -36,6 +36,7 @@ class Interfaces:
 
     # Owned by RoboReason's own nodes — same in every profile.
     plan_task: str
+    cancel_planning: str
     execute_plan: str
     cancel_execution: str
     execute_skill: str

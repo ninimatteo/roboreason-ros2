@@ -62,10 +62,21 @@ simulazione:
   gripper si chiude sul vuoto e il cubo resta dov'è.
 - **pin basso (open):** il cubo viene sganciato e cade su quello che c'è sotto.
 
+Un cubo con un altro cubo appoggiato sopra **non** si può prendere: scendendo
+dall'alto le dita incontrerebbero prima quello sopra. Se il TCP è vicino a
+entrambi viene preso solo quello sopra (`robo_reason_sim/grasp_rules.py`).
+
 Come sul robot vero, il comando IO riesce sempre: l'executor riporta success
 anche quando il grasp è mancato. Lo si vede solo nell'immagine successiva, che
 è esattamente il caso che un closed loop deve gestire. Il log del nodo dice
 cosa è successo (`Grasped ...` oppure `Closed on nothing ...`).
+
+## Reset della scena
+
+Il pulsante **Reset scene** nella card Simulation (o il servizio
+`/sim/reset_simulation`) rilascia il gripper, riporta il braccio in home e
+rimette ogni cubo nella posa iniziale di `scene_mock.json`. È disabilitato
+mentre un comando è in corso.
 
 ## Nomi e namespace
 

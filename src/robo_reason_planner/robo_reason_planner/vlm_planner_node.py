@@ -42,6 +42,7 @@ from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
+from robo_reason_planner.planning_cancel import PlanningCancellation, PlanningCancelled
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 
 
@@ -87,6 +88,8 @@ class VLMPlannerNode(Node):
             PlanTask, names.plan_task, self._plan_task_callback,
             callback_group=self._cb_group,
         )
+        # Lets the GUI stop a request that is still being planned (ROBOAI-34).
+        self._cancellation = PlanningCancellation(self, self._cb_group)
         self._get_image_client = self.create_client(
             GetImage, names.get_image, callback_group=self._cb_group,
         )
@@ -116,13 +119,20 @@ class VLMPlannerNode(Node):
             'reasoning_effort': self.get_parameter('reasoning_effort').value,
         })
 
+        cancelled = self._cancellation.begin()
         try:
-            plan_data = self._vlm_plan(user_command, request.scene_json, run)
+            plan_data = self._vlm_plan(user_command, request.scene_json, run, cancelled)
             response.success = True
             response.plan_json = json.dumps(plan_data)
             run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=True, response=plan_data)
             self.get_logger().info('[VLMPlannerNode] Generated VLM plan.')
+        except PlanningCancelled as exc:
+            self.get_logger().warn(f'[VLMPlannerNode] {exc}')
+            response.success = False
+            response.error_message = str(exc)
+            run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
+            run.finish(success=False, error=str(exc))
         except Exception:
             tb = traceback.format_exc()
             self.get_logger().error(f'[VLMPlannerNode] Planning error:\n{tb}')
@@ -130,12 +140,14 @@ class VLMPlannerNode(Node):
             response.error_message = tb
             run.save_terminal_logs(fetch_terminal_logs(self._terminal_logs_client))
             run.finish(success=False, error=tb)
+        finally:
+            self._cancellation.end(cancelled)
 
         return response
 
     # ── VLM plan ───────────────────────────────────────────────────────────────
 
-    def _vlm_plan(self, user_command: str, scene_json: str, run: DebugRun) -> dict:
+    def _vlm_plan(self, user_command: str, scene_json: str, run: DebugRun, cancelled=None) -> dict:
         # 1. Capture RGB frame.
         img_resp = self._call_get_image()
         if not img_resp.success:
@@ -176,7 +188,7 @@ class VLMPlannerNode(Node):
         pixel_steps = run_plan_loop(agent, {
             'user_request': user_command,
             'image': image_paths[-1],
-        })
+        }, cancelled=cancelled)
         run.log(f'VLM raw pixel steps: {json.dumps(pixel_steps)}')
 
         # 3b. Save debug image with pixel markers — written before deprojection
