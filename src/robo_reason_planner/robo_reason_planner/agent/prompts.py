@@ -12,7 +12,9 @@ Typical pick and place:
 1. inspect_object(bbox of the object) -> grasp_point, width_m, held_height_below_grasp_m
 2. pick(grasp_point, grasp_width=width_m)
 3. find_free_spot(bbox of the destination, footprint_m=width_m) -> position
-   (or inspect_area for a specific spot)
+   (or inspect_area for a specific spot; to stack, place on the top_center of the object below).
+   For several objects, ask for all positions at once: count=N, and arrangement='line' for a
+   row. Never make up or shift coordinates yourself.
 4. place(position, held_height=held_height_below_grasp_m)
 
 Closed loop rules:
@@ -32,7 +34,7 @@ Closed loop rules:
   done, in the same turn as your next tool call. Call update_plan if the plan must change.
 - When the goal is reached and verified, call move_home, then finish(success=true).
   If it cannot be achieved, call finish(success=false) and say why.
-Be brief in your text; spend your effort on correct tool calls."""
+Always write in English. Be brief in your text; spend your effort on correct tool calls."""
 
 PLAN_REQUEST = """Operator request: "{command}"
 

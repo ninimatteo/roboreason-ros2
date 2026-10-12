@@ -84,9 +84,9 @@ def surface_measurement(center, corners: list) -> dict:
     return out
 
 
-def free_spot(points: list, footprint_m: float, margin_m: float,
-              step_tolerance_m: float = 0.015) -> dict:
-    """Best place for a new object inside a sampled area.
+def free_spot(points: list, footprint_m: float, margin_m: float, count: int = 1,
+              arrangement: str = 'any', step_tolerance_m: float = 0.015, allowed=None) -> dict:
+    """Best places for `count` new objects inside a sampled area.
 
     points: deprojected [x, y, z] samples on a grid covering the area (None
             where depth was missing). The area's surface is the dominant
@@ -95,14 +95,24 @@ def free_spot(points: list, footprint_m: float, margin_m: float,
             loose); samples clearly above it are occupied by something,
             samples clearly below it are off the area (e.g. the table around
             a tray). A candidate must be on the surface, and is scored by its
-            distance to the nearest occupied or off area sample.
+            clearance: the distance to the nearest occupied or off area
+            sample, to the border of the sampled area, and to the other
+            chosen spots.
 
-    Returns the best candidate, its clearance, and whether that clearance
-    fits footprint_m / 2 + margin_m.
+    arrangement 'any' picks the spots one at a time, each the freest left;
+    'line' puts them on a straight line along the longer side of the area,
+    one footprint plus two margins apart.
+
+    allowed: optional predicate on [x, y, z]; spots it rejects (e.g. out of
+    the robot's reach) are never proposed.
+
+    Returns the positions (on the surface), the worst clearance among them,
+    and whether that fits footprint_m / 2 + margin_m.
     """
     valid = [p for p in points if p is not None]
     if not valid:
         return {'ok': False, 'reason': 'no depth samples in the area'}
+    count = max(int(count), 1)
 
     xs = [p[0] for p in valid]
     ys = [p[1] for p in valid]
@@ -116,28 +126,63 @@ def free_spot(points: list, footprint_m: float, margin_m: float,
         (on_surface if abs(p[2] - surface_z) <= step_tolerance_m else blocked).append(p)
     if not on_surface:
         return {'ok': False, 'reason': 'no flat surface found in the area'}
+    candidates = [p for p in on_surface if allowed is None or allowed([p[0], p[1], surface_z])]
+    if not candidates:
+        return {'ok': False, 'reason': 'no reachable free surface in the area'}
 
-    # The edge of what was sampled counts as blocked too, so a spot is never
-    # chosen right at the border of the bbox.
-    best, best_clear = None, -1.0
-    for p in on_surface:
-        clear = min(
-            p[0] - bounds[0], bounds[1] - p[0], p[1] - bounds[2], bounds[3] - p[1],
-        )
+    def clearance(q, chosen=()):
+        c = min(q[0] - bounds[0], bounds[1] - q[0], q[1] - bounds[2], bounds[3] - q[1])
         for b in blocked:
-            clear = min(clear, _dist_xy(p, b))
-        if clear > best_clear:
-            best, best_clear = p, clear
+            c = min(c, _dist_xy(q, b))
+        for other in chosen:
+            # the other object's footprint, not just its centre, is in the way
+            c = min(c, _dist_xy(q, other) - footprint_m / 2.0)
+        return c
+
+    if arrangement == 'line':
+        spots, worst = _best_line(on_surface, candidates, clearance, bounds, count,
+                                  footprint_m + 2.0 * margin_m, allowed, surface_z)
+    else:
+        spots, worst = [], math.inf
+        for _ in range(count):
+            best = max(candidates, key=lambda q: clearance(q, spots))
+            worst = min(worst, clearance(best, spots))
+            spots.append(best)
 
     needed = footprint_m / 2.0 + margin_m
-    return {
-        'ok': best_clear >= needed,
-        'position': _r([best[0], best[1], surface_z]),
+    out = {
+        'ok': worst >= needed,
+        'positions': [_r([p[0], p[1], surface_z]) for p in spots],
         'surface_z': round(surface_z, 4),
-        'clearance_m': round(best_clear, 4),
+        'clearance_m': round(worst, 4),
         'needed_clearance_m': round(needed, 4),
         'occupied_samples': sum(1 for b in blocked if b[2] > surface_z),
     }
+    if count == 1:
+        out['position'] = out['positions'][0]
+    return out
+
+
+def _best_line(on_surface, candidates, clearance, bounds, count, spacing, allowed, surface_z):
+    """count points `spacing` apart along the area's longer side, placed where
+    the worst clearance among them is largest. Each point must land on the
+    surface (within half a spacing of an on surface sample) and be allowed."""
+    along_x = (bounds[1] - bounds[0]) >= (bounds[3] - bounds[2])
+    step = (spacing, 0.0) if along_x else (0.0, spacing)
+    best, best_worst = None, -math.inf
+    for anchor in candidates:
+        line = [(anchor[0] + k * step[0], anchor[1] + k * step[1]) for k in range(count)]
+        # stay on the surface: every point needs a surface sample nearby
+        if any(min(_dist_xy(q, s) for s in on_surface) > spacing / 2.0 for q in line):
+            continue
+        if allowed is not None and not all(allowed([q[0], q[1], surface_z]) for q in line):
+            continue
+        worst = min(clearance(q) for q in line)
+        if worst > best_worst:
+            best, best_worst = line, worst
+    if best is None:
+        return [candidates[0]], -1.0
+    return best, best_worst
 
 
 def check_target(position, table_z: float, limits: dict, below_table_tolerance: float = 0.005):

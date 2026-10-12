@@ -36,8 +36,12 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
+from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+from tf2_ros import Buffer, TransformListener
 
 from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import names
@@ -79,6 +83,14 @@ class AgentNode(Node):
         self._terminal_logs = self.create_client(Trigger, names.terminal_logs, callback_group=cb)
         self._skills = ActionClient(self, ExecuteSkill, names.execute_skill, callback_group=cb)
         self._log_pub = self.create_publisher(String, names.execution_log, 10)
+        # Intrinsics and the camera pose, to turn a bbox size in pixels into
+        # metres (deproject can't: it snaps every pixel of a flat top face to
+        # the face's centroid, see local_plane_centroid in camera_services_node).
+        self._camera_info = None
+        self.create_subscription(CameraInfo, names.camera_info, self._on_camera_info,
+                                 qos_profile_sensor_data, callback_group=cb)
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
 
         # One task at a time: the draft and its execution share a session.
         self._session = None
@@ -247,6 +259,9 @@ class AgentNode(Node):
         if run is not None:
             self._finish_run(run, session, success, error)
 
+    def _on_camera_info(self, msg):
+        self._camera_info = msg
+
     def _publish(self, line):
         self.get_logger().info(line)
         self._log_pub.publish(String(data=line))
@@ -340,6 +355,34 @@ class _RosBackend:
             return [None]
         mid = len(pixels) // 2
         return self.deproject(pixels[:mid]) + self.deproject(pixels[mid:])
+
+    def metres_per_pixel(self, point):
+        """Size of one pixel, in metres, at a base frame point: (along u, along v).
+        None when the intrinsics or the camera pose are not known yet."""
+        info = self.node._camera_info
+        if info is None or not info.header.frame_id or info.k[0] <= 0 or info.k[4] <= 0:
+            return None
+        tf = None
+        # camera_optical_frame: the name camera_services_node falls back to when
+        # it publishes a fixed camera pose before the first image (simulation).
+        for frame in (info.header.frame_id, 'camera_optical_frame'):
+            try:
+                tf = self.node._tf_buffer.lookup_transform(frame, 'base_link', Time())
+                break
+            except Exception:
+                continue
+        if tf is None:
+            return None
+        q, t = tf.transform.rotation, tf.transform.translation
+        # z of the point in the camera optical frame = distance along the optical axis
+        x, y, z = point
+        r20 = 2.0 * (q.x * q.z - q.w * q.y)
+        r21 = 2.0 * (q.y * q.z + q.w * q.x)
+        r22 = 1.0 - 2.0 * (q.x * q.x + q.y * q.y)
+        depth = r20 * x + r21 * y + r22 * z + t.z
+        if depth <= 0:
+            return None
+        return depth / info.k[0], depth / info.k[4]
 
     def run_skill(self, name, args):
         if self.node._stop.is_set():

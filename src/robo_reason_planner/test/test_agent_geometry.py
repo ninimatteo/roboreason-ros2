@@ -66,3 +66,31 @@ def test_check_target_rejects_without_correcting():
     assert 'below the table' in geometry.check_target([0.1, -0.4, -0.05], -0.04, {})
     assert 'outside the workspace' in geometry.check_target([0.9, -0.4, 0.0], -0.03, limits)
     assert 'must be [x, y, z]' in geometry.check_target([0.1, 0.2], -0.03, limits)
+
+
+def test_free_spot_several_positions_keep_apart():
+    pts = _grid(0.25, 0.45, -0.42, -0.12, 14, lambda x, y: 0.05)
+    spot = geometry.free_spot(pts, footprint_m=0.045, margin_m=0.01, count=3)
+    assert spot['ok'] and len(spot['positions']) == 3
+    ps = spot['positions']
+    assert min(geometry._dist_xy(a, b) for i, a in enumerate(ps) for b in ps[i + 1:]) >= 0.045 + 0.01
+
+
+def test_free_spot_line_is_straight_evenly_spaced_and_avoids_objects():
+    # table area 0.5 x 0.2, a cube sitting at its centre
+    cube = lambda x, y: abs(x - 0.0) < 0.025 and abs(y + 0.6) < 0.025
+    pts = _grid(-0.25, 0.25, -0.7, -0.5, 20, lambda x, y: 0.015 if cube(x, y) else -0.03)
+    spot = geometry.free_spot(pts, footprint_m=0.045, margin_m=0.01, count=3, arrangement='line')
+    assert spot['ok']
+    (x0, y0, _), (x1, y1, _), (x2, y2, _) = spot['positions']
+    assert y0 == y1 == y2                       # along the longer side (x)
+    assert abs((x1 - x0) - 0.065) < 1e-6 and abs((x2 - x1) - 0.065) < 1e-6
+    for x, y, _ in spot['positions']:
+        assert not (abs(x) < 0.05 and abs(y + 0.6) < 0.05)
+
+
+def test_free_spot_never_proposes_a_disallowed_spot():
+    pts = _grid(-0.25, 0.25, -0.7, -0.5, 20, lambda x, y: -0.03)
+    spot = geometry.free_spot(pts, 0.045, 0.01, count=3, arrangement='line',
+                              allowed=lambda q: q[0] < 0.0)
+    assert all(x < 0.0 for x, _, _ in spot['positions'])

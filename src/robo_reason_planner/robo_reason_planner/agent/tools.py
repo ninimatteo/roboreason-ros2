@@ -13,9 +13,11 @@ the deprojection and the skill executor:
   backend.capture() -> (image_path, width, height)
   backend.deproject([(u, v), ...]) -> [[x, y, z] or None, ...]
   backend.run_skill(name, args: dict) -> (ok: bool, error: str)
+  backend.metres_per_pixel([x, y, z]) -> (along_u, along_v) or None
 """
 
 import json
+import math
 from dataclasses import dataclass, field
 
 from robo_reason_planner.agent import geometry
@@ -69,11 +71,14 @@ EXECUTION_TOOLS = [
         'its surface height and x/y extent.',
         {'bbox': _BBOX}, ['bbox']),
     _fn('find_free_spot',
-        'Find the best free position inside a placement area for an object of the given footprint, '
-        'avoiding objects already there and the area edges. Returns position (on the surface) and '
-        'whether there is enough room.',
+        'Find free positions inside a placement area for objects of the given footprint, avoiding '
+        'objects already there, the area edges and each other. Returns positions (on the surface, '
+        'ready for place) and whether there is enough room. Use count > 1 to place several objects, '
+        "and arrangement='line' to get them on a straight line, evenly spaced.",
         {'bbox': _BBOX,
-         'footprint_m': {'type': 'number', 'description': 'object width in metres (from inspect_object)'}},
+         'footprint_m': {'type': 'number', 'description': 'object width in metres (from inspect_object)'},
+         'count': {'type': 'integer', 'description': 'how many positions (default 1)'},
+         'arrangement': {'type': 'string', 'enum': ['any', 'line'], 'description': 'default any'}},
         ['bbox', 'footprint_m']),
     _fn('pick',
         'Grasp an object: hover above grasp_point, go down, close the gripper, lift back up. '
@@ -120,6 +125,9 @@ class ToolboxConfig:
     grasp: geometry.GraspGeometry
     edge_inset_frac: float = 0.15
     approach_offset_m: float = 0.10
+    # Horizontal distance from the robot base beyond which the top down IK
+    # fails (observed: 0.88 m failed in simulation).
+    max_reach_m: float = 0.80
     free_spot_margin_m: float = 0.01
     free_spot_grid: int = 14          # samples per side for find_free_spot
     # 'pixel', or 'norm1000' for models that answer in 0..1000 coordinates
@@ -175,6 +183,12 @@ class Toolbox:
             return ToolResult(f'ERROR: no depth at the centre of bbox {bbox}; is the bbox on the object?')
         edges = {k: v for k, v in pts.items() if k != 'center' and v is not None}
         m = geometry.object_measurement(pts['center'], edges, self.config.table_z, self.config.grasp)
+        # Footprint from the bbox size, scaled at the object's distance from the
+        # camera: deprojected edges can collapse onto the face centroid.
+        scale = self.backend.metres_per_pixel(pts['center'])
+        if scale is not None:
+            m['width_m'] = round((bbox[2] - bbox[0]) * scale[0], 4)
+            m['depth_m'] = round((bbox[3] - bbox[1]) * scale[1], 4)
         return ToolResult(json.dumps(m))
 
     def _tool_inspect_area(self, bbox):
@@ -189,7 +203,7 @@ class Toolbox:
         m = geometry.surface_measurement(pts[0], [p for p in pts[1:] if p is not None])
         return ToolResult(json.dumps(m))
 
-    def _tool_find_free_spot(self, bbox, footprint_m):
+    def _tool_find_free_spot(self, bbox, footprint_m, count=1, arrangement='any'):
         bbox = self._to_pixels(bbox)
         x0, y0, x1, y1 = bbox
         n = self.config.free_spot_grid
@@ -199,6 +213,8 @@ class Toolbox:
         ]
         spot = geometry.free_spot(
             self.backend.deproject(pixels), float(footprint_m), self.config.free_spot_margin_m,
+            count=int(count), arrangement=str(arrangement),
+            allowed=lambda q: self._check(q, lift=self.config.approach_offset_m) is None,
         )
         return ToolResult(json.dumps(spot))
 
@@ -290,6 +306,9 @@ class Toolbox:
         err = geometry.check_target(position, self.config.table_z, self.config.limits)
         if err:
             return err
+        reach = math.hypot(float(position[0]), float(position[1]))
+        if reach > self.config.max_reach_m:
+            return f'{reach:.2f} m from the robot base, beyond its reach ({self.config.max_reach_m} m)'
         hover_z = float(position[2]) + lift
         z_hi = self.config.limits.get('z', (None, float('inf')))[1]
         if hover_z > z_hi:

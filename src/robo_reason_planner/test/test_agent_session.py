@@ -34,6 +34,9 @@ class FakeBackend:
             out.append([0.1 + (u - 100) * 0.001, -0.4 + (v - 100) * 0.001, 0.04 if on_cube else 0.0])
         return out
 
+    def metres_per_pixel(self, point):
+        return 0.001, 0.001
+
     def run_skill(self, name, args):
         self.skills.append((name, args))
         if name == 'pick' and self.fail_first_pick and sum(s[0] == 'pick' for s in self.skills) == 1:
@@ -96,6 +99,7 @@ def test_draft_then_execute_happy_path(tmp_path):
     tool_msgs = [m for m in client.seen[2][1] if m['role'] == 'tool']
     measured = json.loads(tool_msgs[-1]['content'])
     assert measured['height_m'] == 0.04 and measured['grasp_point'] == [0.1, -0.4, 0.02]
+    assert measured['width_m'] == 0.03     # 30 px bbox at 1 mm per pixel
 
 
 def test_failed_pick_is_reported_back_and_retried(tmp_path):
