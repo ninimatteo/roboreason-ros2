@@ -827,8 +827,21 @@ chatClear.addEventListener('click', () => {
   chatHistory.innerHTML = '';
 });
 
+// Which phase the Stop button acts on: while planning it abandons the request
+// (ROBOAI-34), while executing it is the emergency stop.
+let stopPhase = null;  // 'planning' | 'executing' | null
+
 chatEstop.addEventListener('click', async () => {
   chatEstop.disabled = true;
+  if (stopPhase === 'planning') {
+    try {
+      await postJSON('/api/plan/cancel', {});
+      toast('Request cancelled: the plan will not be executed', 'info');
+    } catch (err) {
+      toast('Cancel request failed: ' + err, 'error');
+    }
+    return;
+  }
   try {
     const data = await postJSON('/api/execute/cancel', {});
     if (data.error || data.ok === false) {
@@ -1038,14 +1051,27 @@ async function sendCommand(command) {
   scrollIntoView(block);
   setPlanState('planning…', 'badge-amber');
 
-  // 1. Plan.
+  // 1. Plan. Stop is live from here: before a response it cancels the request.
   let planData;
+  stopPhase = 'planning';
+  chatEstop.disabled = false;
   try {
     planData = await postJSON('/api/plan', { command, is_benchmark: isBenchmark });
   } catch (err) {
     block.className = 'msg failed';
     block.appendChild(el('div', 'error', 'Request failed: ' + err));
     setPlanState('idle', 'badge-off');
+    return;
+  } finally {
+    stopPhase = null;
+    chatEstop.disabled = true;
+  }
+  if (planData.cancelled) {
+    block.className = 'msg failed';
+    status.remove();
+    block.appendChild(el('div', 'error', 'Cancelled before execution: nothing was sent to the robot.'));
+    setPlanState('cancelled', 'badge-off');
+    scrollIntoView(block);
     return;
   }
   if (planData.error) {
@@ -1080,6 +1106,7 @@ async function sendCommand(command) {
   // 4. Execute. Enabled only for this window, since /cancel_execution is
   // meaningless before a skill is in flight and the plan is done by the time
   // execute() resolves either way.
+  stopPhase = 'executing';
   chatEstop.disabled = false;
   let execData;
   try {
@@ -1093,6 +1120,7 @@ async function sendCommand(command) {
     return;
   } finally {
     ws.close();
+    stopPhase = null;
     chatEstop.disabled = true;
   }
 

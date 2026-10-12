@@ -126,6 +126,12 @@ def create_app(bridge, supervisor, driver, camera=None, sim=None):
         # planning round-trip does not stall the event loop.
         return bridge.plan_command(req.command, is_benchmark=req.is_benchmark)
 
+    @app.post('/api/plan/cancel')
+    def plan_cancel():
+        # Stop while still planning (ROBOAI-34): the pending /api/plan returns
+        # 'cancelled' at once and its plan is never executed.
+        return bridge.cancel_planning()
+
     @app.post('/api/execute')
     def execute(req: ExecuteRequest):
         return bridge.execute_command(req.plan_json, is_benchmark=req.is_benchmark)

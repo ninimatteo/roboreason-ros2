@@ -27,6 +27,11 @@ from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.msg import PixelArray
 from robo_reason_interfaces.srv import CancelExecution, ExecutePlan, GetImage, PlanTask
 
+
+class _CallAbandoned(Exception):
+    """_call() stopped waiting because the caller cancelled the request."""
+
+
 # Topic the plan manager publishes per-step execution progress on.
 EXECUTION_LOG_TOPIC = names.execution_log
 
@@ -238,6 +243,10 @@ class GuiBridgeNode(Node):
         self._cancel_client = self.create_client(CancelExecution, names.cancel_execution)
         # Only served by the simulation (sim profile).
         self._reset_sim_client = self.create_client(Trigger, names.reset_simulation)
+        # Stop button while still planning (ROBOAI-34): the event releases the
+        # GUI's wait at once, the service asks the planner to stop its loop.
+        self._cancel_planning_client = self.create_client(Trigger, names.cancel_planning)
+        self._planning_cancelled = threading.Event()
         self._command_lock = threading.Lock()
         self._scene_json = self._load_scene()
         # Set by plan_command() to the DebugRun folder its /plan_task call
@@ -562,15 +571,23 @@ class GuiBridgeNode(Node):
         }
 
     # -------------------------------------------------------------- service IO
-    def _call(self, client, request, timeout):
-        """Call a service from a non-executor thread and wait for the result."""
+    def _call(self, client, request, timeout, cancel=None):
+        """Call a service from a non-executor thread and wait for the result.
+
+        If ``cancel`` (a threading.Event) gets set while waiting, stop waiting
+        and raise _CallAbandoned; the late response is then simply dropped.
+        """
         if not client.service_is_ready() and not client.wait_for_service(timeout_sec=2.0):
             raise RuntimeError(f'service {client.srv_name} is unavailable')
         future = client.call_async(request)
         done = threading.Event()
         future.add_done_callback(lambda _f: done.set())
-        if not done.wait(timeout):
-            raise RuntimeError(f'service {client.srv_name} timed out after {timeout}s')
+        deadline = time.monotonic() + timeout
+        while not done.wait(0.1):
+            if cancel is not None and cancel.is_set():
+                raise _CallAbandoned()
+            if time.monotonic() > deadline:
+                raise RuntimeError(f'service {client.srv_name} timed out after {timeout}s')
         return future.result()
 
     def plan_command(self, user_command: str, is_benchmark: bool = False) -> dict:
@@ -587,11 +604,13 @@ class GuiBridgeNode(Node):
             result['error'] = 'scene_mock.json not found (is robo_reason_task_interface built?)'
             return result
 
+        self._planning_cancelled.clear()
         try:
             plan_req = PlanTask.Request()
             plan_req.user_command = user_command
             plan_req.scene_json = self._scene_json
-            plan_resp = self._call(self._plan_client, plan_req, PLAN_TIMEOUT_S)
+            plan_resp = self._call(self._plan_client, plan_req, PLAN_TIMEOUT_S,
+                                   cancel=self._planning_cancelled)
             if not plan_resp.success:
                 result['error'] = plan_resp.error_message or 'planning failed'
                 return result
@@ -601,9 +620,28 @@ class GuiBridgeNode(Node):
             result['run_id'] = self._latest_debug_run_id()
             self._last_plan_run_id = result['run_id']
             self._last_plan_is_benchmark = is_benchmark
+        except _CallAbandoned:
+            # The plan the planner may still return is dropped: a cancelled
+            # request must never reach the robot.
+            result['error'] = 'cancelled by user before execution'
+            result['cancelled'] = True
         except Exception as exc:
             result['error'] = f'{type(exc).__name__}: {exc}'
         return result
+
+    def cancel_planning(self) -> dict:
+        """Stop button while planning: abandon the request and stop the planner.
+
+        Releases plan_command() at once; the planner is told to stop at its
+        next reasoning step (a model call already in flight still completes,
+        but its plan is discarded). Fire and forget: not worth blocking the
+        GUI on, and plan_command() never executes a cancelled plan anyway.
+        """
+        self._planning_cancelled.set()
+        planner_notified = self._cancel_planning_client.service_is_ready()
+        if planner_notified:
+            self._cancel_planning_client.call_async(Trigger.Request())
+        return {'ok': True, 'planner_notified': planner_notified}
 
     def _latest_debug_run_id(self):
         """Best-effort: the run_id of the DebugRun folder /plan_task just
