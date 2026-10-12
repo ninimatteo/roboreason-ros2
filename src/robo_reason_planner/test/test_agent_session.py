@@ -65,7 +65,7 @@ class ScriptedClient:
 def _toolbox(backend, lines):
     cfg = ToolboxConfig(
         table_z=0.0, limits={'x': (-0.6, 0.6), 'y': (-0.8, 0.0), 'z': (-0.03, 0.55)},
-        grasp=GraspGeometry(0.5, 0.02, 0.057),
+        grasp=GraspGeometry(0.5, 0.02, 0.057), send_width=0,
     )
     return Toolbox(backend=backend, config=cfg, log=lines.append)
 
@@ -169,8 +169,8 @@ def test_norm1000_coordinates_are_scaled_to_pixels(tmp_path):
     tb = _toolbox(backend, lines)
     tb.config.coords = 'norm1000'
     tb.capture()
-    # 100 px of 640 = 156.25/1000, 100 px of 480 = 208.3/1000
-    res = json.loads(tb.run('inspect_object', {'bbox': [140, 190, 172, 227]}).text)
+    # both axes relative to the width: 100 px of 640 = 156.25/1000
+    res = json.loads(tb.run('inspect_object', {'bbox': [140, 140, 172, 172]}).text)
     assert res['height_m'] == 0.04
 
 
@@ -211,3 +211,81 @@ def test_stop_does_not_wait_for_a_slow_model_call(tmp_path):
     with pytest.raises(AgentCancelled):
         session.execute(cancelled=stop)
     assert time.monotonic() - t0 < 1.5
+
+
+def test_downscaled_image_coordinates_map_back_to_full_resolution(tmp_path):
+    from PIL import Image
+
+    class RealImageBackend(FakeBackend):
+        def capture(self):
+            self.n += 1
+            path = self.tmp / f'{self.n}.png'
+            Image.new('RGB', (640, 480)).save(path)
+            return str(path), 640, 480
+
+    backend, lines = RealImageBackend(tmp_path), []
+    tb = _toolbox(backend, lines)
+    tb.config.send_width = 320
+    sent = tb.capture()
+    assert Image.open(sent).size == (320, 240) and tb.image_size == (320, 240)
+    # the cube spans 80..120 px at full resolution = 40..60 in the sent image
+    res = json.loads(tb.run('inspect_object', {'bbox': [43, 43, 57, 57]}).text)
+    assert res['height_m'] == 0.04
+    assert res['width_m'] == 0.028        # 14 px sent = 28 px captured, 1 mm each
+
+
+def test_old_turns_are_compacted_but_stay_paired(tmp_path):
+    backend, lines = FakeBackend(tmp_path), []
+    long_args = {'steps': [{'action': 'x', 'description': 'y' * 300}], 'reason': 'z'}
+    client = ScriptedClient([PLAN] + [[('update_plan', long_args)]] * 6
+                            + [[('finish', {'success': True, 'summary': ''})]])
+    session = AgentSession(client, _toolbox(backend, lines), 'x', history_turns=2, log=lines.append)
+    session.draft_plan()
+    session.execute()
+    msgs = client.seen[-1][1]
+    tool_ids = [m['tool_call_id'] for m in msgs if m['role'] == 'tool']
+    call_ids = [c['id'] for m in msgs if m['role'] == 'assistant' for c in m.get('tool_calls', [])]
+    assert tool_ids == call_ids                    # protocol intact
+    plan_msgs = [m for m in msgs if m['role'] == 'user' and isinstance(m['content'], str)]
+    assert all('compacted' not in m for m in msgs)  # nothing provider specific leaks
+
+
+def test_token_budget_stops_the_task(tmp_path):
+    backend, lines = FakeBackend(tmp_path), []
+
+    class CostlyClient(ScriptedClient):
+        def chat(self, messages, tools, tool_choice='auto'):
+            reply = super().chat(messages, tools, tool_choice)
+            reply.input_tokens = 5000
+            return reply
+
+    client = CostlyClient([PLAN] + [[('look', {})]] * 10)
+    session = AgentSession(client, _toolbox(backend, lines), 'x', max_input_tokens=12000, log=lines.append)
+    session.draft_plan()
+    outcome = session.execute()
+    assert not outcome.success and 'token budget' in outcome.summary
+    assert len(client.seen) == 3
+
+
+def test_pacer_waits_for_the_token_window(monkeypatch):
+    from robo_reason_planner.agent import tool_chat
+    clock = {'t': 100.0}
+    slept = []
+    monkeypatch.setattr(tool_chat.time, 'monotonic', lambda: clock['t'])
+    monkeypatch.setattr(tool_chat.time, 'sleep', lambda s: (slept.append(s), clock.__setitem__('t', clock['t'] + s)))
+    c = tool_chat.ToolChatClient.__new__(tool_chat.ToolChatClient)
+    c.tpm_limit, c._window, c._last_request_tokens = 8000, tool_chat.collections.deque(), 3000
+    c._window.extend([(90.0, 3000), (95.0, 3000)])
+    c._pace()          # 6000 used + ~3750 needed > 8000: waits for the first to expire
+    assert slept and clock['t'] >= 150.0
+
+
+def test_the_same_refused_call_three_times_ends_the_task(tmp_path):
+    backend, lines = FakeBackend(tmp_path), []
+    bad = ('pick', {'grasp_point': [0.13, 0.39, 0.06], 'grasp_width': 0.03})
+    client = ScriptedClient([PLAN, [bad], [bad], [bad], [('look', {})]])
+    session = AgentSession(client, _toolbox(backend, lines), 'x', log=lines.append)
+    session.draft_plan()
+    outcome = session.execute()
+    assert not outcome.success and 'failed 3 times' in outcome.summary
+    assert len(client.seen) == 4

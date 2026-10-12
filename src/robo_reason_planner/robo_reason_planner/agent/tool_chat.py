@@ -10,11 +10,25 @@ reused from BaseFoundationClient so the model names are the same
 `provider/model` strings the rest of the stack uses.
 """
 
+import collections
 import json
 import time
 from dataclasses import dataclass, field
 
 from robo_reason_reasoning.FoundationClients.src.base_client import BaseFoundationClient
+
+import os
+
+# OpenAI compatible endpoints of providers BaseFoundationClient doesn't wire
+# (or wires through another SDK). Key from {PROVIDER}_API_KEY as usual.
+OPENAI_COMPATIBLE = {
+    'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    'mistral': 'https://api.mistral.ai/v1',
+    'openrouter': 'https://openrouter.ai/api/v1',
+    'github': 'https://models.github.ai/inference',
+    # needs CLOUDFLARE_ACCOUNT_ID too
+    'cloudflare': 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1',
+}
 
 # HTTP status codes worth retrying: rate limit and transient server errors.
 _RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504}
@@ -63,13 +77,25 @@ class _Usage:
 class ToolChatClient(BaseFoundationClient):
     """chat(messages, tools) -> ChatReply, for groq/... and nebius/... models."""
 
-    def __init__(self, max_retries: int = 4, **model_parameters):
+    def __init__(self, max_retries: int = 4, tpm_limit: int = 0, **model_parameters):
         super().__init__(**model_parameters)
-        if self.provider not in ('groq', 'nebius', 'openai'):
-            raise ValueError(f'tool calling is only wired for groq, nebius and openai, not {self.provider}')
+        # Tokens per minute the provider allows (0 = no pacing). Waiting here
+        # is cheaper than collecting 429s and backing off blindly.
+        self.tpm_limit = tpm_limit
+        self._window = collections.deque()   # (time, tokens) of the last minute
+        self._last_request_tokens = 0
+        if self.provider not in ('groq', 'nebius', 'openai', *OPENAI_COMPATIBLE):
+            raise ValueError(f'tool calling is not wired for provider {self.provider}')
         self.reasoning_effort = model_parameters.get('reasoning_effort') or None
         self.max_retries = max_retries
         self.usage = _Usage()
+
+    def _initialize_client(self):
+        if self.provider not in OPENAI_COMPATIBLE:
+            return super()._initialize_client()
+        from openai import OpenAI
+        url = OPENAI_COMPATIBLE[self.provider].format(account=os.getenv('CLOUDFLARE_ACCOUNT_ID', ''))
+        return OpenAI(api_key=self.api_key, base_url=self.base_url or url, timeout=self.request_timeout_s)
 
     def __call__(self, *args, **kwargs):
         raise NotImplementedError('use chat()')
@@ -86,8 +112,17 @@ class ToolChatClient(BaseFoundationClient):
         if self.reasoning_effort:
             kwargs['reasoning_effort'] = self.reasoning_effort
 
+        self._pace()
         t0 = time.monotonic()
-        response = self._create_with_retry(kwargs)
+        try:
+            response = self._create_with_retry(kwargs)
+        except Exception as exc:
+            # Some providers reject tool_choice='required'; 'auto' plus the
+            # session's own retry ("call submit_plan") does the same job.
+            if kwargs.get('tool_choice') != 'required' or getattr(exc, 'status_code', None) != 400:
+                raise
+            kwargs['tool_choice'] = 'auto'
+            response = self._create_with_retry(kwargs)
         latency = time.monotonic() - t0
 
         msg = response.choices[0].message
@@ -110,6 +145,8 @@ class ToolChatClient(BaseFoundationClient):
         in_tok = getattr(usage, 'prompt_tokens', 0) or 0
         out_tok = getattr(usage, 'completion_tokens', 0) or 0
         self._update_metrics(in_tok, out_tok)
+        self._window.append((time.monotonic(), in_tok + out_tok))
+        self._last_request_tokens = in_tok + out_tok
         self.usage.calls += 1
         self.usage.input_tokens += in_tok
         self.usage.output_tokens += out_tok
@@ -121,6 +158,21 @@ class ToolChatClient(BaseFoundationClient):
             input_tokens=in_tok, output_tokens=out_tok, latency_s=latency,
             reasoning=reasoning,
         )
+
+    def _pace(self):
+        """Wait until the next request (estimated as large as the last one,
+        plus some growth) fits in the provider's tokens per minute."""
+        if not self.tpm_limit:
+            return
+        need = min(int(self._last_request_tokens * 1.15) + 300, self.tpm_limit)
+        while True:
+            now = time.monotonic()
+            while self._window and now - self._window[0][0] > 60.0:
+                self._window.popleft()
+            used = sum(t for _, t in self._window)
+            if used + need <= self.tpm_limit or not self._window:
+                return
+            time.sleep(min(60.0 - (now - self._window[0][0]) + 0.2, 5.0))
 
     def _create_with_retry(self, kwargs):
         delay = 2.0

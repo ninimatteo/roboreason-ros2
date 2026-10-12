@@ -24,20 +24,19 @@ from robo_reason_planner.agent import geometry
 
 _BBOX = {
     'type': 'array', 'items': {'type': 'number'}, 'minItems': 4, 'maxItems': 4,
-    'description': 'Tight bounding box [x_min, y_min, x_max, y_max] in image pixels '
-                   '(x = column from the left, y = row from the top) of the latest image.',
+    'description': 'tight [x_min, y_min, x_max, y_max] in pixels of the latest image',
 }
 _XYZ = {
     'type': 'array', 'items': {'type': 'number'}, 'minItems': 3, 'maxItems': 3,
-    'description': '[x, y, z] in metres, robot base frame. Copy it from a perception tool result.',
+    'description': '[x, y, z] metres, copied from a perception result',
 }
 _PLAN_STEPS = {
     'type': 'array',
     'items': {
         'type': 'object',
         'properties': {
-            'action': {'type': 'string', 'description': 'pick, place, move_home, check, ...'},
-            'description': {'type': 'string', 'description': 'what this step does, e.g. "pick the red cube"'},
+            'action': {'type': 'string'},
+            'description': {'type': 'string'},
         },
         'required': ['action', 'description'],
     },
@@ -59,52 +58,40 @@ SUBMIT_PLAN = _fn(
     ['steps'],
 )
 
+# Descriptions are kept terse on purpose: the schemas go out with every call
+# (about 1600 tokens before trimming), and the workflow is explained once in
+# the system prompt.
+_WIDTH = {'type': 'number', 'description': 'width_m from inspect_object'}
 EXECUTION_TOOLS = [
-    _fn('look', 'Take a fresh camera image of the workspace. It is attached right after the tool result.'),
+    _fn('look', 'Fresh camera image (attached after the result).'),
     _fn('inspect_object',
-        'Measure an object with the depth camera. Returns its top centre, height, width, '
-        'the suggested grasp_point to pass to pick, and held_height_below_grasp_m to pass to place. '
-        "looks_empty=true means nothing is standing there (useful to check if an object is still in place).",
+        'Depth measurement of an object: top_center, height, width_m, grasp_point (for pick), '
+        'held_height_below_grasp_m (for place), looks_empty.',
         {'bbox': _BBOX}, ['bbox']),
-    _fn('inspect_area',
-        'Measure a placement area (tray, zone, table region) with the depth camera: '
-        'its surface height and x/y extent.',
+    _fn('inspect_area', 'Depth measurement of a placement area: surface_z, x/y extent.',
         {'bbox': _BBOX}, ['bbox']),
     _fn('find_free_spot',
-        'Find free positions inside a placement area for objects of the given footprint, avoiding '
-        'objects already there, the area edges and each other. Returns positions (on the surface, '
-        'ready for place) and whether there is enough room. Use count > 1 to place several objects, '
-        "and arrangement='line' to get them on a straight line, evenly spaced.",
-        {'bbox': _BBOX,
-         'footprint_m': {'type': 'number', 'description': 'object width in metres (from inspect_object)'},
-         'count': {'type': 'integer', 'description': 'how many positions (default 1)'},
-         'arrangement': {'type': 'string', 'enum': ['any', 'line'], 'description': 'default any'}},
+        'Free positions on an area for objects of footprint_m, clear of other objects, edges and '
+        "each other. count>1 for several, arrangement='line' for an evenly spaced row.",
+        {'bbox': _BBOX, 'footprint_m': _WIDTH,
+         'count': {'type': 'integer'},
+         'arrangement': {'type': 'string', 'enum': ['any', 'line']}},
         ['bbox', 'footprint_m']),
-    _fn('pick',
-        'Grasp an object: hover above grasp_point, go down, close the gripper, lift back up. '
-        'Opening the gripper first drops anything already held. The gripper has no sensor: '
-        'check with an image or inspect_object whether the object really came along.',
-        {'grasp_point': _XYZ,
-         'grasp_width': {'type': 'number', 'description': 'object width in metres (from inspect_object)'}},
-        ['grasp_point', 'grasp_width']),
-    _fn('place',
-        'Put the held object down: hover above position, go down, open the gripper, lift back up. '
-        'position is the surface point where the object will stand (from find_free_spot or inspect_area).',
+    _fn('pick', 'Hover, descend, close gripper, lift. Opens first: drops anything held.',
+        {'grasp_point': _XYZ, 'grasp_width': _WIDTH}, ['grasp_point', 'grasp_width']),
+    _fn('place', 'Hover, descend, open gripper, lift. position: surface point to stand on.',
         {'position': _XYZ,
-         'held_height': {'type': 'number',
-                         'description': 'held_height_below_grasp_m of the held object, from inspect_object'}},
+         'held_height': {'type': 'number', 'description': 'held_height_below_grasp_m'}},
         ['position', 'held_height']),
-    _fn('move_home', 'Move the arm to its home pose, mostly out of the camera view.'),
-    _fn('update_plan', 'Replace the remaining plan when reality differs from what you expected.',
+    _fn('move_home', 'Arm to home pose, mostly out of view.'),
+    _fn('update_plan', 'Replace the plan when reality differs.',
         {'steps': _PLAN_STEPS, 'reason': {'type': 'string'}}, ['steps', 'reason']),
-    _fn('report_progress', 'Mark a plan step as done or failed, so the operator can follow.',
-        {'step': {'type': 'integer', 'description': '1-based index in the current plan'},
-         'status': {'type': 'string', 'enum': ['done', 'failed', 'retrying']},
+    _fn('report_progress', 'Mark a plan step for the operator.',
+        {'step': {'type': 'integer'}, 'status': {'type': 'string', 'enum': ['done', 'failed', 'retrying']},
          'note': {'type': 'string'}},
         ['step', 'status']),
-    _fn('finish', 'End the task. Call it once the goal is verified, or when it cannot be achieved.',
-        {'success': {'type': 'boolean'}, 'summary': {'type': 'string'}},
-        ['success', 'summary']),
+    _fn('finish', 'End the task, once verified or impossible.',
+        {'success': {'type': 'boolean'}, 'summary': {'type': 'string'}}, ['success', 'summary']),
 ]
 
 ACTION_TOOLS = ('pick', 'place', 'move_home')
@@ -131,9 +118,13 @@ class ToolboxConfig:
     free_spot_margin_m: float = 0.01
     free_spot_grid: int = 14          # samples per side for find_free_spot
     # 'pixel', or 'norm1000' for models that answer in 0..1000 coordinates
-    # whatever the image size (the Qwen family).
+    # whatever the image size (the Qwen family, see _to_pixels).
     coords: str = 'pixel'
     auto_look_after_action: bool = True
+    # Images go to the model downscaled to this width (0 = as captured): an
+    # image is the largest part of a request (about 1800 tokens at 640x480
+    # on Qwen). Measurements still use the full resolution depth.
+    send_width: int = 448
 
 
 @dataclass
@@ -142,7 +133,8 @@ class Toolbox:
     config: ToolboxConfig
     log: object = print
     plan: list = field(default_factory=list)
-    image_size: tuple = (640, 480)
+    image_size: tuple = (640, 480)   # as sent to the model
+    full_size: tuple = (640, 480)    # as captured (deprojection pixels)
     images: list = field(default_factory=list)
     actions: list = field(default_factory=list)   # (tool, args, ok, error) of every action
     # What the gripper was last commanded to do. Not a sensor: after a pick it
@@ -163,8 +155,16 @@ class Toolbox:
             return ToolResult(f'ERROR: {name} failed: {type(exc).__name__}: {exc}')
 
     def capture(self) -> str:
+        """Grab a frame; returns the path of the image to show the model."""
         path, w, h = self.backend.capture()
-        self.image_size = (w, h)
+        self.full_size = self.image_size = (w, h)
+        sw = self.config.send_width
+        if sw and w > sw:
+            from PIL import Image
+            sh = round(h * sw / w)
+            small = str(path).rsplit('.', 1)[0] + f'_{sw}.png'
+            Image.open(path).resize((sw, sh), Image.LANCZOS).save(small)
+            path, self.image_size = small, (sw, sh)
         self.images.append(path)
         return path
 
@@ -320,15 +320,21 @@ class Toolbox:
             raise ValueError(f'bbox must be [x_min, y_min, x_max, y_max], got {bbox!r}')
         x0, y0, x1, y1 = (float(v) for v in bbox)
         if self.config.coords == 'norm1000':
-            w, h = self.image_size
-            x0, x1 = x0 * w / 1000.0, x1 * w / 1000.0
-            y0, y1 = y0 * h / 1000.0, y1 * h / 1000.0
+            # 0..1000 on both axes relative to the image WIDTH, as if the image
+            # were padded to a square: what Qwen3.8 on Groq consistently does
+            # (probed 2026-10-13, three objects, y was 0.7 of the height-based
+            # value every time).
+            w, _ = self.image_size
+            x0, x1, y0, y1 = (v * w / 1000.0 for v in (x0, x1, y0, y1))
         x0, x1 = sorted((x0, x1))
         y0, y1 = sorted((y0, y1))
         w, h = self.image_size
         if x1 < 0 or y1 < 0 or x0 > w or y0 > h:
             raise ValueError(f'bbox {bbox} is outside the {w}x{h} image')
-        return [max(x0, 0.0), max(y0, 0.0), min(x1, w - 1.0), min(y1, h - 1.0)]
+        # from the image the model saw to the captured resolution
+        fx, fy = self.full_size[0] / w, self.full_size[1] / h
+        fw, fh = self.full_size
+        return [max(x0 * fx, 0.0), max(y0 * fy, 0.0), min(x1 * fx, fw - 1.0), min(y1 * fy, fh - 1.0)]
 
 
 _GRIPPER_STATE = {

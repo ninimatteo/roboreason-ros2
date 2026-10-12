@@ -67,6 +67,10 @@ class AgentNode(Node):
         self.declare_parameter('max_duration_s', settings.AGENT_MAX_DURATION_S)
         self.declare_parameter('keep_images', settings.AGENT_KEEP_IMAGES)
         self.declare_parameter('coords', 'auto')
+        self.declare_parameter('image_width', settings.AGENT_IMAGE_WIDTH)
+        self.declare_parameter('history_turns', settings.AGENT_HISTORY_TURNS)
+        self.declare_parameter('max_input_tokens', settings.AGENT_MAX_INPUT_TOKENS)
+        self.declare_parameter('tpm_limit', -1)   # -1: AGENT_TPM_LIMITS for the provider
         dotenv.load_dotenv()
 
         import cv2
@@ -205,7 +209,10 @@ class AgentNode(Node):
     def _params(self) -> dict:
         p = {name: self.get_parameter(name).value for name in (
             'model_name', 'temperature', 'reasoning_effort', 'max_model_calls',
-            'max_duration_s', 'keep_images', 'coords')}
+            'max_duration_s', 'keep_images', 'coords', 'image_width', 'history_turns',
+            'max_input_tokens', 'tpm_limit')}
+        if p['tpm_limit'] < 0:
+            p['tpm_limit'] = settings.AGENT_TPM_LIMITS.get(p['model_name'].split('/', 1)[0], 0)
         if p['coords'] == 'auto':
             p['coords'] = 'norm1000' if 'qwen' in p['model_name'].lower() else 'pixel'
         return p
@@ -226,6 +233,7 @@ class AgentNode(Node):
             edge_inset_frac=settings.GRASP_WIDTH_EDGE_INSET_FRAC,
             free_spot_margin_m=settings.ZONE_PLACEMENT_MARGIN_M,
             coords=params['coords'],
+            send_width=params['image_width'],
         )
 
         def log(line):
@@ -233,7 +241,7 @@ class AgentNode(Node):
             self._publish(line)
 
         client_params = {'model_name': params['model_name'], 'temperature': params['temperature'],
-                         'max_tokens': 4096}
+                         'max_tokens': 4096, 'tpm_limit': params['tpm_limit']}
         if params['reasoning_effort']:
             client_params['reasoning_effort'] = params['reasoning_effort']
         client = ToolChatClient(**client_params)
@@ -241,7 +249,10 @@ class AgentNode(Node):
         return AgentSession(
             client, toolbox, request.user_command,
             max_model_calls=params['max_model_calls'], max_duration_s=params['max_duration_s'],
-            keep_images=params['keep_images'], log=log,
+            keep_images=params['keep_images'], history_turns=params['history_turns'],
+            max_input_tokens=params['max_input_tokens'],
+            max_request_tokens=settings.AGENT_MAX_REQUEST_TOKENS.get(params['model_name'].split('/', 1)[0], 0),
+            log=log,
         )
 
     def _finish_run(self, run, session, success, error=None):

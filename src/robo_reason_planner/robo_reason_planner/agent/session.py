@@ -35,7 +35,9 @@ class Outcome:
 class AgentSession:
     def __init__(self, client, toolbox: Toolbox, command: str, *,
                  max_model_calls: int = 60, max_duration_s: float = 900.0,
-                 keep_images: int = 2, max_nudges: int = 3, log=print):
+                 keep_images: int = 1, max_nudges: int = 3, history_turns: int = 8,
+                 max_input_tokens: int = 0, max_request_tokens: int = 0, max_repeats: int = 3,
+                 log=print):
         self.client = client
         self.toolbox = toolbox
         self.command = command
@@ -43,6 +45,13 @@ class AgentSession:
         self.max_duration_s = max_duration_s
         self.keep_images = keep_images
         self.max_nudges = max_nudges
+        self.history_turns = history_turns
+        self.max_input_tokens = max_input_tokens
+        self.max_request_tokens = max_request_tokens
+        self.max_repeats = max_repeats
+        self.input_tokens = 0
+        self._last_failure = (None, 0)   # (call signature, times in a row)
+        self._compacted_until = 0
         self.log = log
         self.messages = [{'role': 'system', 'content': prompts.SYSTEM}]
         # Every message as sent, with image paths instead of base64, for the debug trace.
@@ -89,6 +98,10 @@ class AgentSession:
             if time.monotonic() - t0 > self.max_duration_s:
                 summary = f'gave up: exceeded {self.max_duration_s:.0f} s'
                 break
+            if self.max_input_tokens and self.input_tokens >= self.max_input_tokens:
+                summary = f'gave up: used the token budget ({self.input_tokens} input tokens)'
+                break
+            self._compact_history()
 
             reply = self._chat(EXECUTION_TOOLS, cancelled=cancelled)
             if reply.content.strip():
@@ -114,6 +127,11 @@ class AgentSession:
                 result = self._run_call(call)
                 if call.name in ACTION_TOOLS and result.text.startswith(('ERROR', 'REFUSED')):
                     action_failed = True
+                    if self._repeated_failure(call):
+                        summary = (f'gave up: the same {call.name} call failed {self.max_repeats} times '
+                                   f'in a row ({result.text[:120]})')
+                        finished, success = True, False
+                        break
                 if result.image_path:
                     new_image = result.image_path
                 if result.finished:
@@ -147,6 +165,10 @@ class AgentSession:
                 except FuturesTimeout:
                     self._check_cancel(cancelled)
         self.messages.append(reply.message)
+        self.input_tokens += reply.input_tokens
+        # Close to the provider's per request cap: keep fewer turns verbatim.
+        if self.max_request_tokens and reply.input_tokens > 0.8 * self.max_request_tokens:
+            self.history_turns = max(2, self.history_turns - 2)
         self.transcript.append({
             **{k: v for k, v in reply.message.items() if k != 'reasoning_content'},
             'reasoning': reply.reasoning[:4000] if reply.reasoning else '',
@@ -170,6 +192,12 @@ class AgentSession:
                                 'content': result.text, 'image': result.image_path})
         return result
 
+    def _repeated_failure(self, call) -> bool:
+        sig = (call.name, call.arguments)
+        n = self._last_failure[1] + 1 if self._last_failure[0] == sig else 1
+        self._last_failure = (sig, n)
+        return n >= self.max_repeats
+
     def _skip_call(self, call, text):
         self.tool_calls += 1
         self.messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': text})
@@ -186,6 +214,29 @@ class AgentSession:
             ]})
             self._prune_images()
         self.transcript.append({'role': 'user', 'content': text, 'image': image_path})
+
+    def _compact_history(self):
+        """Shrink turns older than the last history_turns model replies.
+
+        Every call resends the whole conversation, so old turns are paid for
+        again and again. Their tool calls stay (the protocol needs each call
+        paired with its result) but long results and texts are cut short and
+        old reasoning is dropped. The request and the draft plan (the first
+        three messages after the system prompt) are never touched."""
+        replies = [i for i, m in enumerate(self.messages) if m['role'] == 'assistant']
+        if len(replies) <= self.history_turns:
+            return
+        cutoff = replies[-self.history_turns]
+        for m in self.messages[max(4, self._compacted_until):cutoff]:
+            if m['role'] == 'tool' and len(m['content']) > _OLD_RESULT_CHARS:
+                m['content'] = m['content'][:_OLD_RESULT_CHARS] + ' ...'
+            elif m['role'] == 'assistant':
+                m.pop('reasoning_content', None)
+                if len(m.get('content') or '') > _OLD_RESULT_CHARS:
+                    m['content'] = m['content'][:_OLD_RESULT_CHARS] + ' ...'
+            elif m['role'] == 'user' and isinstance(m['content'], str) and len(m['content']) > _OLD_RESULT_CHARS:
+                m['content'] = m['content'][:_OLD_RESULT_CHARS] + ' ...'
+        self._compacted_until = max(self._compacted_until, cutoff)
 
     def _prune_images(self):
         """Keep only the latest keep_images images in the context."""
@@ -206,6 +257,9 @@ class AgentSession:
 
     def save_transcript(self, path: Path):
         path.write_text(json.dumps(self.transcript, indent=2, default=str))
+
+
+_OLD_RESULT_CHARS = 160
 
 
 def _arg(call, key, default):

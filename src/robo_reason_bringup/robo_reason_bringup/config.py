@@ -53,7 +53,16 @@ class Settings(BaseSettings):
     AGENT_MODEL_NAME: str = 'nebius/kimi-k3'
     AGENT_MAX_MODEL_CALLS: int = 60      # per task, draft included
     AGENT_MAX_DURATION_S: float = 900.0  # execution phase wall clock budget
-    AGENT_KEEP_IMAGES: int = 2           # camera images kept in the model context
+    AGENT_KEEP_IMAGES: int = 1           # camera images kept in the model context
+    # Token economy (free tiers): images go out downscaled, turns older than
+    # AGENT_HISTORY_TURNS replies are shortened, a task stops at the budget.
+    AGENT_IMAGE_WIDTH: int = 448
+    AGENT_HISTORY_TURNS: int = 8
+    AGENT_MAX_INPUT_TOKENS: int = 300000
+    # Free tier tokens per minute per provider, paced client side (0 = none).
+    AGENT_TPM_LIMITS: Dict[str, int] = Field(default={'groq': 8000})
+    # Largest single request a provider accepts (Groq free: 7000 input tokens).
+    AGENT_MAX_REQUEST_TOKENS: Dict[str, int] = Field(default={'groq': 6500})
 
     # ── Deterministic geometry ablation (ROBOAI-30) ────────────────────────────
     # Two independent flags, both default False (normal behavior). "Soft" arm
