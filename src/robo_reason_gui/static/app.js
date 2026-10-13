@@ -683,6 +683,32 @@ document.getElementById('cam-recalibrate').addEventListener('click', async funct
 // A GUI started with ROBOREASON_PROFILE=sim drives the Gazebo simulation
 // instead of the real robot: the Simulation card replaces the UR driver and
 // camera cards, and the stack runs against the simulated robot and camera.
+// ---- scene (ROBOAI-49) ----
+const selScene = document.getElementById('sel-scene');
+
+async function loadScenes() {
+  try {
+    const data = await (await fetch('/api/scene')).json();
+    fillSelect(selScene, data.scenes || []);
+    selScene.value = data.current;
+  } catch (_e) {}
+}
+
+selScene.addEventListener('change', async () => {
+  try {
+    const data = await postJSON('/api/scene', { scene: selScene.value });
+    if (!data.ok) {
+      toast('Scene: ' + data.error, 'error');
+      return loadScenes();
+    }
+    toast(data.restart_sim
+      ? `Scene ${data.scene}: restart the simulation to rebuild the world`
+      : `Scene ${data.scene} selected`, data.restart_sim ? 'info' : 'success');
+  } catch (err) {
+    toast('Scene change failed: ' + err, 'error');
+  }
+});
+
 // (isSim is declared at the top, next to the other shared state.)
 const simState = document.getElementById('sim-state');
 const simInfo = document.getElementById('sim-info');
@@ -1186,6 +1212,7 @@ chatForm.addEventListener('submit', async (e) => {
 });
 
 loadOptions();
+loadScenes();
 loadBenchmarkTasks();
 loadProfile().then(() => {
   pollDriver();

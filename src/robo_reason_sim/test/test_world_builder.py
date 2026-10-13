@@ -66,3 +66,35 @@ def test_bridges_publish_the_camera_where_the_sim_profile_expects_it():
     assert {'/sim/camera/color/image_raw', '/sim/camera/depth/image_raw',
             '/sim/camera/color/camera_info', '/sim/ground_truth/poses'} <= ros_topics
     assert len(entries) == 4 + 2 * len(cubes)
+
+
+# --- scene library (ROBOAI-49) ---
+
+from robo_reason_bringup.scenes import list_scenes, scene_path
+from robo_reason_sim.world_builder import object_rest_positions
+
+
+def test_every_library_scene_builds_a_world_with_its_objects():
+    for name in list_scenes():
+        scene = json.loads(scene_path(name).read_text())
+        world = ET.fromstring(build_world_sdf(scene, CFG, 'sim')).find('world')
+        models = {m.get('name') for m in world.findall('model')}
+        assert set(graspable_objects(scene)) <= models, name
+
+
+def test_cylinders_are_cylinders_and_bars_are_rotated():
+    scene = json.loads(scene_path('cylinders').read_text())
+    world = ET.fromstring(build_world_sdf(scene, CFG, 'sim')).find('world')
+    can = next(m for m in world.findall('model') if m.get('name') == 'red_can')
+    assert can.find('link/collision/geometry/cylinder/radius').text == '0.025'
+    bars = json.loads(scene_path('long_objects').read_text())
+    assert object_rest_positions(bars)['blue_bar'][3] == bars['objects']['blue_bar']['yaw']
+
+
+def test_a_stacked_start_rests_on_its_support_and_is_reset_after_it():
+    scene = json.loads(scene_path('stacked_start').read_text())
+    rest = object_rest_positions(scene)
+    surface = scene['workspace']['table']['surface_z']
+    assert abs(rest['red_cube'][2] - (surface + 0.045 + 0.0225)) < 1e-9
+    order = list(rest)
+    assert order.index('blue_cube') < order.index('red_cube')

@@ -8,7 +8,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from ament_index_python.packages import get_package_share_directory
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -302,10 +301,27 @@ class GuiBridgeNode(Node):
             self._loop.call_soon_threadsafe(queue.put_nowait, msg.data)
 
     # ------------------------------------------------------------------ scene
+    def set_scene(self, scene: str) -> dict:
+        """Work on another scene (ROBOAI-49): sent with every request from now
+        on, and exported as ROBOREASON_SCENE so the simulation and the stack
+        build on it at their next start."""
+        from robo_reason_bringup.config import settings
+        from robo_reason_bringup.scenes import scene_path
+        try:
+            text = scene_path(scene).read_text()
+            json.loads(text)
+        except Exception as exc:
+            return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
+        os.environ['ROBOREASON_SCENE'] = scene
+        settings.SCENE = scene
+        self._scene_json = text
+        self.get_logger().info(f'[GuiBridgeNode] scene set to {scene}')
+        return {'ok': True, 'scene': scene}
+
     def _load_scene(self):
         try:
-            pkg_share = get_package_share_directory('robo_reason_task_interface')
-            scene_path = os.path.join(pkg_share, 'config', 'scene_mock.json')
+            from robo_reason_bringup.scenes import scene_path as selected_scene
+            scene_path = str(selected_scene())
             with open(scene_path, 'r') as f:
                 self.get_logger().info(f'[GuiBridgeNode] scene loaded from {scene_path}')
                 return f.read()

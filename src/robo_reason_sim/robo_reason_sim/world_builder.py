@@ -16,6 +16,8 @@ import numpy as np
 import yaml
 from ament_index_python.packages import get_package_share_directory
 
+from robo_reason_bringup.scenes import scene_path
+
 # Colours of scene entries, as Gazebo RGB.
 COLORS = {
     'red': (0.80, 0.08, 0.08),
@@ -46,7 +48,8 @@ def load_sim_config(path: Path = None) -> dict:
 
 
 def default_scene_path() -> Path:
-    return Path(get_package_share_directory('robo_reason_task_interface')) / 'config' / 'scene_mock.json'
+    """The scene selected for the stack (ROBOREASON_SCENE, scene_mock.json by default)."""
+    return scene_path()
 
 
 def rpy_to_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
@@ -101,15 +104,26 @@ def graspable_objects(scene: dict) -> dict:
 
 
 def object_rest_positions(scene: dict) -> dict:
-    """Where each graspable object starts: on the table, centred on its scene x, y.
+    """Where each graspable object starts, as (x, y, z of its centre, yaw).
 
-    Used both to build the world and to put the objects back on a reset.
+    Centred on its scene x, y, standing on the table, or on the object named
+    by its 'on' (ROBOAI-49). Ordered bottom up, so a reset that walks them in
+    order never drops an object onto a support not yet in place. Used both to
+    build the world and to put the objects back on a reset.
     """
     surface_z = float(scene['workspace']['table']['surface_z'])
-    return {
-        name: (obj['position'][0], obj['position'][1], surface_z + obj['size'][2] / 2)
-        for name, obj in graspable_objects(scene).items()
-    }
+    objects = graspable_objects(scene)
+
+    def base(name, seen=()):
+        support = objects[name].get('on')
+        if not support or support in seen or support not in objects:
+            return surface_z
+        return base(support, seen + (name,)) + objects[support]['size'][2]
+
+    rest = {name: (obj['position'][0], obj['position'][1], base(name) + obj['size'][2] / 2,
+                   float(obj.get('yaw', 0.0)))
+            for name, obj in objects.items()}
+    return dict(sorted(rest.items(), key=lambda item: item[1][2]))
 
 
 def _material(rgb) -> str:
@@ -118,21 +132,30 @@ def _material(rgb) -> str:
             f'<specular>0.1 0.1 0.1 1</specular></material>')
 
 
-def _box_model(name, center, size, rgb, static=True, mass=None) -> str:
+def _box_model(name, center, size, rgb, static=True, mass=None, shape='box', yaw=0.0) -> str:
+    """A box, or with shape 'cylinder' a cylinder of diameter size[0] (ROBOAI-49)."""
     sx, sy, sz = size
     inertial = ''
     if mass is not None:
-        ixx = mass / 12 * (sy ** 2 + sz ** 2)
-        iyy = mass / 12 * (sx ** 2 + sz ** 2)
-        izz = mass / 12 * (sx ** 2 + sy ** 2)
+        if shape == 'cylinder':
+            r = sx / 2
+            ixx = iyy = mass / 12 * (3 * r ** 2 + sz ** 2)
+            izz = mass / 2 * r ** 2
+        else:
+            ixx = mass / 12 * (sy ** 2 + sz ** 2)
+            iyy = mass / 12 * (sx ** 2 + sz ** 2)
+            izz = mass / 12 * (sx ** 2 + sy ** 2)
         inertial = (f'<inertial><mass>{mass}</mass><inertia><ixx>{ixx}</ixx><iyy>{iyy}</iyy>'
                     f'<izz>{izz}</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>')
-    geometry = f'<geometry><box><size>{sx} {sy} {sz}</size></box></geometry>'
+    if shape == 'cylinder':
+        geometry = f'<geometry><cylinder><radius>{sx / 2}</radius><length>{sz}</length></cylinder></geometry>'
+    else:
+        geometry = f'<geometry><box><size>{sx} {sy} {sz}</size></box></geometry>'
     friction = '<surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>'
     return f"""
     <model name="{name}">
       <static>{'true' if static else 'false'}</static>
-      <pose>{center[0]} {center[1]} {center[2]} 0 0 0</pose>
+      <pose>{center[0]} {center[1]} {center[2]} 0 0 {yaw}</pose>
       <link name="link">{inertial}
         <collision name="collision">{geometry}{friction}</collision>
         <visual name="visual">{geometry}{_material(rgb)}</visual>
@@ -172,8 +195,9 @@ def build_world_sdf(scene: dict, cfg: dict, namespace: str) -> str:
     for name, obj in graspable_objects(scene).items():
         size = obj['size']
         models.append(_box_model(
-            name, rest[name], size,
+            name, rest[name][:3], size,
             COLORS.get(obj.get('color'), (0.5, 0.5, 0.5)), static=False, mass=CUBE_MASS_KG,
+            shape=obj.get('shape', 'box'), yaw=rest[name][3],
         ))
 
     cam = cfg['camera']

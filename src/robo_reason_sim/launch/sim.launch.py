@@ -19,8 +19,9 @@ itself runs on top of it unchanged, with the sim profile:
 
 Arguments:
   gui    true | false   show the Gazebo window (default true)
-  scene  path           scene JSON to build the world from (default: the
-                        robo_reason_task_interface scene_mock.json)
+  scene  name | path    scene to build the world from: a name from the scene
+                        library or a JSON path (default: ROBOREASON_SCENE,
+                        else scene_mock.json; see robo_reason_bringup/scenes.py)
 """
 
 import json
@@ -43,6 +44,7 @@ from launch_ros.actions import Node, PushRosNamespace
 from robo_reason_bringup.config import settings
 from robo_reason_bringup.gazebo_partition import gazebo_partition
 from robo_reason_bringup.interfaces import load_interfaces
+from robo_reason_bringup.scenes import scene_path as scene_path_of
 from robo_reason_sim.world_builder import (
     bridge_config, build_world_sdf, default_scene_path, detachable_joint_plugins,
     graspable_objects, load_sim_config, share_dir,
@@ -71,7 +73,9 @@ def _robot_description(cfg, namespace, controllers_file, initial_positions_file,
 
 def launch_setup(context):
     gui = LaunchConfiguration('gui').perform(context).lower() == 'true'
-    scene_path = Path(LaunchConfiguration('scene').perform(context) or default_scene_path())
+    scene_arg = LaunchConfiguration('scene').perform(context)
+    scene_path = Path(default_scene_path() if not scene_arg else
+                      scene_arg if scene_arg.endswith('.json') else scene_path_of(scene_arg))
 
     names = load_interfaces('sim')
     namespace = names.namespace
@@ -138,6 +142,9 @@ def launch_setup(context):
     )
     return [
         SetEnvironmentVariable('ROBOREASON_PROFILE', 'sim'),
+        # Every node of the simulation (the gripper shim's reset above all)
+        # works on the scene the world was built from (ROBOAI-49).
+        SetEnvironmentVariable('ROBOREASON_SCENE', str(scene_path)),
         SetEnvironmentVariable('IGN_GAZEBO_RESOURCE_PATH', resource_path),
         # Gazebo's own transport, isolated per ROS domain unless set explicitly.
         SetEnvironmentVariable('IGN_PARTITION', gazebo_partition()),
