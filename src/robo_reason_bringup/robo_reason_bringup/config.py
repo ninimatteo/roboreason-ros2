@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     ZONE_PLACEMENT_DEFAULT_SPACING_M: float = 0.05   # fallback item footprint when grasp_width is unknown
     ZONE_PLACEMENT_MARGIN_M: float = 0.01            # extra clearance between adjacent items
     ZONE_PLACEMENT_ITEMS_PER_ROW: int = 3            # line length before wrapping into a new grid row
+    # Releases colliding inside a zone of known bounds: 'fit' lays them out as
+    # one grid centred on the zone, rows and columns following its shape
+    # (ROBOAI-21); 'ring' keeps the first where the plan put it and rings the
+    # others around it at minimum spacing (ROBOAI-18 behaviour).
+    ZONE_PLACEMENT_LAYOUT: str = 'fit'
 
     # ── Per-run debug artifacts (command/response/errors/images/summary.csv) ──
     DEBUG_DIR: str = '/root/ws/src/roboreason-ros2/debug'
