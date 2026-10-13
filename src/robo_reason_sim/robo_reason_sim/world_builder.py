@@ -68,16 +68,31 @@ def matrix_to_rpy(R: np.ndarray) -> tuple:
     return math.atan2(R[2, 1], R[2, 2]), pitch, math.atan2(R[1, 0], R[0, 0])
 
 
+# Gazebo poses the camera body (looking along +x, image up = +z). The
+# deprojection works in the optical frame (z forward, x right, y down), which
+# is the body frame rotated by this fixed matrix.
+_BODY_TO_OPTICAL = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=float)
+
+
 def camera_optical_pose(cfg: dict) -> list:
     """Pose of the camera *optical* frame in base, as [x, y, z, roll, pitch, yaw].
 
-    Gazebo poses the camera body (looking along +x, image up = +z). The
-    deprojection works in the optical frame (z forward, x right, y down), which
-    is the body frame rotated by this fixed matrix.
+    sim.yaml gives either `optical_pose` directly (the format the real
+    calibration prints and FIXED_CAMERA_POSE takes) or the body `pose`.
     """
+    if cfg['camera'].get('optical_pose'):
+        return [float(v) for v in cfg['camera']['optical_pose']]
     x, y, z, roll, pitch, yaw = cfg['camera']['pose']
-    body_to_optical = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=float)
-    R = rpy_to_matrix(roll, pitch, yaw) @ body_to_optical
+    R = rpy_to_matrix(roll, pitch, yaw) @ _BODY_TO_OPTICAL
+    return [x, y, z, *matrix_to_rpy(R)]
+
+
+def camera_body_pose(cfg: dict) -> list:
+    """Pose of the camera body in base, the one the Gazebo model takes."""
+    if not cfg['camera'].get('optical_pose'):
+        return [float(v) for v in cfg['camera']['pose']]
+    x, y, z, roll, pitch, yaw = camera_optical_pose(cfg)
+    R = rpy_to_matrix(roll, pitch, yaw) @ _BODY_TO_OPTICAL.T
     return [x, y, z, *matrix_to_rpy(R)]
 
 
@@ -162,7 +177,7 @@ def build_world_sdf(scene: dict, cfg: dict, namespace: str) -> str:
         ))
 
     cam = cfg['camera']
-    cx, cy, cz, cr, cp, cyaw = cam['pose']
+    cx, cy, cz, cr, cp, cyaw = camera_body_pose(cfg)
     # Explicit intrinsics: Fortress' rgbd_camera otherwise publishes the
     # default 320x240 ones in camera_info whatever the image size, which
     # breaks deprojection.

@@ -6,7 +6,7 @@ import numpy as np
 
 from robo_reason_bringup.interfaces import load_interfaces
 from robo_reason_sim.world_builder import (
-    bridge_config, build_world_sdf, camera_optical_pose, default_scene_path,
+    bridge_config, build_world_sdf, camera_body_pose, camera_optical_pose, default_scene_path,
     graspable_objects, load_sim_config, rpy_to_matrix,
 )
 
@@ -16,11 +16,27 @@ CFG = load_sim_config()
 
 def test_downward_camera_optical_frame_matches_the_rendered_image():
     """Looking straight down, image right is +x and image down is -y (checked on a real render)."""
-    *_, roll, pitch, yaw = camera_optical_pose(CFG)
+    down = {'camera': {'pose': [0.0, -0.45, 1.10, 0.0, 1.5708, 1.5708]}}
+    *_, roll, pitch, yaw = camera_optical_pose(down)
     R = rpy_to_matrix(roll, pitch, yaw)
     np.testing.assert_allclose(R[:, 0], [1, 0, 0], atol=1e-4)    # optical x -> world +x
     np.testing.assert_allclose(R[:, 1], [0, -1, 0], atol=1e-4)   # optical y -> world -y
     np.testing.assert_allclose(R[:, 2], [0, 0, -1], atol=1e-4)   # optical z -> down
+
+
+def test_configured_camera_looks_at_the_work_area_level():
+    """ROBOAI-46: like the real one, from the far end of the table towards the work area."""
+    x, y, z, roll, pitch, yaw = camera_optical_pose(CFG)
+    R = rpy_to_matrix(roll, pitch, yaw)
+    to_area = np.array([0.08, -0.42, -0.03]) - np.array([x, y, z])
+    np.testing.assert_allclose(R[:, 2], to_area / np.linalg.norm(to_area), atol=1e-3)
+    assert abs(R[2, 0]) < 1e-6   # image rows stay level: no roll
+
+
+def test_optical_pose_in_config_round_trips_to_the_body_pose():
+    optical = camera_optical_pose(CFG)
+    body = camera_body_pose({'camera': {'optical_pose': optical}})
+    np.testing.assert_allclose(body, camera_body_pose(CFG), atol=1e-6)
 
 
 def test_world_contains_the_scene_and_nothing_twice():
