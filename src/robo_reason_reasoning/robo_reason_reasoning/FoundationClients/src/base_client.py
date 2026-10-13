@@ -219,6 +219,13 @@ class BaseFoundationClient(ABC):
             if not OpenAI: raise ImportError("OpenAI SDK not installed.")
             base_url = self.base_url or "https://api.tokenfactory.nebius.com/v1/"
             return OpenAI(api_key=self.api_key, base_url=base_url, timeout=self.request_timeout_s)
+        elif self.provider == "mistral":
+            # OpenAI compatible. Added for ROBOAI-50: the free tier the AGENT
+            # mode runs on, so the classic pipeline can be compared on the
+            # same model.
+            if not OpenAI: raise ImportError("OpenAI SDK not installed.")
+            base_url = self.base_url or "https://api.mistral.ai/v1"
+            return OpenAI(api_key=self.api_key, base_url=base_url, timeout=self.request_timeout_s)
         elif self.provider == "anthropic":
             if not Anthropic: raise ImportError("Anthropic SDK not installed.")
             return Anthropic(api_key=self.api_key, timeout=self.request_timeout_s)
