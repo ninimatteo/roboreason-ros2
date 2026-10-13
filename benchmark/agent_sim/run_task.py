@@ -11,7 +11,8 @@ from robo_reason_interfaces.srv import PlanTask, ExecutePlan
 from robo_reason_sim.world_builder import default_scene_path
 SCENE = str(default_scene_path())   # the scene the simulation was built from
 command = sys.argv[1]
-import argparse, subprocess
+import argparse, os, subprocess
+from robo_reason_bringup.gazebo_partition import gazebo_partition
 ap = argparse.ArgumentParser(); ap.add_argument('command'); ap.add_argument('--no-reset', action='store_true')
 ap.add_argument('--slip', type=int, default=0, help='the next N grasps slip')
 ap.add_argument('--drop', type=float, default=0.0, help='the next grasp drops after S seconds')
@@ -22,7 +23,8 @@ def set_param(name, value):
 def teleport(cube, x, y):
     req = f'name: "{cube}", position: {{x: {x}, y: {y}, z: 0.0}}, orientation: {{w: 1}}'
     r = subprocess.run(['ign', 'service', '-s', '/world/roboreason/set_pose', '--reqtype', 'ignition.msgs.Pose',
-                        '--reptype', 'ignition.msgs.Boolean', '--timeout', '3000', '--req', req], capture_output=True, text=True)
+                        '--reptype', 'ignition.msgs.Boolean', '--timeout', '3000', '--req', req], capture_output=True, text=True,
+                       env={**os.environ, 'IGN_PARTITION': gazebo_partition()})
     print(f'   PERTURB moved {cube} to ({x},{y}):', r.stdout.strip(), flush=True)
 moved = []
 def on_log(m):
