@@ -78,10 +78,9 @@ def test_draft_then_execute_happy_path(tmp_path):
     backend, lines = FakeBackend(tmp_path), []
     client = ScriptedClient([
         PLAN,
-        [('inspect_object', {'bbox': [85, 85, 115, 115]})],
-        [('pick', {'grasp_point': [0.1, -0.4, 0.02], 'grasp_width': 0.04})],
-        [('place', {'position': [0.3, -0.3, 0.0], 'held_height': 0.02}),
-         ('report_progress', {'step': 2, 'status': 'done'})],
+        [('inspect_object', {'bbox': [85, 85, 115, 115]}), ('inspect_area', {'bbox': [280, 80, 320, 120]})],
+        [('pick', {'object': 'o1'})],
+        [('place', {'target': 'a1'}), ('report_progress', {'step': 2, 'status': 'done'})],
         [('finish', {'success': True, 'summary': 'cube moved'})],
     ])
     session = AgentSession(client, _toolbox(backend, lines), 'move the cube', log=lines.append)
@@ -93,43 +92,45 @@ def test_draft_then_execute_happy_path(tmp_path):
     outcome = session.execute()
     assert outcome.success and outcome.summary == 'cube moved'
     assert [s[0] for s in backend.skills] == ['approach', 'pick', 'approach', 'approach', 'release']
+    assert backend.skills[1][1]['target_position'] == [0.1, -0.4, 0.02]   # mid body grasp
+    assert backend.skills[1][1]['grasp_width'] == 0.03                    # 30 px at 1 mm per pixel
     assert backend.skills[4][1]['object_height'] == 0.02
+    assert backend.skills[4][1]['release_position'][:2] == [0.3, -0.4]
     assert '[Step 2] done -> OK' in lines
-    # inspect_object's answer reached the model
-    tool_msgs = [m for m in client.seen[2][1] if m['role'] == 'tool']
-    measured = json.loads(tool_msgs[-1]['content'])
-    assert measured['height_m'] == 0.04 and measured['grasp_point'] == [0.1, -0.4, 0.02]
-    assert measured['width_m'] == 0.03     # 30 px bbox at 1 mm per pixel
-
+    # the model gets ids and sizes, no coordinates to copy
+    measured = json.loads([m for m in client.seen[2][1] if m['role'] == 'tool'][-2]['content'])
+    assert measured['id'] == 'o1' and measured['height_m'] == 0.04 and 'grasp_point' not in measured
 
 def test_failed_pick_is_reported_back_and_retried(tmp_path):
     backend, lines = FakeBackend(tmp_path, fail_first_pick=True), []
-    pick = ('pick', {'grasp_point': [0.1, -0.4, 0.02], 'grasp_width': 0.04})
-    client = ScriptedClient([PLAN, [pick], [pick], [('finish', {'success': True, 'summary': 'ok'})]])
+    client = ScriptedClient([PLAN, [('inspect_object', {'bbox': [85, 85, 115, 115]})],
+                             [('pick', {'object': 'o1'})], [('pick', {'object': 'o1'})],
+                             [('finish', {'success': True, 'summary': 'ok'})]])
     session = AgentSession(client, _toolbox(backend, lines), 'pick', log=lines.append)
     session.draft_plan()
     outcome = session.execute()
     assert outcome.success
-    after_fail = [m for m in client.seen[2][1] if m['role'] == 'tool'][-1]['content']
+    after_fail = [m for m in client.seen[3][1] if m['role'] == 'tool'][-1]['content']
     assert 'gripper close failed' in after_fail
     assert [a[2] for a in outcome.actions] == [False, True]
-
 
 def test_unsafe_target_is_refused_not_corrected(tmp_path):
     backend, lines = FakeBackend(tmp_path), []
     client = ScriptedClient([
         PLAN,
-        [('pick', {'grasp_point': [0.1, -0.4, -0.2], 'grasp_width': 0.04})],
+        [('inspect_object', {'bbox': [85, 85, 115, 115]})],
+        [('pick', {'object': 'o1'})],
         [('finish', {'success': False, 'summary': 'gave up'})],
     ])
-    session = AgentSession(client, _toolbox(backend, lines), 'pick', log=lines.append)
+    tb = _toolbox(backend, lines)
+    tb.config.max_reach_m = 0.3          # the cube sits 0.41 m from the base
+    session = AgentSession(client, tb, 'pick', log=lines.append)
     session.draft_plan()
     outcome = session.execute()
     assert not outcome.success
     assert backend.skills == []
-    refused = [m for m in client.seen[2][1] if m['role'] == 'tool'][-1]['content']
-    assert refused.startswith('REFUSED') and 'below the table' in refused
-
+    refused = [m for m in client.seen[3][1] if m['role'] == 'tool'][-1]['content']
+    assert refused.startswith('REFUSED') and 'beyond its reach' in refused
 
 def test_only_the_latest_images_stay_in_context(tmp_path):
     backend, lines = FakeBackend(tmp_path), []
@@ -178,8 +179,8 @@ def test_actions_after_a_failed_one_in_the_same_turn_are_skipped(tmp_path):
     backend, lines = FakeBackend(tmp_path, fail_first_pick=True), []
     client = ScriptedClient([
         PLAN,
-        [('pick', {'grasp_point': [0.1, -0.4, 0.02], 'grasp_width': 0.04}),
-         ('place', {'position': [0.3, -0.3, 0.0], 'held_height': 0.02}),
+        [('inspect_object', {'bbox': [85, 85, 115, 115]}), ('inspect_area', {'bbox': [280, 80, 320, 120]})],
+        [('pick', {'object': 'o1'}), ('place', {'target': 'a1'}),
          ('inspect_object', {'bbox': [85, 85, 115, 115]})],
         [('finish', {'success': False, 'summary': 'stop'})],
     ])
@@ -187,10 +188,9 @@ def test_actions_after_a_failed_one_in_the_same_turn_are_skipped(tmp_path):
     session.draft_plan()
     session.execute()
     assert 'release' not in [s[0] for s in backend.skills]
-    results = [m['content'] for m in client.seen[2][1] if m['role'] == 'tool'][-3:]
+    results = [m['content'] for m in client.seen[3][1] if m['role'] == 'tool'][-3:]
     assert results[0].startswith('ERROR') and results[1].startswith('SKIPPED')
     assert '"height_m"' in results[2]      # perception still runs
-
 
 def test_stop_does_not_wait_for_a_slow_model_call(tmp_path):
     import time
@@ -282,10 +282,12 @@ def test_pacer_waits_for_the_token_window(monkeypatch):
 
 def test_the_same_refused_call_three_times_ends_the_task(tmp_path):
     backend, lines = FakeBackend(tmp_path), []
-    bad = ('pick', {'grasp_point': [0.13, 0.39, 0.06], 'grasp_width': 0.03})
+    bad = ('pick', {'object': 'o9'})      # never measured
     client = ScriptedClient([PLAN, [bad], [bad], [bad], [('look', {})]])
     session = AgentSession(client, _toolbox(backend, lines), 'x', log=lines.append)
     session.draft_plan()
     outcome = session.execute()
     assert not outcome.success and 'failed 3 times' in outcome.summary
+    assert 'unknown id' in outcome.summary
     assert len(client.seen) == 4
+

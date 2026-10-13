@@ -61,28 +61,32 @@ SUBMIT_PLAN = _fn(
 # Descriptions are kept terse on purpose: the schemas go out with every call
 # (about 1600 tokens before trimming), and the workflow is explained once in
 # the system prompt.
-_WIDTH = {'type': 'number', 'description': 'width_m from inspect_object'}
+# Positions never pass through the model: perception tools store what they
+# measured under a short id, actions take the id. Copying numbers was a
+# failure mode of its own (signs dropped, digits shifted).
+_REF = {'type': 'string', 'description': 'id from a perception result'}
 EXECUTION_TOOLS = [
     _fn('look', 'Fresh camera image (attached after the result).'),
     _fn('inspect_object',
-        'Depth measurement of an object: top_center, height, width_m, grasp_point (for pick), '
-        'held_height_below_grasp_m (for place), looks_empty.',
+        'Depth measurement of an object. Returns an id (o1, o2...) for pick, plus height_m, width_m, '
+        'looks_empty.',
         {'bbox': _BBOX}, ['bbox']),
-    _fn('inspect_area', 'Depth measurement of a placement area: surface_z, x/y extent.',
+    _fn('inspect_area', 'Depth measurement of a placement area. Returns an id (a1...) for place, '
+        'plus surface_z and x/y extent.',
         {'bbox': _BBOX}, ['bbox']),
     _fn('find_free_spot',
-        'Free positions on an area for objects of footprint_m, clear of other objects, edges and '
-        "each other. count>1 for several, arrangement='line' for an evenly spaced row.",
-        {'bbox': _BBOX, 'footprint_m': _WIDTH,
+        'Free spots on an area for objects like `object`, clear of other objects, edges and each '
+        "other. Returns ids (s1...) for place. count>1 for several, arrangement='line' for an evenly "
+        'spaced row.',
+        {'bbox': _BBOX, 'object': _REF,
          'count': {'type': 'integer'},
          'arrangement': {'type': 'string', 'enum': ['any', 'line']}},
-        ['bbox', 'footprint_m']),
-    _fn('pick', 'Hover, descend, close gripper, lift. Opens first: drops anything held.',
-        {'grasp_point': _XYZ, 'grasp_width': _WIDTH}, ['grasp_point', 'grasp_width']),
-    _fn('place', 'Hover, descend, open gripper, lift. position: surface point to stand on.',
-        {'position': _XYZ,
-         'held_height': {'type': 'number', 'description': 'held_height_below_grasp_m'}},
-        ['position', 'held_height']),
+        ['bbox', 'object']),
+    _fn('pick', 'Grasp a measured object: hover, descend, close gripper, lift. Opens first: drops '
+        'anything held.',
+        {'object': _REF}, ['object']),
+    _fn('place', 'Put the held object on target: a spot (s), an area (a), or on top of an object (o).',
+        {'target': _REF}, ['target']),
     _fn('move_home', 'Arm to home pose, mostly out of view.'),
     _fn('update_plan', 'Replace the plan when reality differs.',
         {'steps': _PLAN_STEPS, 'reason': {'type': 'string'}}, ['steps', 'reason']),
@@ -140,6 +144,8 @@ class Toolbox:
     # What the gripper was last commanded to do. Not a sensor: after a pick it
     # is closed whether or not the object came along.
     gripper: str = 'open'
+    refs: dict = field(default_factory=dict)     # id -> what a perception tool measured
+    held: dict = None                            # measurement of the object picked last
 
     # ── entry point ────────────────────────────────────────────────────────
 
@@ -170,6 +176,8 @@ class Toolbox:
 
     # ── perception ─────────────────────────────────────────────────────────
 
+    _pending_hold = None
+
     def _tool_look(self):
         path = self.capture()
         return ToolResult('New image attached below.', image_path=path)
@@ -189,7 +197,8 @@ class Toolbox:
         if scale is not None:
             m['width_m'] = round((bbox[2] - bbox[0]) * scale[0], 4)
             m['depth_m'] = round((bbox[3] - bbox[1]) * scale[1], 4)
-        return ToolResult(json.dumps(m))
+        ref = self._store('o', {'kind': 'object', **m})
+        return ToolResult(json.dumps({'id': ref, **_public(m)}))
 
     def _tool_inspect_area(self, bbox):
         bbox = self._to_pixels(bbox)
@@ -201,9 +210,11 @@ class Toolbox:
         if pts[0] is None:
             return ToolResult(f'ERROR: no depth at the centre of bbox {bbox}')
         m = geometry.surface_measurement(pts[0], [p for p in pts[1:] if p is not None])
-        return ToolResult(json.dumps(m))
+        ref = self._store('a', {'kind': 'area', 'position': m['center'], **m})
+        return ToolResult(json.dumps({'id': ref, **{k: v for k, v in m.items() if k != 'center'}}))
 
-    def _tool_find_free_spot(self, bbox, footprint_m, count=1, arrangement='any'):
+    def _tool_find_free_spot(self, bbox, object, count=1, arrangement='any'):
+        footprint_m = self._ref(object, 'object').get('width_m') or 0.05
         bbox = self._to_pixels(bbox)
         x0, y0, x1, y1 = bbox
         n = self.config.free_spot_grid
@@ -216,17 +227,25 @@ class Toolbox:
             count=int(count), arrangement=str(arrangement),
             allowed=lambda q: self._check(q, lift=self.config.approach_offset_m) is None,
         )
-        return ToolResult(json.dumps(spot))
+        out = {k: v for k, v in spot.items() if k not in ('positions', 'position')}
+        if 'positions' in spot:
+            out['spots'] = [self._store('s', {'kind': 'spot', 'position': p}) for p in spot['positions']]
+        return ToolResult(json.dumps(out))
 
     # ── actions ────────────────────────────────────────────────────────────
 
-    def _tool_pick(self, grasp_point, grasp_width):
+    def _tool_pick(self, object):
+        obj = self._ref(object, 'object')
+        if obj['looks_empty']:
+            return self._refused('pick', object, f'{object} looked empty when measured, nothing to grasp')
+        grasp_point = obj['grasp_point']
         err = self._check(grasp_point, lift=self.config.approach_offset_m)
         if err:
-            return self._refused('pick', grasp_point, err)
+            return self._refused('pick', object, err)
         target = [float(v) for v in grasp_point]
-        width = max(float(grasp_width), 0.0)
-        return self._sequence('pick', {'grasp_point': target, 'grasp_width': width}, [
+        width = max(float(obj.get('width_m') or 0.0), 0.0)
+        self._pending_hold = obj
+        return self._sequence('pick', {'object': object, 'grasp_point': target, 'grasp_width': width}, [
             ('approach', {'target_position': target, 'offset': self.config.approach_offset_m,
                           'approach_direction': 'z'}),
             ('pick', {'target_position': target, 'grasp_width': width, 'grasp_axis': 'z'}),
@@ -234,19 +253,24 @@ class Toolbox:
                           'approach_direction': 'z'}),
         ])
 
-    def _tool_place(self, position, held_height):
-        held = max(float(held_height), 0.0)
+    def _tool_place(self, target):
+        ref = self._ref(target)
+        # on top of an object: its top surface; spot or area: the surface point
+        position = ref['top_center'] if ref['kind'] == 'object' else ref['position']
+        if self.held is None:
+            return self._refused('place', target, 'no object is known to be held: pick one first')
+        held = max(float(self.held['held_height_below_grasp_m']), 0.0)
         err = self._check(position, lift=held + self.config.approach_offset_m)
         if err:
-            return self._refused('place', position, err)
-        target = [float(v) for v in position]
-        hover_base = [target[0], target[1], target[2] + held]
-        return self._sequence('place', {'position': target, 'held_height': held}, [
+            return self._refused('place', target, err)
+        target_xyz = [float(v) for v in position]
+        hover_base = [target_xyz[0], target_xyz[1], target_xyz[2] + held]
+        return self._sequence('place', {'target': target, 'position': target_xyz, 'held_height': held}, [
             ('approach', {'target_position': hover_base, 'offset': self.config.approach_offset_m,
                           'approach_direction': 'z'}),
             # The executor raises the TCP by object_height, and retracts to the
             # hover pose after opening.
-            ('release', {'release_position': target, 'object_height': held}),
+            ('release', {'release_position': target_xyz, 'object_height': held}),
         ])
 
     def _tool_move_home(self):
@@ -280,8 +304,10 @@ class Toolbox:
                 # The executor opens the gripper before closing it, so even a
                 # failed pick may have dropped what was held.
                 self.gripper = 'closed' if ok else 'unknown'
+                self.held = self._pending_hold if ok else None
             elif skill == 'release' and ok:
                 self.gripper = 'open'
+                self.held = None
             if not ok:
                 self.actions.append((tool, summary_args, False, f'{skill}: {error}'))
                 self.log(f'[Agent] {tool} {json.dumps(summary_args)} -> FAILED at {skill}: {error}')
@@ -296,6 +322,21 @@ class Toolbox:
             return ToolResult(text)
         path = self.capture()
         return ToolResult(text + ' A fresh image is attached below.', image_path=path)
+
+    def _store(self, prefix, data) -> str:
+        n = sum(1 for k in self.refs if k.startswith(prefix)) + 1
+        ref = f'{prefix}{n}'
+        self.refs[ref] = data
+        return ref
+
+    def _ref(self, ref, kind=None) -> dict:
+        data = self.refs.get(str(ref).strip())
+        if data is None:
+            known = ', '.join(self.refs) or 'none yet'
+            raise ValueError(f'unknown id {ref!r} (known: {known}); measure first')
+        if kind and data['kind'] != kind:
+            raise ValueError(f'{ref} is a {data["kind"]}, expected an {kind} id')
+        return data
 
     def _refused(self, tool, position, err):
         self.actions.append((tool, {'position': position}, False, f'refused: {err}'))
@@ -335,6 +376,14 @@ class Toolbox:
         fx, fy = self.full_size[0] / w, self.full_size[1] / h
         fw, fh = self.full_size
         return [max(x0 * fx, 0.0), max(y0 * fy, 0.0), min(x1 * fx, fw - 1.0), min(y1 * fy, fh - 1.0)]
+
+
+def _public(m: dict) -> dict:
+    """What the model sees of a measurement: no coordinates to copy."""
+    keys = ('height_m', 'width_m', 'depth_m', 'looks_empty', 'note')
+    out = {k: m[k] for k in keys if k in m}
+    out['top_z'] = m['top_center'][2]
+    return out
 
 
 _GRIPPER_STATE = {

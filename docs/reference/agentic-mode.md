@@ -23,9 +23,12 @@ function calling nativo:
    Termina chiamando `finish`.
 
 Le correzioni deterministiche non spariscono: diventano **tool** che il modello
-sceglie di usare, e di cui vede il risultato. Il modello non fa mai aritmetica
-sulla geometria: legge una bbox dall'immagine, chiede al tool la posizione
-metrica e passa quel numero, invariato, a `pick` o `place`.
+sceglie di usare, e di cui vede il risultato. Il modello non tocca mai una
+coordinata: legge una bbox dall'immagine, il tool di percezione misura e
+restituisce un id (`o1` per un oggetto, `a1` per un'area, `s1` per uno spot
+libero), e `pick` e `place` prendono quell'id. Prima le azioni prendevano i
+numeri, e copiarli era un failure mode a sé: Qwen su Groq perdeva i segni
+meno in ogni tool call.
 
 ## I tool
 
@@ -35,8 +38,8 @@ metrica e passa quel numero, invariato, a `pick` o `place`.
 | `inspect_object(bbox)` | top centre, altezza, larghezza, `grasp_point` a metà corpo, `held_height_below_grasp_m`, `looks_empty` | compensazione di profondità e grasp width di `vlm_planner_node` |
 | `inspect_area(bbox)` | quota della superficie ed estensione xy | lookup della superficie di `_fix_release_height` |
 | `find_free_spot(bbox, footprint_m)` | il punto libero migliore dentro un'area, lontano da oggetti già presenti e dai bordi | `distribute_zone_releases`, ma misurato dalla depth invece che dedotto dal plan |
-| `pick(grasp_point, grasp_width)` | approach, pick, risalita | sequenza fissa di skill dell'executor |
-| `place(position, held_height)` | approach, release (che risale da sola) | idem |
+| `pick(object)` | approach, pick, risalita sull'oggetto misurato | sequenza fissa di skill dell'executor |
+| `place(target)` | approach, release (che risale da sola) su uno spot, un'area o sopra un oggetto | idem |
 | `move_home` | braccio in home, quasi fuori dall'inquadratura | |
 | `update_plan`, `report_progress` | rivedono la bozza e segnano i passi fatti nella GUI | |
 | `finish(success, summary)` | chiude il task | |
@@ -156,3 +159,40 @@ Cosa ha mostrato la valutazione, e cosa è stato corretto strada facendo:
   4.5 cm
 * posizioni oltre il reach mandavano l'IK in errore: ora vengono rifiutate e
   `find_free_spot` non le propone più
+
+## Provider e consumo di token
+
+Misurato su Groq per una chiamata di esecuzione: immagine 640x480 circa 1800
+token, schema dei tool circa 1600, system prompt circa 650, più la history che
+cresce a ogni turno. Contromisure, tutte in `config.py`:
+
+| Campo | Default | Effetto |
+|---|---|---|
+| `AGENT_KEEP_IMAGES` | 1 | solo l'ultima immagine resta nel contesto |
+| `AGENT_IMAGE_WIDTH` | 448 | immagine inviata ridotta (Groq ridimensiona da solo, altri contano per risoluzione) |
+| `AGENT_HISTORY_TURNS` | 8 | i turni più vecchi vengono accorciati, e di più se ci si avvicina al limite per richiesta |
+| `AGENT_MAX_INPUT_TOKENS` | 300000 | budget per task |
+| `AGENT_TPM_LIMITS` | groq 8000 | pacing lato client dei token al minuto |
+| `AGENT_MAX_REQUEST_TOKENS` | groq 6500 | limite della singola richiesta |
+
+In più: schema dei tool più corto (meno 27%), e la stessa azione fallita tre
+volte di fila chiude il task invece di continuare a spendere.
+
+**Groq free tier** (qwen3.8-27b, unico modello vision): 8000 token al minuto,
+7000 per richiesta, **200000 al giorno**. Funziona tecnicamente (coordinate
+0..1000 relative alla larghezza su entrambi gli assi, gestite da
+`coords=norm1000`), ma basta per 2 o 3 task semplici al giorno, ciascuno di
+circa 10 minuti per via del pacing. Utile solo come smoke test.
+
+**Provider già cablati in `ToolChatClient`**, basta la chiave in
+`{PROVIDER}_API_KEY` (e il dominio permesso dal sandbox di rete, se c'è):
+`gemini`, `mistral`, `openrouter`, `github`, `cloudflare` (più
+`CLOUDFLARE_ACCOUNT_ID`). Free tier verificati a ottobre 2026:
+
+| Provider | Free tier | Vision e tool | Note |
+|---|---|---|---|
+| Mistral (piano Experiment) | circa 1 miliardo di token al mese per modello, 1 richiesta al secondo | Mistral Small 3.2, Medium | richiede verifica del telefono e consenso al training sui dati |
+| Google Gemini (Flash) | poche decine o centinaia di richieste al giorno, limiti visibili solo in AI Studio | sì | Pro non è più nel free tier |
+| Cloudflare Workers AI | 10000 neuron al giorno, cioè circa 240 mila input token con qwen3.8 o 400 mila con Llama 4 Scout | sì | stesso modello di Groq |
+| GitHub Models | 50 richieste al giorno, 8000 token per richiesta | GPT 4.1 | ci sta solo con la compattazione |
+| OpenRouter free | 50 richieste al giorno senza credito | variabile | i modelli free cambiano spesso |
