@@ -24,13 +24,13 @@ def test_downward_camera_optical_frame_matches_the_rendered_image():
     np.testing.assert_allclose(R[:, 2], [0, 0, -1], atol=1e-4)   # optical z -> down
 
 
-def test_configured_camera_looks_at_the_work_area_level():
-    """ROBOAI-46: like the real one, from the far end of the table towards the work area."""
-    x, y, z, roll, pitch, yaw = camera_optical_pose(CFG)
+def test_configured_camera_looks_down_the_table_like_the_real_one():
+    """ROBOAI-46: from the far end of the table, back along its axis towards the robot."""
+    *_, roll, pitch, yaw = camera_optical_pose(CFG)
     R = rpy_to_matrix(roll, pitch, yaw)
-    to_area = np.array([0.08, -0.42, -0.03]) - np.array([x, y, z])
-    np.testing.assert_allclose(R[:, 2], to_area / np.linalg.norm(to_area), atol=1e-3)
-    assert abs(R[2, 0]) < 1e-6   # image rows stay level: no roll
+    look, right = R[:, 2], R[:, 0]
+    assert look[1] > 0.5 and look[2] < -0.7          # towards the robot (+y), tilted down
+    np.testing.assert_allclose(right, [1, 0, 0], atol=0.05)   # image right is +x, rows level
 
 
 def test_optical_pose_in_config_round_trips_to_the_body_pose():

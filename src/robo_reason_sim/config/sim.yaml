@@ -7,20 +7,19 @@
 world_name: roboreason
 
 camera:
-  # Pose of the camera body in base_link: [x, y, z, roll, pitch, yaw]
-  # (metres, radians). Gazebo cameras look along their body +x, so
-  # pitch = pi/2 would point it straight down.
+  # Pose of the camera *optical* frame in base_link as [x, y, z, roll,
+  # pitch, yaw] (z forward, x image right, y image down; the format the
+  # real calibration prints as FIXED_CAMERA_POSE). The body `pose`
+  # (Gazebo convention, +x forward) is used only if optical_pose is absent.
   # Like the real Orbbec (ROBOAI-46): at the far end of the table, half a
-  # metre up, looking diagonally back towards the robot. The position is the
-  # one the real ChArUco calibrations lock (about -0.10, -0.88, +0.52); the
-  # real rotation was not logged, so the camera aims at the middle of the
-  # work area, (0.08, -0.42, -0.03). Once a real calibration prints its
-  # pose ("FIXED_CAMERA_POSE=[...]" in the LOCKED line), paste it here as
-  # optical_pose: it takes precedence over pose.
-  pose: [-0.10, -0.88, 0.52, 0.0, 0.8390, 1.1978]
-  width: 640
-  height: 480
-  horizontal_fov: 1.2   # rad, about 69 degrees like the Orbbec colour stream
+  # metre up, looking back along the table axis at the robot. Solved by PnP
+  # from a real 1280x720 frame with the scene_mock cubes and the ChArUco
+  # board in view (2.7 px mean reprojection error); the position agrees
+  # within 5 cm with the logged ChArUco calibrations (-0.10, -0.88, +0.52).
+  optical_pose: [-0.093, -0.934, 0.548, -2.4895, 0.0160, 0.0252]
+  width: 1280
+  height: 720
+  horizontal_fov: 1.5250   # rad, about 87 degrees: focal 670 px at 1280 wide, from the same PnP
   update_rate: 10       # Hz
   near: 0.1
   far: 3.0
