@@ -182,6 +182,26 @@ override.
 
 ---
 
+## Releases sharing a spot (`schemas.py`, `distribute_zone_releases`)
+
+The plan manager spreads releases that land within
+`ZONE_PLACEMENT_COLLISION_RADIUS_M` of each other at about the same height
+(a release clearly higher is a stack and stays put). With
+`ZONE_PLACEMENT_LAYOUT=fit`, the default since ROBOAI-21, a cluster inside an
+**empty** target zone of known bounds is laid out as one grid centred on the
+zone: the zone is split into equal cells, the grid shape whose smallest cell
+side is largest wins, so rows and columns follow the zone's aspect ratio and
+the objects use its space with their footprints inside. Four cubes released
+at the centre of the 0.22 x 0.31 m tray land on a 2x2 grid at (0.295 or
+0.405, -0.3525 or -0.1975). Anywhere else (no zone matched, objects already
+standing in the zone, the table included, other releases elsewhere in it, a
+stack on the cluster, a zone too small) the first release stays where the
+plan put it and the others ring around it at minimum spacing (ROBOAI-18),
+which is also what `ZONE_PLACEMENT_LAYOUT=ring` selects everywhere. The
+`approach` before a moved release moves with it.
+
+---
+
 ## Executor-side TCP offset switching (`ur5_skill_executor_node.py`)
 
 Independent of which mode produced the plan, every `pick` action carries a
