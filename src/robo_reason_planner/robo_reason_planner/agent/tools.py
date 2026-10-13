@@ -369,8 +369,10 @@ class Toolbox:
 
     def _tool_find_free_spot(self, object, area=None, bbox=None, count=1, arrangement='any'):
         footprint_m = self._ref(object, 'object').get('width_m') or 0.05
+        surface_z = None
         if area is not None:
-            bbox = self._ref(area, 'area')['bbox_full']
+            measured = self._ref(area, 'area')
+            bbox, surface_z = measured['bbox_full'], measured.get('surface_z')
         elif bbox is not None:
             bbox = self._to_pixels(bbox)
         else:
@@ -385,6 +387,7 @@ class Toolbox:
             self.backend.deproject(pixels), float(footprint_m), self.config.free_spot_margin_m,
             count=int(count), arrangement=str(arrangement),
             allowed=lambda q: self._check(q, lift=self.config.approach_offset_m) is None,
+            surface_z=surface_z,
         )
         out = {k: v for k, v in spot.items() if k not in ('positions', 'position')}
         if 'positions' in spot:
