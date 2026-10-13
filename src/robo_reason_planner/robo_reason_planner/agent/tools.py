@@ -65,7 +65,14 @@ SUBMIT_PLAN = _fn(
 # measured under a short id, actions take the id. Copying numbers was a
 # failure mode of its own (signs dropped, digits shifted).
 _REF = {'type': 'string', 'description': 'id from a perception result'}
+DETECT_OBJECTS = _fn(
+    'detect_objects',
+    'Find everything standing on the table with the depth camera: ids (o1... objects, a1... '
+    'areas such as trays), colour, size, bbox. Use the ids directly with pick, place and '
+    'find_free_spot.')
+
 EXECUTION_TOOLS = [
+    DETECT_OBJECTS,
     _fn('look', 'Fresh camera image (attached after the result).'),
     _fn('inspect_object',
         'Depth measurement of an object. Returns an id (o1, o2...) for pick, plus height_m, width_m, '
@@ -78,10 +85,10 @@ EXECUTION_TOOLS = [
         'Free spots on an area for objects like `object`, clear of other objects, edges and each '
         "other. Returns ids (s1...) for place. count>1 for several, arrangement='line' for an evenly "
         'spaced row.',
-        {'bbox': _BBOX, 'object': _REF,
-         'count': {'type': 'integer'},
+        {'area': {'type': 'string', 'description': 'area id (a1...), or give bbox'}, 'bbox': _BBOX,
+         'object': _REF, 'count': {'type': 'integer'},
          'arrangement': {'type': 'string', 'enum': ['any', 'line']}},
-        ['bbox', 'object']),
+        ['object']),
     _fn('pick', 'Grasp a measured object: hover, descend, close gripper, lift. Opens first: drops '
         'anything held.',
         {'object': _REF}, ['object']),
@@ -129,6 +136,18 @@ class ToolboxConfig:
     # image is the largest part of a request (about 1800 tokens at 640x480
     # on Qwen). Measurements still use the full resolution depth.
     send_width: int = 448
+    # inspect_object re-centres a rough bbox on the nearest raised object in
+    # the depth around it (weak grounding models miss by 15 to 30 px).
+    snap_to_object: bool = True
+    snap_step_px: float = 4.0
+    snap_min_margin_px: float = 30.0
+    # detect_objects: depth grid step over the whole image, smallest blob kept,
+    # and the size above which a blob is a placement area (tray) not an object.
+    detect_step_px: float = 8.0
+    detect_min_samples: int = 4
+    area_min_size_m: float = 0.12
+    refine_step_px: float = 2.0
+    robot_base_radius_m: float = 0.15
 
 
 @dataclass
@@ -164,6 +183,7 @@ class Toolbox:
         """Grab a frame; returns the path of the image to show the model."""
         path, w, h = self.backend.capture()
         self.full_size = self.image_size = (w, h)
+        self.last_full = path
         sw = self.config.send_width
         if sw and w > sw:
             from PIL import Image
@@ -177,28 +197,130 @@ class Toolbox:
     # ── perception ─────────────────────────────────────────────────────────
 
     _pending_hold = None
+    last_full = None
 
     def _tool_look(self):
         path = self.capture()
         return ToolResult('New image attached below.', image_path=path)
 
-    def _tool_inspect_object(self, bbox):
-        bbox = self._to_pixels(bbox)
+    def _tool_detect_objects(self):
+        fw, fh = self.full_size
+        step = self.config.detect_step_px
+        cols, rows = int((fw - step) // step) + 1, int((fh - step) // step) + 1
+        pixels = [(step / 2 + c * step, step / 2 + r * step) for r in range(rows) for c in range(cols)]
+        pts = self.backend.deproject(pixels)
+        blobs = geometry.detect_blobs([(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows)
+        image = self._full_image()
+        sx, sy = self.image_size[0] / fw, self.image_size[1] / fh
+        found = []
+        for b in sorted(blobs, key=lambda b: (b['bbox_px'][0], b['bbox_px'][1])):
+            if b['samples'] < self.config.detect_min_samples:
+                continue
+            # the robot's own base stands at the origin of its frame
+            if math.hypot(b['top_center'][0], b['top_center'][1]) < self.config.robot_base_radius_m:
+                continue
+            x0, y0, x1, y1 = b['bbox_px']
+            box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
+            scale = self.backend.metres_per_pixel(b['top_center'])
+            size = max((box[2] - box[0]) * scale[0], (box[3] - box[1]) * scale[1]) if scale else None
+            colour = _blob_colour(image, pixels, pts, b) if image is not None else None
+            shown = [round(box[0] * sx), round(box[1] * sy), round(box[2] * sx), round(box[3] * sy)]
+            if size is not None and size > self.config.area_min_size_m:
+                ref = self._store('a', {'kind': 'area', 'position': b['top_center'], 'bbox_full': box,
+                                        'surface_z': b['top_center'][2]})
+                found.append({'id': ref, 'kind': 'area', 'color': colour, 'bbox': shown,
+                              'size_m': round(size, 3)})
+            else:
+                box = self._refine(box) or box
+                m = self._measure(box)
+                if m is None:
+                    continue
+                ref = self._store('o', {'kind': 'object', **m})
+                found.append({'id': ref, 'kind': 'object', 'color': colour, 'bbox': shown,
+                              'height_m': m['height_m'], 'width_m': m.get('width_m')})
+        if not found:
+            return ToolResult('Nothing found standing on the table.')
+        return ToolResult(json.dumps(found))
+
+    def _full_image(self):
+        try:
+            from PIL import Image
+            return Image.open(self.last_full).convert('RGB')
+        except Exception:
+            return None
+
+    def _measure(self, bbox):
+        """Measurement of the object inside a full resolution bbox, or None."""
         px = geometry.bbox_sample_pixels(bbox, self.config.edge_inset_frac)
         order = ['center', 'left', 'right', 'top', 'bottom']
         pts = dict(zip(order, self.backend.deproject([px[k] for k in order])))
         if pts['center'] is None:
-            return ToolResult(f'ERROR: no depth at the centre of bbox {bbox}; is the bbox on the object?')
+            return None
         edges = {k: v for k, v in pts.items() if k != 'center' and v is not None}
         m = geometry.object_measurement(pts['center'], edges, self.config.table_z, self.config.grasp)
-        # Footprint from the bbox size, scaled at the object's distance from the
-        # camera: deprojected edges can collapse onto the face centroid.
         scale = self.backend.metres_per_pixel(pts['center'])
         if scale is not None:
             m['width_m'] = round((bbox[2] - bbox[0]) * scale[0], 4)
             m['depth_m'] = round((bbox[3] - bbox[1]) * scale[1], 4)
-        ref = self._store('o', {'kind': 'object', **m})
-        return ToolResult(json.dumps({'id': ref, **_public(m)}))
+        return m
+
+    def _tool_inspect_object(self, bbox):
+        given = self._to_pixels(bbox)
+        m = self._measure(given)
+        if m is None:
+            return ToolResult(f'ERROR: no depth at the centre of bbox {bbox}')
+        if not m['looks_empty']:
+            # on an object: tighten the outline for its size, then measure again
+            tight = self._refine(given)
+            m = (self._measure(tight) if tight else None) or m
+            ref = self._store('o', {'kind': 'object', **m})
+            return ToolResult(json.dumps({'id': ref, **_public(m)}))
+        # The spot itself is empty: say so (that is what a check after a pick
+        # asks), and offer the nearest object in case the box just missed it.
+        out = {'looks_empty': True, 'top_z': m['top_center'][2]}
+        near = self._snap(given) if self.config.snap_to_object else None
+        if near is not None:
+            near = self._refine(near) or near
+            nm = self._measure(near)
+            if nm is not None and not nm['looks_empty']:
+                ref = self._store('o', {'kind': 'object', **nm})
+                sx, sy = self.image_size[0] / self.full_size[0], self.image_size[1] / self.full_size[1]
+                dist = math.hypot(((near[0] + near[2]) - (given[0] + given[2])) / 2 * sx,
+                                  ((near[1] + near[3]) - (given[1] + given[3])) / 2 * sy)
+                out['nearest_object'] = {
+                    'id': ref, 'distance_px': round(dist),
+                    'bbox': [round(near[0] * sx), round(near[1] * sy), round(near[2] * sx), round(near[3] * sy)],
+                    **_public(nm)}
+        return ToolResult(json.dumps(out))
+
+    def _refine(self, bbox):
+        """Outline of the object at a bbox on a fine grid. The search reaches
+        past the box (half its size plus a few pixels) so the table around
+        the object is in it: heights are relative to the dominant one."""
+        margin = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / 2 + 8
+        return self._snap(bbox, step=self.config.refine_step_px, margin=margin)
+
+    def _snap(self, bbox, step=None, margin=None):
+        """Search the depth around a bbox for the nearest raised object
+        (geometry.snap_to_object); None when there is nothing raised. By
+        default the search reaches one box size around it; a small margin and
+        step instead refine the outline of an object already found."""
+        x0, y0, x1, y1 = bbox
+        w, h = x1 - x0, y1 - y0
+        m = margin if margin is not None else max(w, h, self.config.snap_min_margin_px)
+        fw, fh = self.full_size
+        sx0, sy0, sx1, sy1 = max(x0 - m, 0), max(y0 - m, 0), min(x1 + m, fw - 1), min(y1 + m, fh - 1)
+        step = step or self.config.snap_step_px
+        cols, rows = int((sx1 - sx0) // step) + 1, int((sy1 - sy0) // step) + 1
+        pixels = [(sx0 + c * step, sy0 + r * step) for r in range(rows) for c in range(cols)]
+        pts = self.backend.deproject(pixels)
+        found = geometry.snap_to_object(
+            [(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows,
+            ((x0 + x1) / 2, (y0 + y1) / 2), self.config.table_z)
+        if found is None:
+            return None
+        # the blob's sample extent, widened by half a step on each side
+        return [found[0] - step / 2, found[1] - step / 2, found[2] + step / 2, found[3] + step / 2]
 
     def _tool_inspect_area(self, bbox):
         bbox = self._to_pixels(bbox)
@@ -210,12 +332,17 @@ class Toolbox:
         if pts[0] is None:
             return ToolResult(f'ERROR: no depth at the centre of bbox {bbox}')
         m = geometry.surface_measurement(pts[0], [p for p in pts[1:] if p is not None])
-        ref = self._store('a', {'kind': 'area', 'position': m['center'], **m})
+        ref = self._store('a', {'kind': 'area', 'position': m['center'], 'bbox_full': bbox, **m})
         return ToolResult(json.dumps({'id': ref, **{k: v for k, v in m.items() if k != 'center'}}))
 
-    def _tool_find_free_spot(self, bbox, object, count=1, arrangement='any'):
+    def _tool_find_free_spot(self, object, area=None, bbox=None, count=1, arrangement='any'):
         footprint_m = self._ref(object, 'object').get('width_m') or 0.05
-        bbox = self._to_pixels(bbox)
+        if area is not None:
+            bbox = self._ref(area, 'area')['bbox_full']
+        elif bbox is not None:
+            bbox = self._to_pixels(bbox)
+        else:
+            raise ValueError('give an area id or a bbox')
         x0, y0, x1, y1 = bbox
         n = self.config.free_spot_grid
         pixels = [
@@ -376,6 +503,18 @@ class Toolbox:
         fx, fy = self.full_size[0] / w, self.full_size[1] / h
         fw, fh = self.full_size
         return [max(x0 * fx, 0.0), max(y0 * fy, 0.0), min(x1 * fx, fw - 1.0), min(y1 * fy, fh - 1.0)]
+
+
+def _blob_colour(image, pixels, pts, blob):
+    """Median colour of the image inside a blob's bbox, as a word."""
+    x0, y0, x1, y1 = blob['bbox_px']
+    crop = image.crop((int(x0), int(y0), int(x1) + 1, int(y1) + 1))
+    data = sorted(crop.getdata(), key=sum)
+    if not data:
+        return None
+    mid = data[len(data) // 4: 3 * len(data) // 4] or data      # drop shadows and highlights
+    rgb = [sorted(c[i] for c in mid)[len(mid) // 2] for i in range(3)]
+    return geometry.color_name(rgb)
 
 
 def _public(m: dict) -> dict:

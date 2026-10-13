@@ -31,7 +31,9 @@ class FakeBackend:
         out = []
         for u, v in pixels:
             on_cube = 80 <= u <= 120 and 80 <= v <= 120
-            out.append([0.1 + (u - 100) * 0.001, -0.4 + (v - 100) * 0.001, 0.04 if on_cube else 0.0])
+            # the room floor, 0.75 m below the table, shows past the table edge
+            z = 0.04 if on_cube else (-0.75 if v > 400 else 0.0)
+            out.append([0.1 + (u - 100) * 0.001, -0.4 + (v - 100) * 0.001, z])
         return out
 
     def metres_per_pixel(self, point):
@@ -92,8 +94,10 @@ def test_draft_then_execute_happy_path(tmp_path):
     outcome = session.execute()
     assert outcome.success and outcome.summary == 'cube moved'
     assert [s[0] for s in backend.skills] == ['approach', 'pick', 'approach', 'approach', 'release']
-    assert backend.skills[1][1]['target_position'] == [0.1, -0.4, 0.02]   # mid body grasp
-    assert backend.skills[1][1]['grasp_width'] == 0.03                    # 30 px at 1 mm per pixel
+    grasp = backend.skills[1][1]['target_position']                      # mid body grasp
+    assert max(abs(a - b) for a, b in zip(grasp, [0.1, -0.4, 0.02])) <= 0.002
+    # the box (30 px) snaps to the cube's real extent: 41 px, sampled every 4 px
+    assert abs(backend.skills[1][1]['grasp_width'] - 0.041) <= 0.004
     assert backend.skills[4][1]['object_height'] == 0.02
     assert backend.skills[4][1]['release_position'][:2] == [0.3, -0.4]
     assert '[Step 2] done -> OK' in lines
@@ -231,7 +235,8 @@ def test_downscaled_image_coordinates_map_back_to_full_resolution(tmp_path):
     # the cube spans 80..120 px at full resolution = 40..60 in the sent image
     res = json.loads(tb.run('inspect_object', {'bbox': [43, 43, 57, 57]}).text)
     assert res['height_m'] == 0.04
-    assert res['width_m'] == 0.028        # 14 px sent = 28 px captured, 1 mm each
+    # the box snaps to the cube (41 px captured, 1 mm each), whatever its size
+    assert abs(res['width_m'] - 0.041) <= 0.004
 
 
 def test_old_turns_are_compacted_but_stay_paired(tmp_path):
@@ -291,3 +296,50 @@ def test_the_same_refused_call_three_times_ends_the_task(tmp_path):
     assert 'unknown id' in outcome.summary
     assert len(client.seen) == 4
 
+
+
+def test_a_box_that_misses_reports_empty_and_names_the_nearest_object(tmp_path):
+    backend, lines = FakeBackend(tmp_path), []
+    tb = _toolbox(backend, lines)
+    tb.capture()
+    # the cube spans 80..120 px; this box is beside it, on the table
+    res = json.loads(tb.run('inspect_object', {'bbox': [125, 90, 145, 110]}).text)
+    assert res['looks_empty'] is True
+    near = res['nearest_object']
+    assert near['height_m'] == 0.04 and 76 <= near['bbox'][0] <= 84 and 116 <= near['bbox'][2] <= 124
+    assert tb.run('pick', {'object': near['id']}).text.startswith('pick completed')
+    # far from anything: empty, no suggestion
+    res = json.loads(tb.run('inspect_object', {'bbox': [300, 300, 320, 320]}).text)
+    assert res['looks_empty'] and 'nearest_object' not in res
+
+def test_detect_objects_finds_ids_colours_and_sizes(tmp_path):
+    from PIL import Image, ImageDraw
+
+    class PaintedBackend(FakeBackend):
+        def capture(self):
+            self.n += 1
+            path = self.tmp / f'{self.n}.png'
+            im = Image.new('RGB', (640, 480), (225, 225, 220))
+            ImageDraw.Draw(im).rectangle([80, 80, 120, 120], fill=(220, 40, 40))
+            im.save(path)
+            return str(path), 640, 480
+
+    backend, lines = PaintedBackend(tmp_path), []
+    tb = _toolbox(backend, lines)
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {}).text)
+    assert len(found) == 1
+    o = found[0]
+    assert o['id'] == 'o1' and o['kind'] == 'object' and o['color'] == 'red'
+    assert o['height_m'] == 0.04 and abs(o['width_m'] - 0.045) <= 0.006
+    # and the id works straight away
+    assert tb.run('pick', {'object': 'o1'}).text.startswith('pick completed')
+
+
+def test_colour_names():
+    from robo_reason_planner.agent.geometry import color_name
+    assert color_name((242, 76, 0)) == 'orange'
+    assert color_name((170, 125, 80)) == 'brown'
+    assert color_name((60, 110, 230)) == 'blue'
+    assert color_name((245, 245, 245)) == 'white'
+    assert color_name((220, 40, 40)) == 'red'

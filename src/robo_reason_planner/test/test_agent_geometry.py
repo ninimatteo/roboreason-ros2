@@ -16,7 +16,7 @@ def test_object_measurement_grasps_mid_body():
 
 
 def test_object_measurement_flags_an_empty_spot():
-    m = geometry.object_measurement([0.1, -0.4, -0.028], {}, table_z=-0.03, geo=GEO)
+    m = geometry.object_measurement([0.1, -0.4, -0.02], {}, table_z=-0.03, geo=GEO)   # 1 cm offset
     assert m['looks_empty']
     assert 'width_m' not in m
 
@@ -94,3 +94,14 @@ def test_free_spot_never_proposes_a_disallowed_spot():
     spot = geometry.free_spot(pts, 0.045, 0.01, count=3, arrangement='line',
                               allowed=lambda q: q[0] < 0.0)
     assert all(x < 0.0 for x, _, _ in spot['positions'])
+
+
+def test_snap_ignores_a_table_offset_and_finds_the_nearest_object():
+    # 10 x 10 grid, table read at -0.02 (1 cm above its nominal -0.03), one cube at cols 6..8
+    samples = []
+    for r in range(10):
+        for c in range(10):
+            z = 0.025 if 6 <= c <= 8 and 3 <= r <= 5 else -0.02
+            samples.append((c * 4, r * 4, [0.0, 0.0, z]))
+    box = geometry.snap_to_object(samples, 10, 10, (8, 16), table_z=-0.03)
+    assert box == [24, 12, 32, 20]

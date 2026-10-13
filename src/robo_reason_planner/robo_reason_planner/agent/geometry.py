@@ -17,6 +17,9 @@ from dataclasses import dataclass
 # Anything seen higher than this above the table is reported as probably the
 # arm (or what it holds) rather than an object standing on the table.
 ABOVE_TABLE_NOTE_M = 0.20
+# A top surface lower than this above the table is the table itself (with
+# room for a centimetre of calibration offset).
+EMPTY_BELOW_M = 0.02
 
 
 @dataclass
@@ -61,7 +64,7 @@ def object_measurement(center, edges: dict, table_z: float, geo: GraspGeometry) 
         # What the executor must lift the TCP by when placing this object
         # after grasping it at grasp_point: only the part below the fingers.
         'held_height_below_grasp_m': round(height - descent, 4),
-        'looks_empty': (top_z - table_z) < 0.01,
+        'looks_empty': (top_z - table_z) < EMPTY_BELOW_M,
     }
     if top_z - table_z > ABOVE_TABLE_NOTE_M:
         out['note'] = (f'this surface is {top_z - table_z:.2f} m above the table: probably the arm, '
@@ -183,6 +186,133 @@ def _best_line(on_surface, candidates, clearance, bounds, count, spacing, allowe
     if best is None:
         return [candidates[0]], -1.0
     return best, best_worst
+
+
+def snap_to_object(samples, cols: int, rows: int, center_uv, table_z: float,
+                   min_height: float = 0.02, max_height: float = ABOVE_TABLE_NOTE_M):
+    """Find the object nearest to a rough bbox in a depth grid around it.
+
+    samples: row major list of (u, v, [x, y, z] or None), cols x rows. Samples
+    standing between min_height and max_height above the table are "raised"
+    (the upper bound leaves out the arm); 4 connected raised samples form a
+    blob. Returns the pixel bbox [u0, v0, u1, v1] of the blob whose centre
+    is closest to center_uv, or None when nothing is raised nearby.
+
+    Small VLMs place boxes 15 to 30 px off an object of that size; measuring
+    the box as given then reads the table next to the object.
+    """
+    # Heights from the local floor (the dominant height around the box), not
+    # from the configured table height: a calibration offset of a centimetre
+    # (the simulation reads the table 1 cm high) made the table "raised".
+    valid = [p for _, _, p in samples if p is not None]
+    if not valid:
+        return None
+    floor = _dominant_height(valid, 0.01)
+    raised = [p is not None and min_height <= p[2] - floor <= max_height for _, _, p in samples]
+    seen = [False] * len(samples)
+    best, best_d = None, float('inf')
+    for start in range(len(samples)):
+        if not raised[start] or seen[start]:
+            continue
+        stack, blob = [start], []
+        seen[start] = True
+        while stack:
+            i = stack.pop()
+            blob.append(i)
+            r, c = divmod(i, cols)
+            for rr, cc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+                j = rr * cols + cc
+                if 0 <= rr < rows and 0 <= cc < cols and raised[j] and not seen[j]:
+                    seen[j] = True
+                    stack.append(j)
+        us = [samples[i][0] for i in blob]
+        vs = [samples[i][1] for i in blob]
+        cu, cv = sum(us) / len(us), sum(vs) / len(vs)
+        d = math.hypot(cu - center_uv[0], cv - center_uv[1])
+        if d < best_d:
+            best, best_d = [min(us), min(vs), max(us), max(vs)], d
+    return best
+
+
+def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
+                 max_height: float = ABOVE_TABLE_NOTE_M, step_m: float = 0.015) -> list:
+    """Segment what stands on the table in a depth grid covering the image.
+
+    samples: row major (u, v, [x, y, z] or None). A sample is raised when it
+    is between min_height and max_height above the floor (the low fifth of
+    all samples, so a calibration offset doesn't matter; the upper bound
+    leaves out the arm). Neighbouring raised samples join a blob only if
+    their heights differ by less than step_m, so a cube standing on a tray
+    is its own blob, separate from the tray. The floor is the dominant height
+    (the table fills most of the image; the room floor around it is far
+    lower and must not be the reference).
+
+    Returns one dict per blob: pixel bbox, sample count, median top height
+    above the floor, xy footprint (metres) and the base frame centre of its
+    top surface.
+    """
+    valid = [p for _, _, p in samples if p is not None]
+    if not valid:
+        return []
+    floor = _dominant_height(valid, 0.01)
+    raised = [p is not None and min_height <= p[2] - floor <= max_height for _, _, p in samples]
+    seen = [False] * len(samples)
+    blobs = []
+    for start in range(len(samples)):
+        if not raised[start] or seen[start]:
+            continue
+        stack, idx = [start], []
+        seen[start] = True
+        while stack:
+            i = stack.pop()
+            idx.append(i)
+            r, c = divmod(i, cols)
+            for rr, cc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+                j = rr * cols + cc
+                if (0 <= rr < rows and 0 <= cc < cols and raised[j] and not seen[j]
+                        and abs(samples[j][2][2] - samples[i][2][2]) < step_m):
+                    seen[j] = True
+                    stack.append(j)
+        pts = [samples[i][2] for i in idx]
+        us = [samples[i][0] for i in idx]
+        vs = [samples[i][1] for i in idx]
+        xs, ys, tz = sorted(p[0] for p in pts), sorted(p[1] for p in pts), sorted(p[2] for p in pts)
+        blobs.append({
+            'bbox_px': [min(us), min(vs), max(us), max(vs)],
+            'samples': len(idx),
+            'height_m': round(tz[len(tz) // 2] - floor, 4),
+            'footprint_m': round(max(xs[-1] - xs[0], ys[-1] - ys[0]), 4),
+            'top_center': _r([xs[len(xs) // 2], ys[len(ys) // 2], tz[len(tz) // 2]]),
+        })
+    return blobs
+
+
+def color_name(rgb) -> str:
+    """A plain colour word for a median RGB (0..255)."""
+    import colorsys
+    h, l, sat = colorsys.rgb_to_hls(*(c / 255.0 for c in rgb))
+    hue = h * 360
+    if l > 0.85 or (sat < 0.15 and l > 0.6):
+        return 'white'
+    if l < 0.15:
+        return 'black'
+    if sat < 0.15:
+        return 'gray'
+    if hue < 15 or hue >= 340:
+        return 'red'
+    if hue < 40:
+        return 'brown' if l < 0.45 or sat < 0.45 else 'orange'
+    if hue < 70:
+        return 'yellow'
+    if hue < 165:
+        return 'green'
+    if hue < 200:
+        return 'cyan'
+    if hue < 255:
+        return 'blue'
+    if hue < 290:
+        return 'purple'
+    return 'pink'
 
 
 def check_target(position, table_z: float, limits: dict, below_table_tolerance: float = 0.005):

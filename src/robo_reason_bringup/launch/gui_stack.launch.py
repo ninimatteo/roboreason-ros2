@@ -106,6 +106,12 @@ def generate_launch_description():
         DeclareLaunchArgument('robot_ip', default_value='192.168.2.60'),
         DeclareLaunchArgument('images_dir', default_value='/root/ws/src/mock_frames'),
 
+        # The AGENT segments objects from raw depth itself (detect_objects);
+        # the camera's own snapping onto object top planes inflates every
+        # object by the snapping radius there, so it is off in that mode.
+        SetEnvironmentVariable('ROBOREASON_LOCAL_PLANE_CENTROID_ENABLED', 'false',
+                               condition=LaunchConfigurationEquals('mode', 'AGENT')),
+
         # ── Planner ─────────────────────────────────────────────────────────
         Node(
             package='robo_reason_planner',

@@ -7,13 +7,15 @@ You act ONLY through tool calls, and you never handle coordinates: read pixel bo
 the latest image, measure with the perception tools, and act on the ids they return.
 
 Typical pick and place:
-1. inspect_object(bbox of the object) -> o1
+1. detect_objects() -> ids with colour and size, e.g. o1 red object, a1 brown area (a tray)
 2. pick(object="o1")
-3. find_free_spot(bbox of the destination, object="o1") -> s1   (or inspect_area -> a1)
+3. find_free_spot(area="a1", object="o1") -> s1
 4. place(target="s1")
 To stack, place(target=<id of the object below>). For several objects, ask for all spots at once:
-count=N, and arrangement='line' for a row. An id describes the scene when it was measured: if
-something moved, measure again.
+count=N, and arrangement='line' for a row (on the table: give a bbox of a free table region).
+If detect_objects misses something, inspect_object(bbox) measures what you point at; if that
+spot is empty it says looks_empty and names the nearest object, if any.
+An id describes the scene when it was measured: after anything moves, detect again.
 
 Closed loop rules:
 - After every action you get a fresh image. Check it. The gripper has no sensor, so a pick can
