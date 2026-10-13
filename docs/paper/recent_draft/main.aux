@@ -1,0 +1,94 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{liang2023codeaspolicies,huang2023voxposer,huang2022innermonologue,singh2023progprompt}
+\citation{favaliRAS,rohmer2013coppeliasim,todorov2012mujoco}
+\citation{favaliRAS}
+\providecommand \oddpage@label [2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:introduction}{{I}{1}{Introduction}{section.1}{}}
+\citation{garrett2021integrated}
+\citation{kaelbling2011hierarchical}
+\citation{ahn2022saycan}
+\citation{huang2022zeroshot}
+\citation{lin2023text2motion}
+\citation{yao2022react}
+\citation{madaan2023selfrefine,zhou2024isrllm}
+\citation{yao2023tot}
+\citation{wei2022cot,wang2022selfconsistency}
+\citation{kim2024survey,wang2025robotics,huang2024planningsurvey,berti2025emergent,billard2025roadmap,favaliRAS}
+\citation{brohan2023rt2,driess2023palme,geminiteam2025robotics15,kim2024openvla}
+\citation{liang2023codeaspolicies,huang2023voxposer,huang2022innermonologue,singh2023progprompt}
+\citation{favaliRAS}
+\citation{zhao2020simtoreal}
+\citation{koenig2004gazebo}
+\citation{todorov2012mujoco}
+\citation{rohmer2013coppeliasim}
+\citation{collins2021physics}
+\citation{favaliRAS}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related Work}{2}{section.2}\protected@file@percent }
+\newlabel{sec:related-work}{{II}{2}{Related Work}{section.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}The Experimental Baseline}{2}{section.3}\protected@file@percent }
+\newlabel{sec:baseline}{{III}{2}{The Experimental Baseline}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-A}Architecture}{2}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:baseline-architecture}{{III-A}{2}{Architecture}{subsection.3.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-B}\textcolor {red}{Two implementations, two perception regimes}}{2}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:baseline-arms}{{III-B}{2}{\rev {Two implementations, two perception regimes}}{subsection.3.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The experimental baseline and the SANE{} harness. A high-level LLM/VLM planner decomposes a natural-language command into a plan of parameterized skills; a low-level executor drives the UR5cb. SANE{} (Section~\ref {sec:harness}) sits between the two and overrides the plan's numeric geometry before execution.}}{3}{figure.1}\protected@file@percent }
+\newlabel{fig:architecture}{{1}{3}{The experimental baseline and the \harness {} harness. A high-level LLM/VLM planner decomposes a natural-language command into a plan of parameterized skills; a low-level executor drives the UR5cb. \harness {} (Section~\ref {sec:harness}) sits between the two and overrides the plan's numeric geometry before execution}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-C}Instrumentation}{3}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:baseline-instrumentation}{{III-C}{3}{Instrumentation}{subsection.3.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}\textcolor {red}{A Structured Investigation of Manipulation Planning Failures}}{3}{section.4}\protected@file@percent }
+\newlabel{sec:failures}{{IV}{3}{\rev {A Structured Investigation of Manipulation Planning Failures}}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-A}Case study 1: phantom top-surface grasp}{4}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:case-phantom}{{IV-A}{4}{Case study 1: phantom top-surface grasp}{subsection.4.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces \textcolor {red}{The physical rig: the UR5cb manipulator with the OnRobot RG2 parallel gripper, the RGB-D camera on its tripod (right), the calibration board used for camera-robot registration, and the color-distinguished cubes on the workspace table.}}}{4}{figure.2}\protected@file@percent }
+\newlabel{fig:setup}{{2}{4}{\rev {The physical rig: the UR5cb manipulator with the OnRobot RG2 parallel gripper, the RGB-D camera on its tripod (right), the calibration board used for camera-robot registration, and the color-distinguished cubes on the workspace table.}}{figure.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-B}Case study 2: double-counted stacking height}{4}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:case-doublecount}{{IV-B}{4}{Case study 2: double-counted stacking height}{subsection.4.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-C}The \textcolor {red}{unresolved} case: sequential-placement collision}{4}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:case-collision}{{IV-C}{4}{The \rev {unresolved} case: sequential-placement collision}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}\textcolor {red}{Resolving the Failures with SANE{}}}{4}{section.5}\protected@file@percent }
+\newlabel{sec:harness}{{V}{4}{\rev {Resolving the Failures with \harness {}}}{section.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces The six failure modes. ``Physical property required'' marks what makes each failure impossible to observe in a symbolic or scripted simulator.}}{5}{table.1}\protected@file@percent }
+\newlabel{tab:taxonomy}{{I}{5}{The six failure modes. ``Physical property required'' marks what makes each failure impossible to observe in a symbolic or scripted simulator}{table.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-A}Heights anchored to committed actions and measured depth}{5}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:fix-height}{{V-A}{5}{Heights anchored to committed actions and measured depth}{subsection.5.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-B}Footprint-based target matching}{5}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:fix-footprint}{{V-B}{5}{Footprint-based target matching}{subsection.5.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-C}Width-aware tool offset}{5}{subsection.5.3}\protected@file@percent }
+\newlabel{sec:fix-tcp}{{V-C}{5}{Width-aware tool offset}{subsection.5.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-D}Best-effort grasp-width estimation}{5}{subsection.5.4}\protected@file@percent }
+\newlabel{sec:fix-width}{{V-D}{5}{Best-effort grasp-width estimation}{subsection.5.4}{}}
+\citation{favaliRAS}
+\citation{favaliRAS}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-E}Zone-aware spacing: a partial mitigation}{6}{subsection.5.5}\protected@file@percent }
+\newlabel{sec:zone-spacing}{{V-E}{6}{Zone-aware spacing: a partial mitigation}{subsection.5.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-F}Validation of the corrections}{6}{subsection.5.6}\protected@file@percent }
+\newlabel{sec:validation}{{V-F}{6}{Validation of the corrections}{subsection.5.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Evaluating SANE{} on Real Hardware}{6}{section.6}\protected@file@percent }
+\newlabel{sec:evaluation}{{VI}{6}{Evaluating \harness {} on Real Hardware}{section.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-A}Design}{6}{subsection.6.1}\protected@file@percent }
+\newlabel{sec:eval-design}{{VI-A}{6}{Design}{subsection.6.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Overall results, 60 trials per \textcolor {red}{planner implementation} (120 total), with SANE{} in place.}}{6}{table.2}\protected@file@percent }
+\newlabel{tab:overall}{{II}{6}{Overall results, 60 trials per \rev {planner implementation} (120 total), with \harness {} in place}{table.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Overall TS/TSR/AETS summary, LLM vs.\ VLM \textcolor {red}{implementation}, with SANE{} in place.}}{6}{figure.3}\protected@file@percent }
+\newlabel{fig:overall}{{3}{6}{Overall TS/TSR/AETS summary, LLM vs.\ VLM \rev {implementation}, with \harness {} in place}{figure.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-B}Metrics, adapted for physical ground truth}{6}{subsection.6.2}\protected@file@percent }
+\newlabel{sec:eval-metrics}{{VI-B}{6}{Metrics, adapted for physical ground truth}{subsection.6.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-C}Results}{6}{subsection.6.3}\protected@file@percent }
+\newlabel{sec:eval-results}{{VI-C}{6}{Results}{subsection.6.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Task safety and task success rate by task condition, with 95\% Wilson intervals.}}{7}{figure.4}\protected@file@percent }
+\newlabel{fig:by-task}{{4}{7}{Task safety and task success rate by task condition, with 95\% Wilson intervals}{figure.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-D}What fails with the harness in place}{7}{subsection.6.4}\protected@file@percent }
+\newlabel{sec:eval-failures}{{VI-D}{7}{What fails with the harness in place}{subsection.6.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Failure-mode breakdown, derived from the 22 non-empty operator notes out of 120 trials.}}{7}{figure.5}\protected@file@percent }
+\newlabel{fig:failure-modes}{{5}{7}{Failure-mode breakdown, derived from the 22 non-empty operator notes out of 120 trials}{figure.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Discussion and Limitations}{7}{section.7}\protected@file@percent }
+\newlabel{sec:discussion}{{VII}{7}{Discussion and Limitations}{section.7}{}}
+\bibstyle{IEEEtran}
+\bibdata{bibliography}
+\@writefile{toc}{\contentsline {section}{\numberline {VIII}Conclusion}{8}{section.8}\protected@file@percent }
+\newlabel{sec:conclusion}{{VIII}{8}{Conclusion}{section.8}{}}
+\gdef \@abspage@last{8}

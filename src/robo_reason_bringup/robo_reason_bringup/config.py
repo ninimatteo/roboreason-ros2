@@ -47,6 +47,23 @@ class Settings(BaseSettings):
     # requests that are just slow, not stuck.
     REQUEST_TIMEOUT_S: float = 120.0
 
+    # ── Closed loop agent (mode AGENT, agent_node) ───────────────────────────
+    # A vision model with native tool calling. kimi-k3 answered a tool call
+    # with an image in about 1.5 s when probed on 2026-10-12.
+    AGENT_MODEL_NAME: str = 'mistral/ministral-14b-latest'
+    AGENT_MAX_MODEL_CALLS: int = 60      # per task, draft included
+    AGENT_MAX_DURATION_S: float = 900.0  # execution phase wall clock budget
+    AGENT_KEEP_IMAGES: int = 1           # camera images kept in the model context
+    # Token economy (free tiers): images go out downscaled, turns older than
+    # AGENT_HISTORY_TURNS replies are shortened, a task stops at the budget.
+    AGENT_IMAGE_WIDTH: int = 448
+    AGENT_HISTORY_TURNS: int = 8
+    AGENT_MAX_INPUT_TOKENS: int = 300000
+    # Free tier tokens per minute per provider, paced client side (0 = none).
+    AGENT_TPM_LIMITS: Dict[str, int] = Field(default={'groq': 8000})
+    # Largest single request a provider accepts (Groq free: 7000 input tokens).
+    AGENT_MAX_REQUEST_TOKENS: Dict[str, int] = Field(default={'groq': 6500})
+
     # ── Deterministic geometry ablation (ROBOAI-30) ────────────────────────────
     # Two independent flags, both default False (normal behavior). "Soft" arm
     # sets DISABLE_GEOMETRY_FIX only; "hard" arm sets both together.
@@ -231,6 +248,7 @@ class Settings(BaseSettings):
         'LLM': 'llm_planner_node',
         'VLM': 'vlm_planner_node',
         'VLM_LLM': 'vlm_llm_planner_node',
+        'AGENT': 'agent_node',
     })
     SET_PARAM_TIMEOUT_S: float = 5.0
     # A /joint_states message older than this (seconds) is considered stale.
@@ -240,7 +258,8 @@ class Settings(BaseSettings):
     # 600 rather than 300: kimi-k2.6 planning took up to 299 s in the
     # September benchmark (median 100 s), so 300 s cut slow runs off.
     PLAN_TIMEOUT_S: float = 600.0
-    EXECUTE_TIMEOUT_S: float = 300.0
+    # 900 for the AGENT mode, whose execution includes all the model calls.
+    EXECUTE_TIMEOUT_S: float = 900.0
     CANCEL_TIMEOUT_S: float = 20.0
 
     # ── Stack supervisor (stack_supervisor.py) ────────────────────────────────

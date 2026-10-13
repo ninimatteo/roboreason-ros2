@@ -5,8 +5,10 @@ Composed stack used by the web GUI (B1 orchestration). Unlike the hand-written
 dry_run / real_robot launch files, this one exposes three independent mock axes
 so the operator can mix real and simulated pieces:
 
-  mode         LLM | VLM | VLM_LLM  — which planner to run (VLM_LLM: VLM scene
-                                       grounding, then LLM planning against it)
+  mode         LLM | VLM | VLM_LLM | AGENT — which planner to run (VLM_LLM: VLM
+                                       scene grounding, then LLM planning against
+                                       it; AGENT: closed loop agent_node, which
+                                       also replaces the plan manager)
   use_mock_llm true | false         — mock the *reasoning* (hardcoded plan, no API)
   mock_robot   true | false         — fake skill executor vs the real UR5 driver
   mock_camera  true | false         — PNG mock camera vs the real camera services
@@ -28,7 +30,9 @@ from launch.actions import (
     DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, OpaqueFunction,
     SetEnvironmentVariable,
 )
-from launch.conditions import IfCondition, LaunchConfigurationEquals, UnlessCondition
+from launch.conditions import (
+    IfCondition, LaunchConfigurationEquals, LaunchConfigurationNotEquals, UnlessCondition,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace, SetRemap
@@ -74,14 +78,12 @@ def generate_launch_description():
     robot_ip = LaunchConfiguration('robot_ip')
     images_dir = LaunchConfiguration('images_dir')
 
-    # Camera nodes exist in VLM and VLM_LLM modes; combine that with mock_camera.
+    # Camera nodes exist in the VLM, VLM_LLM and AGENT modes; combine that with mock_camera.
     vlm_mock_camera = PythonExpression([
-        "('", mode, "' == 'VLM' or '", mode, "' == 'VLM_LLM') and '",
-        mock_camera, "' == 'true'",
+        "'", mode, "' in ('VLM', 'VLM_LLM', 'AGENT') and '", mock_camera, "' == 'true'",
     ])
     vlm_real_camera = PythonExpression([
-        "('", mode, "' == 'VLM' or '", mode, "' == 'VLM_LLM') and '",
-        mock_camera, "' == 'false'",
+        "'", mode, "' in ('VLM', 'VLM_LLM', 'AGENT') and '", mock_camera, "' == 'false'",
     ])
 
     camera_services_launch = os.path.join(
@@ -103,6 +105,12 @@ def generate_launch_description():
         DeclareLaunchArgument('reasoning_effort', default_value=''),
         DeclareLaunchArgument('robot_ip', default_value='192.168.2.60'),
         DeclareLaunchArgument('images_dir', default_value='/root/ws/src/mock_frames'),
+
+        # The AGENT segments objects from raw depth itself (detect_objects);
+        # the camera's own snapping onto object top planes inflates every
+        # object by the snapping radius there, so it is off in that mode.
+        SetEnvironmentVariable('ROBOREASON_LOCAL_PLANE_CENTROID_ENABLED', 'false',
+                               condition=LaunchConfigurationEquals('mode', 'AGENT')),
 
         # ── Planner ─────────────────────────────────────────────────────────
         Node(
@@ -148,6 +156,21 @@ def generate_launch_description():
             }],
         ),
 
+        # Closed loop agent: plans AND executes, so it replaces the plan
+        # manager too (it serves execute_plan and cancel_execution itself).
+        Node(
+            package='robo_reason_planner',
+            executable='agent_node',
+            name='agent_node',
+            output='screen',
+            condition=LaunchConfigurationEquals('mode', 'AGENT'),
+            parameters=[{
+                'model_name': model_name,
+                'temperature': temperature,
+                'reasoning_effort': reasoning_effort,
+            }],
+        ),
+
         # ── Plan manager ────────────────────────────────────────────────────
         Node(
             package='robo_reason_manager',
@@ -155,6 +178,7 @@ def generate_launch_description():
             name='plan_manager_node',
             output='screen',
             parameters=[{'mode': mode}],
+            condition=LaunchConfigurationNotEquals('mode', 'AGENT'),
         ),
 
         # ── Skill executor: fake (mock robot) or real UR5 ───────────────────

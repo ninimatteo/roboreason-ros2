@@ -83,11 +83,12 @@ const stackStop = document.getElementById('stack-stop');
 // Provider→model maps, split by mode. Populated once in loadOptions().
 let llmProviderModels = {};
 let vlmProviderModels = {};
+let agentProviderModels = {};
 
 function currentProviderModels() {
-  return (selMode.value || 'LLM').toUpperCase() === 'VLM'
-    ? vlmProviderModels
-    : llmProviderModels;
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  if (mode === 'AGENT') return agentProviderModels;
+  return mode === 'VLM' ? vlmProviderModels : llmProviderModels;
 }
 
 // ---- toasts ----
@@ -238,6 +239,7 @@ async function loadOptions() {
 
     llmProviderModels = data.providers || {};
     vlmProviderModels = data.vlm_providers || {};
+    agentProviderModels = data.agent_providers || {};
 
     if (data.temperature_default != null) {
       inpTemp.value = data.temperature_default;
@@ -281,7 +283,7 @@ function currentConfig() {
   if ((selMode.value || 'LLM').toUpperCase() === 'VLM') {
     config.grounding_mode = selGroundingMode.value;
   }
-  if (['VLM', 'VLM_LLM'].includes((selMode.value || 'LLM').toUpperCase())) {
+  if (['VLM', 'VLM_LLM', 'AGENT'].includes((selMode.value || 'LLM').toUpperCase())) {
     config.reasoning_effort = selReasoningEffort.value;
   }
   return config;
@@ -353,7 +355,7 @@ function stackPayload() {
 // modes that actually use a camera / an LLM, so hide them otherwise.
 function syncCameraToggle() {
   const mode = (selMode.value || 'LLM').toUpperCase();
-  const usesCamera = mode === 'VLM' || mode === 'VLM_LLM';
+  const usesCamera = mode === 'VLM' || mode === 'VLM_LLM' || mode === 'AGENT';
   const usesLlm = mode === 'LLM';
   wrapMockCamera.hidden = !usesCamera;
   wrapMockLlm.hidden = !usesLlm;
@@ -375,7 +377,9 @@ function syncPixelGroundingVisibility() {
 // VLM_LLM (scene-grounding call) — anywhere a VLM client is used.
 function syncReasoningEffortVisibility() {
   const mode = (selMode.value || 'LLM').toUpperCase();
-  reasoningEffortFields.hidden = mode !== 'VLM' && mode !== 'VLM_LLM';
+  reasoningEffortFields.hidden = !['VLM', 'VLM_LLM', 'AGENT'].includes(mode);
+  // The AGENT is a single tool calling loop: no reasoning method to pick.
+  selReasoning.closest('label').hidden = mode === 'AGENT';
 }
 
 // Switch provider→model dropdowns when mode changes (LLM ↔ VLM show
@@ -386,7 +390,9 @@ function syncModelsByMode() {
   const prevProvider = selProvider.value;
   fillSelect(selProvider, providers);
   // Preserve the selected provider if it still exists in the new list.
-  if (providers.includes(prevProvider)) selProvider.value = prevProvider;
+  // Not in AGENT mode: its first provider is the one verified to work.
+  const isAgent = (selMode.value || 'LLM').toUpperCase() === 'AGENT';
+  if (!isAgent && providers.includes(prevProvider)) selProvider.value = prevProvider;
   fillSelect(selModel, map[selProvider.value] || []);
   syncCameraToggle();
   syncGroundingVisibility();
@@ -430,7 +436,7 @@ function renderStack(status) {
     const parts = [
       t.mode,
       `robot:${t.mock_robot ? 'mock' : 'real'}`,
-      (t.mode === 'VLM' || t.mode === 'VLM_LLM') ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
+      ['VLM', 'VLM_LLM', 'AGENT'].includes(t.mode) ? `cam:${t.mock_camera ? 'mock' : 'real'}` : null,
       t.mock_llm ? 'llm:mock' : 'llm:real',
     ].filter(Boolean);
     stackInfo.textContent =
@@ -923,6 +929,14 @@ function renderPlanPanel(plan) {
   });
   planContent.appendChild(list);
 
+  // AGENT mode: the plan is only a draft; what the agent actually does
+  // (tool calls, plan revisions, what it says) streams in below it.
+  if (plan.reasoning_method === 'agent') {
+    planContent.appendChild(el('div', 'label', 'agent trace'));
+    stepEls.__trace = el('ol', 'agent-trace');
+    planContent.appendChild(stepEls.__trace);
+  }
+
   const details = el('details', 'raw-plan');
   details.appendChild(el('summary', null, 'raw JSON'));
   details.appendChild(el('pre', null, JSON.stringify(plan, null, 2)));
@@ -1034,6 +1048,15 @@ function setStepState(li, state) {
 function applyLogLine(stepEls, line) {
   const m = line.match(/\[Step\s+(\S+?)\]/);
   if (m && line.includes('-> OK')) setStepState(stepEls[m[1]], 'done');
+  if (m && line.includes('-> FAILED')) setStepState(stepEls[m[1]], 'failed');
+  if (m && line.includes('-> RETRYING')) setStepState(stepEls[m[1]], 'running');
+  const trace = stepEls.__trace;
+  if (trace && (line.startsWith('[Agent]') || line.startsWith('[Plan]') || m)) {
+    const kind = line.includes('FAILED') || line.includes('refused') ? 'bad'
+      : line.startsWith('[Plan]') ? 'plan' : line.includes('-> done') ? 'act' : '';
+    trace.appendChild(el('li', kind, line.replace(/^\[Agent\]\s*/, '')));
+    trace.scrollTop = trace.scrollHeight;
+  }
 }
 
 async function sendCommand(command) {

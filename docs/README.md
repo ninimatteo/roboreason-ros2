@@ -20,6 +20,7 @@ Indice della documentazione di `roboreason-ros2`. Le cartelle sono divise per
 
 **`reference/`**
 - `grasp-geometry-pipeline.md` — come vengono calcolate geometria di presa e di rilascio nelle tre modalità.
+- `agentic-mode.md` — la modalità AGENT: agent VLM in closed loop con tool calling.
 
 **`history/`** — file append only. Non si riscrive il passato, si aggiunge in fondo.
 - `session-context.md` — il registro tecnico sessione per sessione. È lungo: cercaci dentro il sottosistema che ti serve prima di leggerlo tutto.

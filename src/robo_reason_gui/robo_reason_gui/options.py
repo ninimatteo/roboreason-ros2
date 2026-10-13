@@ -27,7 +27,7 @@ REASONING_METHODS = ['fhp', 'ffhp', 'react', 'cot_sc', 'tot', 'always_act', 'sel
 
 GUI_PROVIDERS = ('groq', 'nebius')
 
-MODES = ['LLM', 'VLM', 'VLM_LLM']
+MODES = ['LLM', 'VLM', 'VLM_LLM', 'AGENT']
 
 DEFAULT_TEMPERATURE = 0.1
 
@@ -60,7 +60,19 @@ DEFAULT_TEMPERATURE = 0.1
 # time before trusting an entry here, not just once.
 VISION_MODELS: dict = {
     'groq':   ['qwen3.6-27b', 'qwen3.8-27b'],
-    'nebius': ['kimi-k2.6', 'nvidia-cosmos3-33b', 'minicpm-v-4.5'],
+    'nebius': ['kimi-k2.6', 'nvidia-cosmos3-33b', 'minicpm-v-4.5',
+               'kimi-k3', 'deepseek-v4.1-flash', 'glm-5.3-flash'],
+}
+
+# AGENT mode models: the agent's own tool calling client (agent/tool_chat.py)
+# reaches more providers than the LLM/VLM clients, so AGENT gets its own list,
+# not tied to ModelRegistry. First provider, first model = GUI default.
+# ministral-14b-latest is the one verified on the Mistral free tier
+# (2026-10-13, 9/10 sim scenarios, see docs/reference/agentic-mode.md).
+AGENT_MODELS: dict = {
+    'mistral': ['ministral-14b-latest'],
+    'groq':    ['qwen3.8-27b'],
+    'nebius':  ['kimi-k3', 'deepseek-v4.1-flash'],
 }
 
 # Models present in ModelRegistry that are NOT chat-capable (e.g. embeddings).
@@ -140,6 +152,7 @@ def get_options() -> dict:
     payload = {
         'providers': llm_providers,
         'vlm_providers': vlm_providers,
+        'agent_providers': {p: _labeled_models(p, m) for p, m in AGENT_MODELS.items()},
         'reasoning_methods': REASONING_METHODS,
         'modes': MODES,
         'temperature_default': DEFAULT_TEMPERATURE,

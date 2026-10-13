@@ -20,6 +20,14 @@ from Gazebo's ground-truth poses. Both are read once, when the gripper closes,
 rather than followed continuously: joint_states and the poses stream at
 100 and 60 Hz, which kept this Python node at half a core doing nothing.
 
+Fault injection, for testing closed loop recovery (parameters, default off,
+settable at runtime with ros2 param set):
+
+  fail_next_grasps         int    the next N closes grasp nothing, even with
+                                  a cube in range (a slipping grasp)
+  drop_next_grasp_after_s  float  the next successful grasp lets the cube go
+                                  this many seconds later, wherever the arm is
+
 Since it owns the gripper state, this node also serves reset_simulation:
 release whatever is held, send the arm home, and put every cube back where
 scene_mock.json places it, ready for the next run.
@@ -37,6 +45,7 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.wait_for_message import wait_for_message
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Empty
@@ -91,6 +100,9 @@ class GripperShimNode(Node):
         self._held = None
         self._reader = rclpy.create_node('gripper_shim_reader', namespace=self.get_namespace())
         self._read_lock = threading.Lock()
+        self.declare_parameter('fail_next_grasps', 0)
+        self.declare_parameter('drop_next_grasp_after_s', 0.0)
+        self._drop_timer = None
 
         group = ReentrantCallbackGroup()
         ns = self.get_namespace().strip('/')
@@ -169,14 +181,37 @@ class GripperShimNode(Node):
             self.get_logger().warn('[GripperShim] Close: no joint state or cube poses yet.')
             return
         cube, explanation = choose_grasp(tcp, positions, self._sizes, self._tolerance)
+        if cube is not None and self._consume_fault('fail_next_grasps', 0) > 0:
+            self.get_logger().warn(f'[GripperShim] Fault injected: the grasp of {cube} slips, nothing held.')
+            return
         if cube is not None:
             self._attach[cube].publish(Empty())
             self._held = cube
             self.get_logger().info(f'[GripperShim] {explanation[0].upper() + explanation[1:]}.')
+            delay = self._consume_fault('drop_next_grasp_after_s', 0.0)
+            if delay > 0:
+                self._drop_timer = self.create_timer(delay, self._injected_drop)
         else:
             self.get_logger().warn(
                 f'[GripperShim] {explanation[0].upper() + explanation[1:]} (TCP at {np.round(tcp, 3).tolist()}).'
             )
+
+    def _consume_fault(self, name, off):
+        """Read a fault parameter and use it up: a count is decremented, a
+        one shot value is switched off."""
+        value = self.get_parameter(name).value
+        if not value:
+            return value
+        remaining = value - 1 if isinstance(value, int) else off
+        self.set_parameters([Parameter(name, value=remaining)])
+        return value
+
+    def _injected_drop(self):
+        self.destroy_timer(self._drop_timer)
+        self._drop_timer = None
+        if self._held is not None:
+            self.get_logger().warn(f'[GripperShim] Fault injected: {self._held} drops out of the gripper.')
+            self._open()
 
     def _open(self):
         if self._held is None:
@@ -191,6 +226,9 @@ class GripperShimNode(Node):
         problems = []
         # 1. Release whatever is held (and anything a crashed run left attached).
         self._held = None
+        if self._drop_timer is not None:
+            self.destroy_timer(self._drop_timer)
+            self._drop_timer = None
         for cube in self._cubes:
             self._detach[cube].publish(Empty())
         # 2. Arm home, out of the way before the cubes come back.
