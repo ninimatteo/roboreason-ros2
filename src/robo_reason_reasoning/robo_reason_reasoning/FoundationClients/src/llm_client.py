@@ -174,6 +174,8 @@ class LLMClient(BaseFoundationClient):
             return self._call_openai(user_message, system_message, force_json, **kwargs)
         if self.provider == "nebius":
             return self._call_nebius(user_message, system_message, force_json, **kwargs)
+        if self.provider == "mistral":
+            return self._call_openai(user_message, system_message, force_json, **kwargs)
         if self.provider == "anthropic":
             return self._call_anthropic(user_message, system_message, force_json, **kwargs)
         if self.provider == "gemini":

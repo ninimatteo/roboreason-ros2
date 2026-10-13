@@ -62,6 +62,7 @@ def make_client(monkeypatch):
     ("groq", "openai-oss-120b"),
     ("openai", "gpt-4o-mini"),
     ("nebius", "nvidia-nemotron-120b"),
+    ("mistral", "ministral-14b-latest"),
 ])
 def test_provider_returns_message_content(make_client, provider, model_name):
     client, completions = make_client(provider, model_name, response_content="the answer")
@@ -78,6 +79,7 @@ def test_provider_returns_message_content(make_client, provider, model_name):
     ("groq", "openai-oss-120b"),
     ("openai", "gpt-4o-mini"),
     ("nebius", "nvidia-nemotron-120b"),
+    ("mistral", "ministral-14b-latest"),
 ])
 def test_force_json_sets_response_format(make_client, provider, model_name):
     client, completions = make_client(provider, model_name)

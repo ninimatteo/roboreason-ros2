@@ -1,5 +1,5 @@
 """Run one task on the sim AGENT stack: reset, plan, execute, report ground truth."""
-import json, sys, time, threading
+import json, re, sys, time, threading
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -8,7 +8,8 @@ from std_srvs.srv import Trigger
 from tf2_msgs.msg import TFMessage
 from robo_reason_interfaces.srv import PlanTask, ExecutePlan
 
-SCENE = '/root/ws/ws_ouroboros/src/roboreason-ros2/src/robo_reason_task_interface/config/scene_mock.json'
+from robo_reason_sim.world_builder import default_scene_path
+SCENE = str(default_scene_path())   # the scene the simulation was built from
 command = sys.argv[1]
 import argparse, subprocess
 ap = argparse.ArgumentParser(); ap.add_argument('command'); ap.add_argument('--no-reset', action='store_true')
@@ -26,7 +27,10 @@ def teleport(cube, x, y):
 moved = []
 def on_log(m):
     print('   LOG', m.data, flush=True)
-    if a.move and not moved and m.data.startswith('[Agent] pick') and m.data.endswith('-> done'):
+    # the first completed pick: '[Agent] pick ... -> done' (AGENT), '[Step N] pick -> OK' (classic)
+    picked = (m.data.startswith('[Agent] pick') and ('-> done' in m.data)) or \
+        bool(re.match(r'\[Step \d+\] pick\b.*-> OK', m.data))
+    if a.move and not moved and picked:
         moved.append(1); cube, xy = a.move.split(':'); x, y = map(float, xy.split(','))
         threading.Thread(target=teleport, args=(cube, x, y), daemon=True).start()
 rclpy.init(); n = Node('run_task', namespace='sim')
@@ -57,7 +61,9 @@ p = call(n.create_client(PlanTask, 'plan_task'), PlanTask.Request(user_command=c
 print(f'PLAN ({time.time()-t0:.1f}s) success={p.success}', p.error_message[-500:] if not p.success else '')
 if not p.success: sys.exit(1)
 plan = json.loads(p.plan_json)
-for s in plan['plan']: print('  ', s['step'], s['action_name'], '-', s['description'])
+for s in plan['plan']:   # AGENT drafts have descriptions, classic plans positions
+    print('  ', s.get('step'), s['action_name'], '-',
+          s.get('description') or s.get('target_position') or s.get('release_position') or '')
 t1 = time.time()
 e = call(n.create_client(ExecutePlan, 'execute_plan'), ExecutePlan.Request(plan_json=p.plan_json, scene_json=scene), 1000)
 print(f'EXEC ({time.time()-t1:.1f}s) success={e.success} {e.error_message[-300:]}')

@@ -33,6 +33,14 @@ _CALIB_REQUIRED_HITS = 5       # consecutive consistent detections to lock
 _CALIB_CONSISTENCY_M = 0.005   # max translation deviation between hits (5 mm)
 
 
+def _matrix_to_rpy(R: np.ndarray) -> tuple:
+    """Inverse of charuco_utils.rpy_to_rotation_matrix (R = Rz Ry Rx)."""
+    pitch = float(np.arcsin(-np.clip(R[2, 0], -1.0, 1.0)))
+    if abs(np.cos(pitch)) < 1e-6:
+        return 0.0, pitch, float(np.arctan2(-R[0, 1], R[1, 1]))
+    return float(np.arctan2(R[2, 1], R[2, 2])), pitch, float(np.arctan2(R[1, 0], R[0, 0]))
+
+
 class CameraServicesNode(Node):
     """Camera service bridge with real RGB/depth topics and pixel callers."""
 
@@ -482,6 +490,14 @@ class CameraServicesNode(Node):
             f"tvec(cam_frame)=[{tv[0]:+.3f}, {tv[1]:+.3f}, {tv[2]:+.3f}] m  |  "
             f"board_origin(base_link)=[{board_base[0]:+.3f}, {board_base[1]:+.3f}, {board_base[2]:+.3f}] m  |  "
             f"camera(base_link)=[{cam_base[0]:+.3f}, {cam_base[1]:+.3f}, {cam_base[2]:+.3f}] m"
+        )
+        # The full pose, in the format FIXED_CAMERA_POSE and the simulation's
+        # camera.optical_pose take (ROBOAI-46): the translation alone was not
+        # enough to reproduce the real viewpoint.
+        roll, pitch, yaw = _matrix_to_rpy(T_locked[:3, :3])
+        self.get_logger().info(
+            "[CameraServicesNode] FIXED_CAMERA_POSE=["
+            + ", ".join(f"{v:.4f}" for v in (*cam_base, roll, pitch, yaw)) + "]"
         )
         self._publish_camera_tf(T_locked)
 

@@ -105,3 +105,82 @@ def test_snap_ignores_a_table_offset_and_finds_the_nearest_object():
             samples.append((c * 4, r * 4, [0.0, 0.0, z]))
     box = geometry.snap_to_object(samples, 10, 10, (8, 16), table_z=-0.03)
     assert box == [24, 12, 32, 20]
+
+
+# --- the real viewpoint (ROBOAI-46): ray cast the scene from the far end camera ---
+
+import math
+import numpy as np
+
+_CAM = [-0.093, -0.934, 0.548, -2.4895, 0.0160, 0.0252]   # optical pose, as in sim.yaml
+_TABLE_Z = -0.03
+
+
+def _rot(roll, pitch, yaw):
+    cr, sr, cp, sp, cy, sy = (math.cos(roll), math.sin(roll), math.cos(pitch),
+                              math.sin(pitch), math.cos(yaw), math.sin(yaw))
+    return (np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]]) @ np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+            @ np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]]))
+
+
+def _ray_cast(boxes, step=8, w=1280, h=720, f=670.0):
+    """Depth grid samples as the far end camera sees the table and boxes
+    (each box: (x0, x1, y0, y1, z0, z1)). Returns (samples, cols, rows)."""
+    origin = np.array(_CAM[:3]); R = _rot(*_CAM[3:])
+    cols, rows = int((w - step) // step) + 1, int((h - step) // step) + 1
+    samples = []
+    for r in range(rows):
+        for c in range(cols):
+            u, v = step / 2 + c * step, step / 2 + r * step
+            d = R @ np.array([(u - w / 2) / f, (v - h / 2) / f, 1.0])
+            best = (_TABLE_Z - origin[2]) / d[2] if d[2] < 0 else math.inf
+            for x0, x1, y0, y1, z0, z1 in boxes:
+                tmin, tmax = 0.0, math.inf
+                for o, dd, lo, hi in zip(origin, d, (x0, y0, z0), (x1, y1, z1)):
+                    if abs(dd) < 1e-12:
+                        if not lo <= o <= hi:
+                            tmin, tmax = 1, 0
+                        continue
+                    t1, t2 = sorted(((lo - o) / dd, (hi - o) / dd))
+                    tmin, tmax = max(tmin, t1), min(tmax, t2)
+                if tmin <= tmax and tmin < best:
+                    best = tmin
+            p = origin + best * d
+            samples.append((u, v, [float(p[0]), float(p[1]), float(p[2])]
+                            if best < math.inf and -0.6 <= p[0] <= 0.6 and -0.8 <= p[1] <= 0.05 else None))
+    return samples, cols, rows
+
+
+def _cube(x, y, z0=_TABLE_Z, s=0.045):
+    return (x - s / 2, x + s / 2, y - s / 2, y + s / 2, z0, z0 + s)
+
+
+TRAY = (0.24, 0.46, -0.43, -0.12, _TABLE_Z, 0.06)
+
+
+def _heights(blobs):
+    return sorted(round(b['height_m'], 3) for b in blobs)
+
+
+def test_scene_mock_seen_from_the_real_camera_gives_four_cubes_and_the_tray():
+    boxes = [_cube(-0.3, -0.6), _cube(-0.2, -0.5), _cube(-0.1, -0.7), _cube(0.0, -0.4), TRAY]
+    blobs = geometry.detect_blobs(*_ray_cast(boxes))
+    assert _heights(blobs) == [0.045, 0.045, 0.045, 0.045, 0.09]
+
+
+def test_a_cube_on_the_tray_seen_from_the_real_camera_is_its_own_object():
+    boxes = [TRAY, _cube(0.35, -0.29, z0=0.06), _cube(-0.2, -0.5)]
+    blobs = geometry.detect_blobs(*_ray_cast(boxes))
+    assert _heights(blobs) == [0.045, 0.09, 0.135]
+    on_tray = next(b for b in blobs if round(b['height_m'], 3) == 0.135)
+    assert math.dist(on_tray['top_center'][:2], [0.35, -0.29]) < 0.02
+
+
+def test_free_spot_on_a_known_surface_ignores_the_table_behind_it():
+    # An oblique bbox around a tray (top at 0.05, x 0.25..0.45) also covers
+    # the table beyond it; the table is lower and must not be a candidate.
+    tray = lambda x, y: 0.25 <= x <= 0.45
+    pts = _grid(0.20, 0.60, -0.42, -0.12, 14, lambda x, y: 0.05 if tray(x, y) else -0.03)
+    spot = geometry.free_spot(pts, footprint_m=0.045, margin_m=0.01, surface_z=0.05)
+    assert spot['ok'] and spot['surface_z'] == 0.05
+    assert 0.25 <= spot['position'][0] <= 0.45

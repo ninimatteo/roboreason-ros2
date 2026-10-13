@@ -88,7 +88,8 @@ def surface_measurement(center, corners: list) -> dict:
 
 
 def free_spot(points: list, footprint_m: float, margin_m: float, count: int = 1,
-              arrangement: str = 'any', step_tolerance_m: float = 0.015, allowed=None) -> dict:
+              arrangement: str = 'any', step_tolerance_m: float = 0.015, allowed=None,
+              surface_z: float = None) -> dict:
     """Best places for `count` new objects inside a sampled area.
 
     points: deprojected [x, y, z] samples on a grid covering the area (None
@@ -109,6 +110,11 @@ def free_spot(points: list, footprint_m: float, margin_m: float, count: int = 1,
     allowed: optional predicate on [x, y, z]; spots it rejects (e.g. out of
     the robot's reach) are never proposed.
 
+    surface_z: the area's height when already measured (a detected tray, the
+    table). Seen obliquely (ROBOAI-46), a bbox around a raised area also
+    covers its front face and the table beyond it, and its centre need not be
+    on the area.
+
     Returns the positions (on the surface), the worst clearance among them,
     and whether that fits footprint_m / 2 + margin_m.
     """
@@ -117,18 +123,22 @@ def free_spot(points: list, footprint_m: float, margin_m: float, count: int = 1,
         return {'ok': False, 'reason': 'no depth samples in the area'}
     count = max(int(count), 1)
 
-    xs = [p[0] for p in valid]
-    ys = [p[1] for p in valid]
-    bounds = (min(xs), max(xs), min(ys), max(ys))
-    qx, qy = (bounds[1] - bounds[0]) / 4.0, (bounds[3] - bounds[2]) / 4.0
-    central = [p for p in valid
-               if bounds[0] + qx <= p[0] <= bounds[1] - qx and bounds[2] + qy <= p[1] <= bounds[3] - qy]
-    surface_z = _dominant_height(central or valid, step_tolerance_m)
+    if surface_z is None:
+        xs = [p[0] for p in valid]
+        ys = [p[1] for p in valid]
+        bounds = (min(xs), max(xs), min(ys), max(ys))
+        qx, qy = (bounds[1] - bounds[0]) / 4.0, (bounds[3] - bounds[2]) / 4.0
+        central = [p for p in valid
+                   if bounds[0] + qx <= p[0] <= bounds[1] - qx and bounds[2] + qy <= p[1] <= bounds[3] - qy]
+        surface_z = _dominant_height(central or valid, step_tolerance_m)
     on_surface, blocked = [], []
     for p in valid:
         (on_surface if abs(p[2] - surface_z) <= step_tolerance_m else blocked).append(p)
     if not on_surface:
         return {'ok': False, 'reason': 'no flat surface found in the area'}
+    # The area is where its surface is, not the whole sampled box.
+    bounds = (min(p[0] for p in on_surface), max(p[0] for p in on_surface),
+              min(p[1] for p in on_surface), max(p[1] for p in on_surface))
     candidates = [p for p in on_surface if allowed is None or allowed([p[0], p[1], surface_z])]
     if not candidates:
         return {'ok': False, 'reason': 'no reachable free surface in the area'}
@@ -235,7 +245,8 @@ def snap_to_object(samples, cols: int, rows: int, center_uv, table_z: float,
 
 
 def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
-                 max_height: float = ABOVE_TABLE_NOTE_M, step_m: float = 0.015) -> list:
+                 max_height: float = ABOVE_TABLE_NOTE_M, step_m: float = 0.015,
+                 flat_cos: float = 0.9) -> list:
     """Segment what stands on the table in a depth grid covering the image.
 
     samples: row major (u, v, [x, y, z] or None). A sample is raised when it
@@ -247,6 +258,16 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
     (the table fills most of the image; the room floor around it is far
     lower and must not be the reference).
 
+    Only top surfaces are segmented. A camera looking at the table
+    obliquely (ROBOAI-46) also sees vertical faces, and a face climbs from
+    whatever the object stands on in steps small enough to chain: a cube on a
+    tray came out as one blob with the tray, and the lower part of a face as
+    a phantom object. A sample is kept only where the surface is level: the
+    normal of the plane through it and its right and lower neighbours must be
+    within acos(flat_cos) of vertical. Faces have a horizontal normal from any
+    viewpoint, even seen almost edge on; samples on an edge get a mixed one
+    and are dropped too.
+
     Returns one dict per blob: pixel bbox, sample count, median top height
     above the floor, xy footprint (metres) and the base frame centre of its
     top surface.
@@ -255,9 +276,25 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
     if not valid:
         return []
     floor = _dominant_height(valid, 0.01)
-    raised = [p is not None and min_height <= p[2] - floor <= max_height for _, _, p in samples]
+
+    def level(i):
+        r, c = divmod(i, cols)
+        p = samples[i][2]
+        # a neighbour on each image axis, the other side at the grid border
+        a = samples[r * cols + (c + 1 if c + 1 < cols else c - 1)][2] if cols > 1 else None
+        b = samples[(r + 1 if r + 1 < rows else r - 1) * cols + c][2] if rows > 1 else None
+        if a is None or b is None:
+            return False
+        u = (a[0] - p[0], a[1] - p[1], a[2] - p[2])
+        v = (b[0] - p[0], b[1] - p[1], b[2] - p[2])
+        n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+        norm = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+        return norm > 0 and abs(n[2]) / norm >= flat_cos
+
+    raised = [p is not None and min_height <= p[2] - floor <= max_height and level(i)
+              for i, (_, _, p) in enumerate(samples)]
     seen = [False] * len(samples)
-    blobs = []
+    groups, blobs = [], []
     for start in range(len(samples)):
         if not raised[start] or seen[start]:
             continue
@@ -273,7 +310,12 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
                         and abs(samples[j][2][2] - samples[i][2][2]) < step_m):
                     seen[j] = True
                     stack.append(j)
-        pts = [samples[i][2] for i in idx]
+        groups.append(idx)
+    for idx, top in _merge_side_faces(groups, samples):
+        pts = [samples[i][2] for i in top]
+        # the top surface only: face samples chained into the blob sit lower or higher
+        surface = _dominant_height(pts, 0.01)
+        pts = [p for p in pts if abs(p[2] - surface) <= step_m]
         us = [samples[i][0] for i in idx]
         vs = [samples[i][1] for i in idx]
         xs, ys, tz = sorted(p[0] for p in pts), sorted(p[1] for p in pts), sorted(p[2] for p in pts)
@@ -285,6 +327,37 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
             'top_center': _r([xs[len(xs) // 2], ys[len(ys) // 2], tz[len(tz) // 2]]),
         })
     return blobs
+
+
+def _merge_side_faces(groups, samples, tolerance_m: float = 0.01) -> list:
+    """Join each blob that is a side face of a taller one into it.
+
+    A face seen almost edge on (the side of a tray, of a cube) is not steep
+    between neighbouring samples, so it survives as a blob of its own. It
+    lies under the top it hangs from: its xy footprint falls inside that
+    top's footprint, and it is not higher. A cube on a tray is the other way round
+    (the tray's footprint is not inside the cube's), so it stays its own
+    blob. Returns (all sample indices, top surface indices) per blob.
+    """
+    def extent(idx):
+        # height of the blob's dominant surface: a few samples of a face that
+        # chained in must not make a tray look as tall as the cube on it
+        pts = [samples[i][2] for i in idx]
+        return (min(p[0] for p in pts), max(p[0] for p in pts),
+                min(p[1] for p in pts), max(p[1] for p in pts), _dominant_height(pts, tolerance_m))
+
+    out = []
+    for idx in sorted(groups, key=lambda g: -extent(g)[4]):   # tallest first
+        x0, x1, y0, y1, zt = extent(idx)
+        host = next((h for h in out
+                     if zt <= h[2][4] + tolerance_m
+                     and h[2][0] - tolerance_m <= x0 and x1 <= h[2][1] + tolerance_m
+                     and h[2][2] - tolerance_m <= y0 and y1 <= h[2][3] + tolerance_m), None)
+        if host is None:
+            out.append([list(idx), list(idx), extent(idx)])
+        else:
+            host[0].extend(idx)
+    return [(all_idx, top) for all_idx, top, _ in out]
 
 
 def color_name(rgb) -> str:

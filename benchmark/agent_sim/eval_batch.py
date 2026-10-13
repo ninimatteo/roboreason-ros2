@@ -1,8 +1,13 @@
-"""Run benchmark tasks (plus fault variants) on the sim AGENT stack and grade them on ground truth.
+"""Run benchmark tasks (plus fault variants) on a running sim stack and grade them on ground truth.
 
 usage: python3 eval_batch.py MODEL OUT_CSV [scenario ids...]
+         [--mode AGENT|LLM] [--env CONTAINER_ENV_SCRIPT] [--runner CONTAINER_PATH_TO_run_task.py]
+       python3 eval_batch.py --regrade LOG_DIR
+
+The stack (sim plus gui_stack.launch.py in the given mode) must already be
+running in the container, in the environment the env script sets up.
 """
-import csv, json, math, subprocess, sys, time
+import argparse, csv, json, math, subprocess, sys, time
 from pathlib import Path
 
 TASKS = {
@@ -68,25 +73,35 @@ def regrade(log_dir: Path):
         print(f'{log.stem:55s} {done}/{req} agent={r["agent_success"]}')
 
 
+PLANNER_NODE = {'AGENT': 'agent_node', 'LLM': 'llm_planner_node'}
+
+
 def main():
     if sys.argv[1] == '--regrade':
         return regrade(Path(sys.argv[2]))
-    model, out = sys.argv[1], Path(sys.argv[2]); ids = sys.argv[3:] or list(SCENARIOS)
+    ap = argparse.ArgumentParser()
+    ap.add_argument('model'); ap.add_argument('out'); ap.add_argument('ids', nargs='*')
+    ap.add_argument('--mode', default='AGENT', choices=list(PLANNER_NODE))
+    ap.add_argument('--env', default='/tmp/ouroenv.sh')
+    ap.add_argument('--runner', default='/tmp/run_task.py')
+    a = ap.parse_args()
+    model, out, ids, env = a.model, Path(a.out), a.ids or list(SCENARIOS), a.env
     subprocess.run(['docker', 'exec', 'roboreason_ur_gui', 'bash', '-c',
-                    f'source /tmp/ouroenv.sh; ros2 param set /sim/agent_node model_name {model}'], capture_output=True)
+                    f'source {env}; ros2 param set /sim/{PLANNER_NODE[a.mode]} model_name {model}'],
+                   capture_output=True)
     new = not out.exists()
     for sid in ids:
         task, extra = SCENARIOS[sid]
         t0 = time.time()
         cmd = ['docker', 'exec', 'roboreason_ur_gui', 'bash', '-c',
-               'source /tmp/ouroenv.sh; cd /tmp/ouro; timeout 1100 python3 /tmp/run_task.py '
+               f'source {env}; cd /tmp; timeout 1100 python3 {a.runner} '
                + ' '.join(subprocess.list2cmdline([x]) for x in [TASKS[task]] + extra)]
         res = subprocess.run(cmd, capture_output=True, text=True)
         log = res.stdout + res.stderr
         Path(out.parent / 'logs').mkdir(exist_ok=True)
-        (out.parent / 'logs' / f'{time.strftime("%H%M%S")}_{model.replace("/", "_")}_{sid}.log').write_text(log)
+        (out.parent / 'logs' / f'{time.strftime("%H%M%S")}_{a.mode}_{model.replace("/", "_")}_{sid}.log').write_text(log)
         line = next((l for l in log.splitlines() if l.startswith('RESULT_JSON')), None)
-        row = {'time': time.strftime('%Y-%m-%d %H:%M'), 'commit': COMMIT, 'model': model,
+        row = {'time': time.strftime('%Y-%m-%d %H:%M'), 'commit': COMMIT, 'mode': a.mode, 'model': model,
                'scenario': sid, 'task': task}
         if line is None:
             err = next((l for l in log.splitlines() if 'success=False' in l or 'Error' in l), log.strip().splitlines()[-1:] or [''])
