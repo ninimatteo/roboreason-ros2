@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from robo_reason_bringup.gazebo_partition import gazebo_partition
 from robo_reason_gui.process_scope import same_environment
 
 
@@ -40,6 +41,20 @@ def test_other_ros_domain_is_not_ours(child):
 
 def test_other_gazebo_partition_is_not_ours(child):
     assert not same_environment(child(IGN_PARTITION='someone_else'))
+
+
+def test_simulation_we_launched_is_ours(child, monkeypatch):
+    # sim.launch.py sets the partition derived from the domain on its
+    # processes; the GUI that started it has none set, and must still reap them.
+    monkeypatch.delenv('IGN_PARTITION', raising=False)
+    monkeypatch.delenv('GZ_PARTITION', raising=False)
+    assert same_environment(child(IGN_PARTITION=gazebo_partition()))
+
+
+def test_partition_follows_the_ros_domain():
+    assert gazebo_partition({'ROS_DOMAIN_ID': '42'}) == 'roboreason_domain42'
+    assert gazebo_partition({}) == gazebo_partition({'ROS_DOMAIN_ID': '0'})
+    assert gazebo_partition({'ROS_DOMAIN_ID': '42', 'IGN_PARTITION': 'mine'}) == 'mine'
 
 
 def test_unreadable_process_is_left_alone():
