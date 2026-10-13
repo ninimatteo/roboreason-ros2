@@ -131,7 +131,61 @@ def _centered_zone_offset(spacing: float, index: int, half_x: float, half_y: flo
     return c * spacing, r * spacing
 
 
-def distribute_zone_releases(plan: list, targets: dict = None) -> list:
+def _fitted_zone_layout(count: int, spacing: float, bounds: tuple) -> list:
+    """Return `count` (x, y) slots filling the zone `bounds` (x_min, x_max,
+    y_min, y_max) as one centred grid, or None if they don't fit.
+
+    Every grid shape that holds `count` is tried; the zone is split into
+    equal cells and the one whose smallest cell side is largest wins (ties:
+    fewer empty cells). That picks rows and columns that follow the zone's
+    aspect ratio and spreads the objects over it instead of packing them at
+    minimum spacing. A slot sits at its cell's centre, so a cell side of at
+    least `spacing` keeps each footprint inside the zone and apart from its
+    neighbours. An incomplete last row is centred along x.
+    """
+    x_min, x_max, y_min, y_max = bounds
+    width, depth = x_max - x_min, y_max - y_min
+    best = None
+    for cols in range(1, count + 1):
+        rows = -(-count // cols)
+        pitch = min(width / cols, depth / rows)
+        if pitch < spacing:
+            continue
+        key = (pitch, -cols * rows)
+        if best is None or key > best[0]:
+            best = (key, cols, rows)
+    if best is None:
+        return None
+    _, cols, rows = best
+    slots = []
+    for r in range(rows):
+        in_row = min(cols, count - r * cols)
+        shift = (cols - in_row) / 2
+        for c in range(in_row):
+            slots.append((x_min + (c + shift + 0.5) * width / cols,
+                          y_min + (r + 0.5) * depth / rows))
+    return slots
+
+
+def _move_release(plan: list, i: int, dx: float, dy: float):
+    """Shift the release at plan[i], and the approach right before it if that
+    approach was aimed at the same spot: otherwise the arm still flies to the
+    original, occupied spot and only sidesteps at the release, too late to
+    avoid clipping whatever already landed there."""
+    pos = plan[i]['release_position']
+    orig_x, orig_y = pos[0], pos[1]
+    pos[0] += dx
+    pos[1] += dy
+    if i > 0 and plan[i - 1].get('action_name', '').lower() == 'approach':
+        approach_pos = plan[i - 1].get('target_position')
+        if (approach_pos and len(approach_pos) >= 2
+                and abs(approach_pos[0] - orig_x) < settings.ZONE_PLACEMENT_COLLISION_RADIUS_M
+                and abs(approach_pos[1] - orig_y) < settings.ZONE_PLACEMENT_COLLISION_RADIUS_M):
+            approach_pos[0] += dx
+            approach_pos[1] += dy
+
+
+def distribute_zone_releases(plan: list, targets: dict = None, objects: dict = None) -> list:
     """Space out multiple releases that land on (about) the same spot
     instead of letting them collide — works for LLM, VLM, and VLM_LLM
     plans alike, since it only looks at the release positions the plan
@@ -141,37 +195,43 @@ def distribute_zone_releases(plan: list, targets: dict = None) -> list:
     targets-lookup approach only ever fires for LLM mode).
 
     `targets` is the scene's target-zone registry (scene_json's
-    `targets`, optional) — used only to keep the spacing grid inside a
-    matched zone's own known footprint (`_centered_zone_offset`) instead
-    of growing unbounded past it (`_zone_slot_offset`). Omit it (or pass
-    a scene predating ROBOAI-19, with no bounds-shaped targets) to get
-    the old unbounded-growth behaviour verbatim.
+    `targets`, optional) — used only when a cluster of colliding releases
+    falls inside a zone with known bounds. Omit it (or pass a scene
+    predating ROBOAI-19, with no bounds-shaped targets) to get the old
+    unbounded-growth behaviour verbatim. `objects` is the scene's object
+    registry (optional): a zone with objects already standing in it is
+    never spread over.
 
-    The first release at a given spot is left untouched (so the common
-    single-object case is unchanged). A later release within
-    ZONE_PLACEMENT_COLLISION_RADIUS_M of an earlier one is either:
-      - left alone, if its z differs from the earlier one by more than
-        _STACK_Z_GAP_M — that's an intentional stack (the release-on-top-
-        of-target formula), not "spread these out"; or
-      - nudged sideways, spaced by the released object's grasp_width
-        (falling back to ZONE_PLACEMENT_DEFAULT_SPACING_M) plus
-        ZONE_PLACEMENT_MARGIN_M — within the matched zone's bounds via
-        `_centered_zone_offset` if the cluster's anchor fell inside one,
-        via the unbounded `_zone_slot_offset` otherwise (no zone matched,
-        or the zone is too small to offer another in-bounds slot).
+    Releases within ZONE_PLACEMENT_COLLISION_RADIUS_M of a cluster's first
+    one form the cluster, except those whose z differs from it by more
+    than _STACK_Z_GAP_M — that's an intentional stack (the
+    release-on-top-of-target formula), not "spread these out". A cluster
+    of two or more is spread, spaced by each object's grasp_width (falling
+    back to ZONE_PLACEMENT_DEFAULT_SPACING_M) plus ZONE_PLACEMENT_MARGIN_M:
+      - inside a known zone, with ZONE_PLACEMENT_LAYOUT 'fit' (ROBOAI-21):
+        all of it, first release included, as one grid centred on the zone
+        that follows its shape (`_fitted_zone_layout`). Only into a zone
+        known to be empty: not when objects stand in it or other releases
+        land elsewhere in it (the spread grid could hit them; the table is
+        a zone too), not when something is stacked on the cluster (moving
+        the first object would leave the stacked one to fall onto the bare
+        zone), and not when the zone is too small. Those fall through to
+      - the first release left untouched and the others ringed around it
+        within the zone (`_centered_zone_offset`), or growing unbounded
+        away from it (`_zone_slot_offset`) if no zone matched or the zone
+        has no slot left.
 
-    Whenever a release is nudged, the `approach` step immediately before it
-    (if its target_position matches the release's pre-nudge x, y) is nudged
-    by the same amount — otherwise the arm still flies/descends to the
-    original, occupied spot and only sidesteps at the very last moment
-    (the release), which is too late to avoid clipping whatever already
-    landed there.
+    Whenever a release is moved, so is the approach right before it
+    (`_move_release`).
 
     Mutates and returns `plan`. Must run after normalize_plan (so
-    release_position is populated) and before PlanValidator, so a nudge
-    that ends up outside workspace limits still gets caught.
+    release_position is populated) and before PlanValidator, so a moved
+    release that ends up outside workspace limits still gets caught.
     """
-    clusters = []  # each: {'x', 'y', 'z', 'count', 'zone_half'}
+    clusters = []  # each: {'x', 'y', 'z', 'zone', 'members': [plan index], 'stacked'}
+    releases = {}  # plan index -> (x, y) as planned, before anything moves
+    standing = [tuple(o['position'][:2]) for o in (objects or {}).values()
+                if len((o or {}).get('position') or []) >= 2]
 
     for i, step in enumerate(plan):
         if step.get('action_name', '').lower() != 'release':
@@ -179,6 +239,7 @@ def distribute_zone_releases(plan: list, targets: dict = None) -> list:
         pos = step.get('release_position')
         if not pos or len(pos) < 3:
             continue
+        releases[i] = (pos[0], pos[1])
 
         cluster = next(
             (c for c in clusters
@@ -187,38 +248,42 @@ def distribute_zone_releases(plan: list, targets: dict = None) -> list:
             None,
         )
         if cluster is None:
-            zone_bounds = _find_zone_bounds(pos[0], pos[1], targets)
-            zone_half = (
-                ((zone_bounds[1] - zone_bounds[0]) / 2, (zone_bounds[3] - zone_bounds[2]) / 2)
-                if zone_bounds else None
-            )
-            clusters.append({'x': pos[0], 'y': pos[1], 'z': pos[2], 'count': 1, 'zone_half': zone_half})
+            clusters.append({'x': pos[0], 'y': pos[1], 'z': pos[2], 'members': [i], 'stacked': False,
+                             'zone': _find_zone_bounds(pos[0], pos[1], targets)})
+        elif abs(cluster['z'] - pos[2]) >= _STACK_Z_GAP_M:
+            cluster['stacked'] = True  # intentional stack at this spot — leave it alone
+        else:
+            cluster['members'].append(i)
+
+    def spacing(i):
+        return (plan[i].get('grasp_width') or settings.ZONE_PLACEMENT_DEFAULT_SPACING_M) \
+            + settings.ZONE_PLACEMENT_MARGIN_M
+
+    for cluster in clusters:
+        members, zone = cluster['members'], cluster['zone']
+        if len(members) < 2:
             continue
 
-        if abs(cluster['z'] - pos[2]) >= _STACK_Z_GAP_M:
-            continue  # intentional stack at this spot — leave it alone
+        slots = None
+        if zone is not None and settings.ZONE_PLACEMENT_LAYOUT == 'fit' and not cluster['stacked']:
+            x_min, x_max, y_min, y_max = zone
+            others = [p for j, p in releases.items() if j not in members] + standing
+            others_in_zone = any(x_min <= x <= x_max and y_min <= y <= y_max for x, y in others)
+            if not others_in_zone:
+                slots = _fitted_zone_layout(len(members), max(spacing(i) for i in members), zone)
+        if slots is not None:
+            for i, (x, y) in zip(members, slots):
+                pos = plan[i]['release_position']
+                _move_release(plan, i, x - pos[0], y - pos[1])
+            continue
 
-        orig_x, orig_y = pos[0], pos[1]
-        spacing = (step.get('grasp_width') or settings.ZONE_PLACEMENT_DEFAULT_SPACING_M)
-        spacing += settings.ZONE_PLACEMENT_MARGIN_M
-
-        offset = None
-        if cluster['zone_half'] is not None:
-            offset = _centered_zone_offset(spacing, cluster['count'], *cluster['zone_half'])
-        if offset is None:
-            offset = _zone_slot_offset(spacing, cluster['count'])
-        dx, dy = offset
-
-        pos[0] += dx
-        pos[1] += dy
-        cluster['count'] += 1
-
-        if i > 0 and plan[i - 1].get('action_name', '').lower() == 'approach':
-            approach_pos = plan[i - 1].get('target_position')
-            if (approach_pos and len(approach_pos) >= 2
-                    and abs(approach_pos[0] - orig_x) < settings.ZONE_PLACEMENT_COLLISION_RADIUS_M
-                    and abs(approach_pos[1] - orig_y) < settings.ZONE_PLACEMENT_COLLISION_RADIUS_M):
-                approach_pos[0] += dx
-                approach_pos[1] += dy
+        zone_half = ((zone[1] - zone[0]) / 2, (zone[3] - zone[2]) / 2) if zone else None
+        for count, i in enumerate(members[1:], start=1):
+            offset = None
+            if zone_half is not None:
+                offset = _centered_zone_offset(spacing(i), count, *zone_half)
+            if offset is None:
+                offset = _zone_slot_offset(spacing(i), count)
+            _move_release(plan, i, *offset)
 
     return plan
