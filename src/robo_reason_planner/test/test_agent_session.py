@@ -67,7 +67,7 @@ class ScriptedClient:
 def _toolbox(backend, lines):
     cfg = ToolboxConfig(
         table_z=0.0, limits={'x': (-0.6, 0.6), 'y': (-0.8, 0.0), 'z': (-0.03, 0.55)},
-        grasp=GraspGeometry(0.5, 0.02, 0.057), send_width=0,
+        grasp=GraspGeometry(0.5, 0.02, 0.057), send_width=0, verify_actions=False,
     )
     return Toolbox(backend=backend, config=cfg, log=lines.append)
 
@@ -343,3 +343,78 @@ def test_colour_names():
     assert color_name((60, 110, 230)) == 'blue'
     assert color_name((245, 245, 245)) == 'white'
     assert color_name((220, 40, 40)) == 'red'
+
+
+class LiveBackend(FakeBackend):
+    """A cube that really moves: picked when the gripper closes on it (unless
+    the grasp slips), carried, and set down where the gripper opens."""
+
+    def __init__(self, tmp_path, slip=False, drop_in_transit=False):
+        super().__init__(tmp_path)
+        self.cube = (100, 100)        # pixel centre; None while held
+        self.slip, self.drop = slip, drop_in_transit
+        self.tcp = None
+
+    def deproject(self, pixels):
+        out = []
+        for u, v in pixels:
+            on = self.cube is not None and abs(u - self.cube[0]) <= 20 and abs(v - self.cube[1]) <= 20
+            out.append([0.1 + (u - 100) * 0.001, -0.4 + (v - 100) * 0.001, 0.04 if on else 0.0])
+        return out
+
+    def run_skill(self, name, args):
+        self.skills.append((name, args))
+        if name == 'pick':
+            if self.slip:
+                self.slip = False
+            else:
+                self.cube = None
+        elif name == 'release' and self.cube is None:
+            x, y = args['release_position'][:2]
+            if self.drop:
+                self.cube = (300, 300)      # fell somewhere on the way
+            else:
+                self.cube = (round(100 + (x - 0.1) / 0.001), round(100 + (y + 0.4) / 0.001))
+        return True, ''
+
+
+def _live_toolbox(backend, lines):
+    tb = _toolbox(backend, lines)
+    tb.config.verify_actions = True
+    return tb
+
+
+def test_verified_pick_and_place(tmp_path):
+    backend, lines = LiveBackend(tmp_path), []
+    tb = _live_toolbox(backend, lines)
+    tb.capture()
+    tb.run('detect_objects', {})
+    tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})            # a1, empty table at (0.2, -0.4)
+    res = tb.run('pick', {'object': 'o1'}).text
+    assert res.startswith('pick completed and checked') and 'held' in res
+    res = tb.run('place', {'target': 'a1'}).text
+    assert res.startswith('place completed and checked') and 'Objects now' in res
+    assert backend.cube == (200, 100)
+
+
+def test_a_slipped_grasp_is_caught_by_the_check(tmp_path):
+    backend, lines = LiveBackend(tmp_path, slip=True), []
+    tb = _live_toolbox(backend, lines)
+    tb.capture()
+    tb.run('detect_objects', {})
+    res = tb.run('pick', {'object': 'o1'}).text
+    assert res.startswith('ERROR') and 'grasp missed' in res
+    assert tb.held is None
+    assert tb.run('place', {'target': 'o1'}).text.startswith('REFUSED')   # nothing held
+
+
+def test_a_drop_in_transit_is_caught_by_the_check(tmp_path):
+    backend, lines = LiveBackend(tmp_path, drop_in_transit=True), []
+    tb = _live_toolbox(backend, lines)
+    tb.capture()
+    tb.run('detect_objects', {})
+    tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})
+    tb.run('pick', {'object': 'o1'})
+    res = tb.run('place', {'target': 'a1'}).text
+    assert res.startswith('ERROR') and 'dropped' in res
+    assert '"height_m": 0.04' in res          # the list shows where it fell

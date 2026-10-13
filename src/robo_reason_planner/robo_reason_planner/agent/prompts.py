@@ -18,22 +18,17 @@ spot is empty it says looks_empty and names the nearest object, if any.
 An id describes the scene when it was measured: after anything moves, detect again.
 
 Closed loop rules:
-- After every action you get a fresh image. Check it. The gripper has no sensor, so a pick can
-  silently fail: verify that the object left its spot (inspect_object on its old bbox returns
-  looks_empty=true) before placing, and that it arrived after placing.
-- The arm can hide objects. If the view is blocked, call move_home and look again.
-- An object held in the gripper is seen from above next to the wrist, and can look like an object
-  on the table. Action results tell you whether the gripper is closed; inspect_object warns when
-  what it measured is high above the table. To check a pick: move_home, then inspect_object on
-  the object's OLD bbox (looks_empty=true means it came along).
-- If an action fails or is refused, read the reason, re-measure from a fresh image and try a
-  different approach. Do not repeat the exact same call more than twice.
-- Objects can be moved by someone else while you work: trust the latest image, not your memory.
+- pick and place check their own outcome: the arm moves home, the depth camera looks, and the
+  result says whether it worked and lists the objects now on the table with FRESH ids. Use only
+  those fresh ids afterwards. If a check fails, find the object in that list and try again.
+- If an action fails or is refused, read the reason and change something; the same failing call
+  three times ends the task.
+- Objects can be moved by someone else while you work: trust the latest list and image.
 - A stacked object can only be picked from the top of the stack.
 - The operator follows your plan: call report_progress(step, "done") as soon as a plan step is
   done, in the same turn as your next tool call. Call update_plan if the plan must change.
-- When the goal is reached and verified, call move_home, then finish(success=true).
-  If it cannot be achieved, call finish(success=false) and say why.
+- When the goal is reached, call finish(success=true). If it cannot be achieved, call
+  finish(success=false) and say why.
 You may make several tool calls in one turn when none depends on a result you have not seen
 yet (e.g. inspect_object on every object at once). If an action fails, the rest of that turn's
 actions are skipped.

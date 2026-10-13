@@ -147,6 +147,9 @@ class ToolboxConfig:
     detect_min_samples: int = 4
     area_min_size_m: float = 0.12
     refine_step_px: float = 2.0
+    # After pick and place: arm home, detect, and check the outcome.
+    verify_actions: bool = True
+    verify_radius_m: float = 0.03
     robot_base_radius_m: float = 0.15
 
 
@@ -204,6 +207,13 @@ class Toolbox:
         return ToolResult('New image attached below.', image_path=path)
 
     def _tool_detect_objects(self):
+        found = self._detect()
+        if not found:
+            return ToolResult('Nothing found standing on the table.')
+        return ToolResult(json.dumps(found))
+
+    def _detect(self) -> list:
+        """Objects and areas standing on the table, stored under new ids."""
         fw, fh = self.full_size
         step = self.config.detect_step_px
         cols, rows = int((fw - step) // step) + 1, int((fh - step) // step) + 1
@@ -238,9 +248,7 @@ class Toolbox:
                 ref = self._store('o', {'kind': 'object', **m})
                 found.append({'id': ref, 'kind': 'object', 'color': colour, 'bbox': shown,
                               'height_m': m['height_m'], 'width_m': m.get('width_m')})
-        if not found:
-            return ToolResult('Nothing found standing on the table.')
-        return ToolResult(json.dumps(found))
+        return found
 
     def _full_image(self):
         try:
@@ -372,7 +380,8 @@ class Toolbox:
         target = [float(v) for v in grasp_point]
         width = max(float(obj.get('width_m') or 0.0), 0.0)
         self._pending_hold = obj
-        return self._sequence('pick', {'object': object, 'grasp_point': target, 'grasp_width': width}, [
+        return self._sequence('pick', {'object': object, 'grasp_point': target, 'grasp_width': width},
+                              verify=lambda: self._verify_pick(obj), skills=[
             ('approach', {'target_position': target, 'offset': self.config.approach_offset_m,
                           'approach_direction': 'z'}),
             ('pick', {'target_position': target, 'grasp_width': width, 'grasp_axis': 'z'}),
@@ -392,7 +401,8 @@ class Toolbox:
             return self._refused('place', target, err)
         target_xyz = [float(v) for v in position]
         hover_base = [target_xyz[0], target_xyz[1], target_xyz[2] + held]
-        return self._sequence('place', {'target': target, 'position': target_xyz, 'held_height': held}, [
+        return self._sequence('place', {'target': target, 'position': target_xyz, 'held_height': held},
+                              verify=lambda: self._verify_place(target_xyz), skills=[
             ('approach', {'target_position': hover_base, 'offset': self.config.approach_offset_m,
                           'approach_direction': 'z'}),
             # The executor raises the TCP by object_height, and retracts to the
@@ -424,7 +434,7 @@ class Toolbox:
 
     # ── helpers ────────────────────────────────────────────────────────────
 
-    def _sequence(self, tool, summary_args, skills):
+    def _sequence(self, tool, summary_args, skills, verify=None):
         for skill, args in skills:
             ok, error = self.backend.run_skill(skill, args)
             if skill == 'pick':
@@ -439,15 +449,62 @@ class Toolbox:
                 self.actions.append((tool, summary_args, False, f'{skill}: {error}'))
                 self.log(f'[Agent] {tool} {json.dumps(summary_args)} -> FAILED at {skill}: {error}')
                 return self._after_action(f'ERROR: {tool} failed during {skill}: {error}')
+        if verify is not None and self.config.verify_actions:
+            failure, report, image = verify()
+            if failure:
+                self.actions.append((tool, summary_args, False, f'check: {failure}'))
+                self.log(f'[Agent] {tool} {json.dumps(summary_args)} -> FAILED check: {failure}')
+                return self._after_action(f'ERROR: {tool} ran but the check failed: {failure} {report}', image)
+            self.actions.append((tool, summary_args, True, ''))
+            self.log(f'[Agent] {tool} {json.dumps(summary_args)} -> done, checked')
+            return self._after_action(f'{tool} completed and checked. {report}', image)
         self.actions.append((tool, summary_args, True, ''))
         self.log(f'[Agent] {tool} {json.dumps(summary_args)} -> done')
         return self._after_action(f'{tool} completed.')
 
-    def _after_action(self, text):
+    # The gripper has no sensor, and a weak model may not look: after pick
+    # and place the arm steps out of view and the depth camera checks the
+    # outcome. Returns (failure or None, report for the model, image path).
+
+    def _verify_pick(self, obj):
+        found, image = self._look_from_home()
+        spot = obj['top_center']
+        if self._object_near(found, spot, self.config.verify_radius_m):
+            self.held = None
+            return ('the object is still at its spot, the grasp missed; nothing is held.',
+                    self._objects_now(found), image)
+        return None, 'Its spot is empty: the object is held. ' + self._objects_now(found), image
+
+    def _verify_place(self, target_xyz):
+        found, image = self._look_from_home()
+        if not self._object_near(found, target_xyz, self.config.verify_radius_m + 0.01):
+            return ('nothing stands at the target; the object was probably dropped on the way. '
+                    'Find it in the list below.', self._objects_now(found), image)
+        return None, 'An object now stands at the target. ' + self._objects_now(found), image
+
+    def _look_from_home(self):
+        self.backend.run_skill('move_home', {})
+        image = self.capture()
+        return self._detect(), image
+
+    def _object_near(self, found, xyz, radius) -> bool:
+        for f in found:
+            if f['kind'] != 'object':
+                continue
+            c = self.refs[f['id']]['top_center']
+            if math.hypot(c[0] - xyz[0], c[1] - xyz[1]) <= radius:
+                return True
+        return False
+
+    @staticmethod
+    def _objects_now(found) -> str:
+        return 'Objects now (fresh ids): ' + json.dumps(found)
+
+    def _after_action(self, text, image=None):
         text += ' ' + _GRIPPER_STATE[self.gripper]
-        if not self.config.auto_look_after_action:
+        if image is None and not self.config.auto_look_after_action:
             return ToolResult(text)
-        path = self.capture()
+        path = image or self.capture()
         return ToolResult(text + ' A fresh image is attached below.', image_path=path)
 
     def _store(self, prefix, data) -> str:
