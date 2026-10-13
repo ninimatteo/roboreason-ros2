@@ -1,0 +1,31 @@
+time,commit,mode,model,scenario,task,agent_success,subtasks,required,ok,plan_s,exec_s,model_calls,note
+2026-10-13 22:04,4054b71,AGENT,mistral/ministral-14b-latest,pp_easy,pp_easy,True,1,1,True,68.9,180.8,7,SUCCESS: Red cube successfully picked and placed on the brown tray.
+2026-10-13 22:22,4054b71,AGENT,mistral/ministral-14b-latest,pp_hard,pp_hard,,0,,False,,,,    if time.time() - t > timeout: raise TimeoutError(cli.srv_name)
+2026-10-13 22:26,4054b71,AGENT,mistral/ministral-14b-latest,sort_easy,sort_easy,True,1,1,True,67.0,175.3,6,SUCCESS: The red cube (o1) was successfully picked and stacked on top of the blue cube (o2). The final scene confirms the red cube is now on top of the blue cube.
+2026-10-13 22:39,4054b71,AGENT,mistral/ministral-14b-latest,sort_hard,sort_hard,True,4,4,True,68.6,687.2,14,"SUCCESS: All cubes are sorted: the red cube is on the brown tray, and the blue, white, and orange cubes are arranged in a straight line on the table."
+2026-10-13 22:43,4054b71,AGENT,mistral/ministral-14b-latest,arith_easy,arith_easy,True,1,1,True,3.9,240.3,6,SUCCESS: The red cube (value 2) was successfully picked and placed on the brown tray as requested.
+2026-10-13 22:57,4054b71,AGENT,mistral/ministral-14b-latest,arith_hard,arith_hard,True,3,4,False,69.2,777.3,15,"SUCCESS: All cubes with values greater than the sum of blue (1) and red (2) cubes (i.e., white and orange cubes) have been moved to the brown tray. The remaining cubes (red and blue) are arranged in a"
+2026-10-13 23:03,4054b71,AGENT,mistral/ministral-14b-latest,pp_easy+slip,pp_easy,True,1,1,True,66.5,270.8,10,SUCCESS: The red cube was successfully picked and placed on the brown tray.
+2026-10-13 23:09,4054b71,AGENT,mistral/ministral-14b-latest,pp_easy+drop,pp_easy,True,1,1,True,2.8,333.0,8,SUCCESS: The red cube was successfully picked and placed on the brown tray.
+2026-10-13 23:32,4054b71,AGENT,mistral/ministral-14b-latest,sort_easy+slip,sort_easy,True,1,1,True,2.7,331.1,9,SUCCESS: The red cube was successfully stacked on top of the blue cube.
+2026-10-13 23:33,4054b71,LLM,mistral/ministral-14b-latest,pp_easy,pp_easy,True,1,1,True,12.5,34.5,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:36,4054b71,LLM,mistral/ministral-14b-latest,pp_hard,pp_hard,True,4,4,True,19.4,133.3,[Step 20] move_home -> OK,[Step 19] release -> OK
+2026-10-13 23:37,4054b71,LLM,mistral/ministral-14b-latest,sort_easy,sort_easy,True,1,1,True,14.9,34.5,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:38,4054b71,LLM,mistral/ministral-14b-latest,sort_hard,sort_hard,,0,,False,,,,PLAN (25.2s) success=False n = self._build_action(self.task_plan[0])
+2026-10-13 23:39,4054b71,LLM,mistral/ministral-14b-latest,arith_easy,arith_easy,True,0,1,False,13.3,34.3,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:39,4054b71,LLM,mistral/ministral-14b-latest,arith_hard,arith_hard,False,0,4,False,21.4,1.6,,
+2026-10-13 23:40,4054b71,LLM,mistral/ministral-14b-latest,pp_easy+slip,pp_easy,True,0,1,False,13.4,34.7,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:41,4054b71,LLM,mistral/ministral-14b-latest,pp_easy+drop,pp_easy,,0,,False,,,,PLAN (11.8s) success=False ion = self._build_action(self.task_plan[0])
+2026-10-13 23:44,4054b71,LLM,mistral/ministral-14b-latest,sort_easy+slip,sort_easy,True,0,1,False,12.0,34.6,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:46,4054b71,LLM,groq/openai-oss-120b,pp_easy,pp_easy,True,1,1,True,8.6,34.7,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:48,4054b71,LLM,groq/openai-oss-120b,pp_hard,pp_hard,True,4,4,True,11.1,120.1,[Step 17] move_home -> OK,[Step 16] release -> OK
+2026-10-13 23:49,4054b71,LLM,groq/openai-oss-120b,sort_easy,sort_easy,True,1,1,True,16.2,34.5,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:52,4054b71,LLM,groq/openai-oss-120b,sort_hard,sort_hard,True,4,4,True,21.6,121.4,[Step 17] move_home -> OK,[Step 16] release -> OK
+2026-10-13 23:53,4054b71,LLM,groq/openai-oss-120b,arith_easy,arith_easy,True,1,1,True,9.7,34.4,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:54,4054b71,LLM,groq/openai-oss-120b,pp_easy+slip,pp_easy,True,0,1,False,16.5,34.3,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:55,4054b71,LLM,groq/openai-oss-120b,pp_easy+drop,pp_easy,True,0,1,False,20.6,34.7,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-13 23:59,4054b71,LLM,groq/openai-oss-120b,sort_easy+slip,sort_easy,True,0,1,False,17.0,34.7,[Step 5] move_home -> OK,[Step 4] release -> OK
+2026-10-14 00:04,4054b71,LLM,mistral/ministral-14b-latest,pp_hard+move,pp_hard,True,3,4,False,19.1,133.4,[Step 20] move_home -> OK,[Step 19] release -> OK
+2026-10-14 00:07,4054b71,LLM,groq/openai-oss-120b,pp_hard+move,pp_hard,True,3,4,False,11.7,120.8,[Step 17] move_home -> OK,[Step 16] release -> OK
+2026-10-14 00:10,4054b71,LLM,groq/openai-oss-120b,arith_hard,arith_hard,True,4,4,True,17.1,132.8,[Step 20] move_home -> OK,[Step 19] release -> OK
+2026-10-14 00:33,4054b71,AGENT,mistral/ministral-14b-latest,pp_hard+move,pp_hard,False,4,4,True,69.3,976.6,18,NOT ACHIEVED: gave up: exceeded 900 s
