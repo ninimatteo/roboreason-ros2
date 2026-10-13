@@ -24,7 +24,9 @@ class UR5Action(BaseModel):
     )
     object_height: Optional[float] = Field(
         default=0.0,
-        description='Estimated real-world height of the held object in meters — used by release to lift TCP above the surface'
+        description='Height of the held object in meters, used by release to lift the TCP above the surface. '
+                    'The planners replace it with a measured value when they can (scene or depth); the '
+                    "model's value is the fallback"
     )
     grasp_width: Optional[float] = Field(
         default=0.0,
@@ -38,14 +40,11 @@ class UR5Action(BaseModel):
         default='z',
         description="Approach direction: 'z' (from above), 'x', 'y'"
     )
-    grasp_axis: Optional[str] = Field(
-        default='z',
-        description="Grasp axis for pick: 'z' (top-down), 'x', 'y'"
-    )
-    come_back: Optional[bool] = Field(
-        default=False,
-        description='Return to pre-action position after execution'
-    )
+    # Not read by the executor (pick and release always lift back to the
+    # approach hover), and no longer offered to the model (ROBOAI-20); kept so
+    # plans that still carry them validate.
+    grasp_axis: Optional[str] = Field(default='z', description='Unused')
+    come_back: Optional[bool] = Field(default=False, description='Unused')
     time: Optional[float] = Field(
         default=None,
         description='Duration in seconds — used by wait'
