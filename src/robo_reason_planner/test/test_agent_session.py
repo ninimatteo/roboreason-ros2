@@ -328,9 +328,11 @@ def test_detect_objects_finds_ids_colours_and_sizes(tmp_path):
     tb = _toolbox(backend, lines)
     tb.capture()
     found = json.loads(tb.run('detect_objects', {}).text)
-    assert len(found) == 1
-    o = found[0]
-    assert o['id'] == 'o1' and o['kind'] == 'object' and o['color'] == 'red'
+    assert [f.get('name') for f in found if f['kind'] == 'area'] == ['table']
+    objects = [f for f in found if f['kind'] == 'object']
+    assert len(objects) == 1
+    o = objects[0]
+    assert o['id'] == 'o1' and o['color'] == 'red'
     assert o['height_m'] == 0.04 and abs(o['width_m'] - 0.045) <= 0.006
     # and the id works straight away
     assert tb.run('pick', {'object': 'o1'}).text.startswith('pick completed')
@@ -388,11 +390,11 @@ def test_verified_pick_and_place(tmp_path):
     backend, lines = LiveBackend(tmp_path), []
     tb = _live_toolbox(backend, lines)
     tb.capture()
-    tb.run('detect_objects', {})
-    tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})            # a1, empty table at (0.2, -0.4)
+    tb.run('detect_objects', {})                                     # a1 is the table
+    tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})            # a2, empty table at (0.2, -0.4)
     res = tb.run('pick', {'object': 'o1'}).text
     assert res.startswith('pick completed and checked') and 'held' in res
-    res = tb.run('place', {'target': 'a1'}).text
+    res = tb.run('place', {'target': 'a2'}).text
     assert res.startswith('place completed and checked') and 'Objects now' in res
     assert backend.cube == (200, 100)
 
@@ -415,6 +417,21 @@ def test_a_drop_in_transit_is_caught_by_the_check(tmp_path):
     tb.run('detect_objects', {})
     tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})
     tb.run('pick', {'object': 'o1'})
-    res = tb.run('place', {'target': 'a1'}).text
+    res = tb.run('place', {'target': 'a2'}).text
     assert res.startswith('ERROR') and 'dropped' in res
     assert '"height_m": 0.04' in res          # the list shows where it fell
+
+
+def test_a_line_on_the_table_area_avoids_objects_and_the_floor(tmp_path):
+    backend, lines = LiveBackend(tmp_path), []
+    tb = _live_toolbox(backend, lines)
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {}).text)
+    table = next(f['id'] for f in found if f.get('name') == 'table')
+    res = json.loads(tb.run('find_free_spot', {'area': table, 'object': 'o1', 'count': 3,
+                                               'arrangement': 'line'}).text)
+    assert res['ok'] and len(res['spots']) == 3
+    for sid in res['spots']:
+        x, y, z = tb.refs[sid]['position']
+        assert z == 0.0                                             # table, not the room floor
+        assert not (abs(x - 0.1) < 0.05 and abs(y + 0.4) < 0.05)   # not on the cube

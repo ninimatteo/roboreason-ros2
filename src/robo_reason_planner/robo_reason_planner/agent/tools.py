@@ -223,6 +223,15 @@ class Toolbox:
         image = self._full_image()
         sx, sy = self.image_size[0] / fw, self.image_size[1] / fh
         found = []
+        # The table itself, as an area: "in a line on the table" is then a
+        # find_free_spot on it (the room floor beyond the edge, objects and
+        # the robot's reach are excluded there), with no box to draw.
+        table = self._table_area(pixels, pts)
+        if table is not None:
+            ref = self._store('a', table)
+            found.append({'id': ref, 'kind': 'area', 'name': 'table', 'bbox': [
+                round(table['bbox_full'][0] * sx), round(table['bbox_full'][1] * sy),
+                round(table['bbox_full'][2] * sx), round(table['bbox_full'][3] * sy)]})
         for b in sorted(blobs, key=lambda b: (b['bbox_px'][0], b['bbox_px'][1])):
             if b['samples'] < self.config.detect_min_samples:
                 continue
@@ -249,6 +258,21 @@ class Toolbox:
                 found.append({'id': ref, 'kind': 'object', 'color': colour, 'bbox': shown,
                               'height_m': m['height_m'], 'width_m': m.get('width_m')})
         return found
+
+    def _table_area(self, pixels, pts):
+        """The table surface: the dominant height of the depth grid."""
+        valid = [(uv, p) for uv, p in zip(pixels, pts) if p is not None]
+        if not valid:
+            return None
+        floor = geometry._dominant_height([p for _, p in valid], 0.01)
+        on = [(uv, p) for uv, p in valid if abs(p[2] - floor) <= 0.01]
+        if not on:
+            return None
+        us, vs = [uv[0] for uv, _ in on], [uv[1] for uv, _ in on]
+        xs, ys = sorted(p[0] for _, p in on), sorted(p[1] for _, p in on)
+        centre = [xs[len(xs) // 2], ys[len(ys) // 2], floor]
+        return {'kind': 'area', 'name': 'table', 'position': centre, 'surface_z': floor,
+                'bbox_full': [min(us), min(vs), max(us), max(vs)]}
 
     def _full_image(self):
         try:
