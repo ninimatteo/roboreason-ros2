@@ -9,8 +9,7 @@ simulation SIGKILLed the other's.
 
 import os
 
-# What isolates one RoboReason environment from another on the same machine.
-_ISOLATING_VARIABLES = ('ROS_DOMAIN_ID', 'IGN_PARTITION', 'GZ_PARTITION')
+from robo_reason_bringup.gazebo_partition import gazebo_partition
 
 
 def same_environment(pid: int) -> bool:
@@ -21,4 +20,7 @@ def same_environment(pid: int) -> bool:
             theirs = {k.decode(errors='replace'): v.decode(errors='replace') for k, v in pairs}
     except OSError:
         return False  # can't tell: leave it alone
-    return all(theirs.get(k, '') == os.environ.get(k, '') for k in _ISOLATING_VARIABLES)
+    # The partition is compared as resolved: sim.launch.py sets the one derived
+    # from the domain on its processes, the GUI that started them has none set.
+    return (theirs.get('ROS_DOMAIN_ID', '') == os.environ.get('ROS_DOMAIN_ID', '')
+            and gazebo_partition(theirs) == gazebo_partition())
