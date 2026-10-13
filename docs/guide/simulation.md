@@ -123,7 +123,14 @@ Topic utili in più rispetto al robot vero:
   un errore `package '...' not found`, cancellare `install/<package>` e
   `build/<package>`.
 - **Più simulazioni sulla stessa macchina:** il `ROS_DOMAIN_ID` isola ROS ma
-  **non** Gazebo, che ha i suoi canali. Una seconda istanza (per esempio di
-  test) va avviata anche con un `IGN_PARTITION` diverso, altrimenti camera e
-  gripper delle due si mescolano. Le GUI ripuliscono solo i processi rimasti
-  nel proprio dominio e nella propria partizione.
+  **non** Gazebo, che ha i suoi canali. Per questo `sim.launch.py` imposta
+  `IGN_PARTITION` a `roboreason_domain<ROS_DOMAIN_ID>` quando non è già
+  impostato (ROBOAI-41): due simulazioni in domini diversi non si vedono anche
+  in Gazebo. Un `IGN_PARTITION` esplicito vince. Per interrogare Gazebo a mano
+  (`ign topic`, `ign service`) va esportata la stessa partizione. Le GUI
+  ripuliscono solo i processi rimasti nel proprio dominio e nella propria
+  partizione.
+- **Finestra di Gazebo vuota:** di solito c'è un altro server Gazebo con lo
+  stesso mondo nella stessa partizione, per esempio un headless rimasto da una
+  sessione precedente avviata prima di ROBOAI-41. `ign service -i --service
+  /world/roboreason/scene/info` mostra due provider; va chiuso quello vecchio.

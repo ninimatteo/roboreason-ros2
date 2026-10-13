@@ -41,6 +41,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, PushRosNamespace
 
 from robo_reason_bringup.config import settings
+from robo_reason_bringup.gazebo_partition import gazebo_partition
 from robo_reason_bringup.interfaces import load_interfaces
 from robo_reason_sim.world_builder import (
     bridge_config, build_world_sdf, default_scene_path, detachable_joint_plugins,
@@ -138,6 +139,8 @@ def launch_setup(context):
     return [
         SetEnvironmentVariable('ROBOREASON_PROFILE', 'sim'),
         SetEnvironmentVariable('IGN_GAZEBO_RESOURCE_PATH', resource_path),
+        # Gazebo's own transport, isolated per ROS domain unless set explicitly.
+        SetEnvironmentVariable('IGN_PARTITION', gazebo_partition()),
         gazebo,
         Node(
             package='ros_gz_bridge', executable='parameter_bridge', name='sim_clock_bridge',
