@@ -34,6 +34,7 @@ meno in ogni tool call.
 
 | Tool | Cosa fa | Da dove viene |
 |---|---|---|
+| `detect_objects` | segmenta dalla depth tutto quello che sta sul tavolo: id, colore (dall'RGB), dimensioni; il tavolo e i tray come aree | nuovo: il modello deve solo scegliere l'id giusto, non localizzare |
 | `look` | immagine nuova | |
 | `inspect_object(bbox)` | top centre, altezza, larghezza, `grasp_point` a metà corpo, `held_height_below_grasp_m`, `looks_empty` | compensazione di profondità e grasp width di `vlm_planner_node` |
 | `inspect_area(bbox)` | quota della superficie ed estensione xy | lookup della superficie di `_fix_release_height` |
@@ -196,3 +197,32 @@ circa 10 minuti per via del pacing. Utile solo come smoke test.
 | Cloudflare Workers AI | 10000 neuron al giorno, cioè circa 240 mila input token con qwen3.8 o 400 mila con Llama 4 Scout | sì | stesso modello di Groq |
 | GitHub Models | 50 richieste al giorno, 8000 token per richiesta | GPT 4.1 | ci sta solo con la compattazione |
 | OpenRouter free | 50 richieste al giorno senza credito | variabile | i modelli free cambiano spesso |
+
+### Mistral free tier (2026-10-13)
+
+Con il piano Experiment di Mistral solo i modelli Ministral sono abilitati
+(Medium e Small rispondono con limite 0 richieste al minuto). `ministral-14b`
+localizza male: bbox spostate da 30 a 200 px. Da qui tre aggiunte, che
+servono a qualunque modello debole e anche al robot vero:
+
+* `detect_objects`: la localizzazione la fa la geometria sulla depth (altezze
+  relative all'altezza dominante, quindi indifferenti a offset di
+  calibrazione e al pavimento della stanza nell'inquadratura; la base del
+  robot è esclusa; il colore viene dall'immagine). Il modello sceglie l'id.
+  In AGENT lo snapping del camera node sui piani degli oggetti è spento
+  (`LOCAL_PLANE_CENTROID_ENABLED=false`), perché gonfiava ogni oggetto di 25 px.
+* **Controllo automatico dopo pick e place**: il braccio torna in home, la
+  depth guarda, e il risultato dice se l'oggetto ha lasciato il suo posto o
+  se è arrivato, con la lista aggiornata degli oggetti e id nuovi. Sostituisce
+  il sensore che il gripper non ha. Prima di questo Ministral dichiarava
+  successo su tutti e quattro gli scenari con guasti senza controllare.
+* `inspect_object` legge prima il punto esatto: se è vuoto lo dice e propone
+  l'oggetto più vicino, invece di agganciarlo in silenzio.
+
+Risultato con `mistral/ministral-14b-latest`: **9 scenari su 10**, compresi
+tutti e quattro quelli con guasti. L'unico fallito è `arith_hard` (1/4), per
+un errore di ragionamento del modello (ha considerato il cubo bianco, valore
+3, maggiore di 3): è proprio il failure mode che il benchmark misura, e non va
+corretto nel codice. Costo per task da 14 mila a 59 mila input token (con
+kimi-k3, prima di queste ottimizzazioni, da 60 mila a 470 mila), circa 1 a 3
+minuti di esecuzione.
