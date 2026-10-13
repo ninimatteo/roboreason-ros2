@@ -197,6 +197,13 @@ motion. After the corresponding `release` opens the gripper, the tool offset
 is reset to the default (`TCP_OFFSET_Z`, mid-open calibration) so subsequent
 moves start from a known baseline until the next `pick` sets it again.
 
+Both `pick` and `release` end by moving linearly back to the hover position of
+the `approach` before them: `release` after opening, `pick` after closing
+(ROBOAI-42). The next `approach` is a joint space move, so without the lift
+after the grasp the held object left at grasp height and swept through what
+stood on its way (seen in sim: a cube carried into the tray knocked the ones
+already placed there aside).
+
 ---
 
 ## Open limitation
