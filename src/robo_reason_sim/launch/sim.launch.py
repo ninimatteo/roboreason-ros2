@@ -47,7 +47,7 @@ from robo_reason_bringup.interfaces import load_interfaces
 from robo_reason_bringup.scenes import scene_path as scene_path_of
 from robo_reason_sim.world_builder import (
     bridge_config, build_world_sdf, default_scene_path, detachable_joint_plugins,
-    graspable_objects, load_sim_config, share_dir,
+    graspable_objects, has_wrist_camera, load_sim_config, share_dir, wrist_camera_urdf,
 )
 
 UR_JOINTS = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
@@ -67,8 +67,12 @@ def _robot_description(cfg, namespace, controllers_file, initial_positions_file,
     plugin_tag = 'name="ign_ros2_control::IgnitionROS2ControlPlugin">'
     assert plugin_tag in urdf, 'ur_description no longer declares the ign_ros2_control plugin'
     urdf = urdf.replace(plugin_tag, plugin_tag + f'<ros><namespace>/{namespace}</namespace></ros>')
-    # ...and let the gripper shim attach cubes to the wrist.
-    return urdf.replace('</robot>', detachable_joint_plugins(cubes, namespace) + '\n</robot>')
+    # ...and let the gripper shim attach cubes to the wrist, and the wrist
+    # camera ride on it (ROBOAI-47).
+    extra = detachable_joint_plugins(cubes, namespace)
+    if has_wrist_camera():
+        extra += wrist_camera_urdf(cfg, namespace)
+    return urdf.replace('</robot>', extra + '\n</robot>')
 
 
 def launch_setup(context):

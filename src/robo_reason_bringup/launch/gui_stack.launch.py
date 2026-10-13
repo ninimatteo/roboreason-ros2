@@ -63,6 +63,55 @@ def _in_profile_scope(context, actions):
     return [GroupAction(scope + actions)]
 
 
+WRIST_CAMERA_FRAME = 'wrist_camera_optical_frame'
+
+
+def _wrist_cameras(context):
+    """Camera services for the wrist camera (ROBOAI-47), per settings.CAMERAS.
+
+    'fixed+wrist': a second camera_services_node, RGB only, whose topics and
+    services carry a wrist/ prefix (wrist/camera/get_image, ...): its pose
+    comes from TF at every request and pixels are deprojected onto the table
+    plane. It stays in the stack's namespace, so it reads the stack's TF. 'wrist': the wrist camera (with depth) is the primary one,
+    under the usual names. On the real robot the camera's mount is published
+    as a static TF from tool0; in simulation the robot description has it.
+    """
+    if 'wrist' not in settings.CAMERAS:
+        return []
+    import json as _json
+    from robo_reason_bringup.scenes import scene_path
+    profile = LaunchConfiguration('profile').perform(context)
+    names = load_interfaces(profile)
+    alone = settings.CAMERAS == 'wrist'
+    params = {'pose_tf_frame': WRIST_CAMERA_FRAME, 'charuco_enabled': False}
+    if not alone:
+        surface_z = _json.loads(scene_path().read_text())['workspace']['table']['surface_z']
+        params['plane_z'] = float(surface_z)
+        for param, name in (('color_topic', names.color), ('depth_topic', names.depth),
+                            ('camera_info_topic', names.camera_info),
+                            ('get_image_service', names.get_image), ('deproject_service', names.deproject),
+                            ('pixel_debug_topic', names.pixel_debug), ('charuco_axis_topic', names.charuco_axis),
+                            ('calibration_status_topic', names.calibration_status),
+                            ('recalibrate_service', names.recalibrate)):
+            params[param] = f'wrist/{name}'
+    actions = [Node(package='vlm_camera_service', executable='camera_services_node',
+                    name='camera_services_node' if alone else 'wrist_camera_services_node',
+                    output='screen', parameters=[params])]
+    if profile != 'sim':
+        x, y, z, roll, pitch, yaw = settings.WRIST_CAMERA_MOUNT
+        static = 'static_transform_publisher'
+        actions += [
+            Node(package='tf2_ros', executable=static, name='wrist_camera_mount',
+                 arguments=['--x', str(x), '--y', str(y), '--z', str(z), '--roll', str(roll),
+                            '--pitch', str(pitch), '--yaw', str(yaw),
+                            '--frame-id', 'tool0', '--child-frame-id', 'wrist_camera_link']),
+            Node(package='tf2_ros', executable=static, name='wrist_camera_optical',
+                 arguments=['--roll', '-1.5708', '--yaw', '-1.5708',
+                            '--frame-id', 'wrist_camera_link', '--child-frame-id', WRIST_CAMERA_FRAME]),
+        ]
+    return actions
+
+
 def generate_launch_description():
     mode = LaunchConfiguration('mode')
     use_mock_llm = LaunchConfiguration('use_mock_llm')
@@ -212,8 +261,11 @@ def generate_launch_description():
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(camera_services_launch),
-            condition=IfCondition(vlm_real_camera),
+            # with CAMERAS=wrist the wrist camera is the primary one instead
+            condition=IfCondition(PythonExpression([
+                vlm_real_camera, f" and '{settings.CAMERAS}' != 'wrist'"])),
         ),
+        OpaqueFunction(function=_wrist_cameras, condition=IfCondition(vlm_real_camera)),
     ]
 
     declared = [a for a in actions if isinstance(a, DeclareLaunchArgument)]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from typing import Optional
 
@@ -58,6 +59,7 @@ class CameraServicesNode(Node):
         self.declare_parameter("pixel_debug_topic", names.pixel_debug)
         self.declare_parameter("charuco_axis_topic", names.charuco_axis)
         self.declare_parameter("calibration_status_topic", names.calibration_status)
+        self.declare_parameter("recalibrate_service", names.recalibrate)
         self.declare_parameter("charuco_enabled", settings.CHARUCO_ENABLED)
         self.declare_parameter("charuco_dictionary", settings.CHARUCO_DICTIONARY)
         self.declare_parameter("charuco_squares_x", settings.CHARUCO_SQUARES_X)
@@ -86,6 +88,15 @@ class CameraServicesNode(Node):
         self.declare_parameter("local_plane_centroid_radius_px", settings.LOCAL_PLANE_CENTROID_RADIUS_PX)
         self.declare_parameter("local_plane_centroid_z_tol_m", settings.LOCAL_PLANE_CENTROID_Z_TOL_M)
         self.declare_parameter("local_plane_centroid_min_points", settings.LOCAL_PLANE_CENTROID_MIN_POINTS)
+        # A camera that moves with the robot (the wrist one, ROBOAI-47) takes
+        # its pose from TF, looked up at every request, instead of the
+        # ChArUco board or FIXED_CAMERA_POSE. tf_base_frame is the frame the
+        # scene coordinates live in: the UR controller's 'base'.
+        self.declare_parameter("pose_tf_frame", "")
+        self.declare_parameter("tf_base_frame", "base")
+        # Without a depth stream, deproject onto the horizontal plane at this
+        # height (the table surface); NaN disables it.
+        self.declare_parameter("plane_z", float("nan"))
 
         color_topic = self.get_parameter("color_topic").value
         depth_topic = self.get_parameter("depth_topic").value
@@ -116,6 +127,13 @@ class CameraServicesNode(Node):
         )
 
         self._z_offset_m = float(self.get_parameter("z_offset_m").value)
+        self._pose_tf_frame = self.get_parameter("pose_tf_frame").value
+        self._tf_base_frame = self.get_parameter("tf_base_frame").value
+        self._plane_z = float(self.get_parameter("plane_z").value)
+        if self._pose_tf_frame:
+            self._charuco_enabled = False   # the pose comes from TF
+            self._tf_buffer = tf2_ros.Buffer()
+            self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
         self._local_plane_centroid_enabled = bool(
             self.get_parameter("local_plane_centroid_enabled").value
         )
@@ -164,7 +182,8 @@ class CameraServicesNode(Node):
         self._calibration_status_pub = self.create_publisher(Bool, calibration_status_topic, 10)
         self.create_service(GetImage, get_image_service, self._handle_get_image)
         self.create_service(Deproject, deproject_service, self._handle_deproject)
-        self.create_service(Trigger, names.recalibrate, self._handle_recalibrate)
+        self.create_service(Trigger, self.get_parameter("recalibrate_service").value,
+                            self._handle_recalibrate)
 
         self.get_logger().info("Camera service bridge started")
         self.get_logger().info(f"color_topic={color_topic}")
@@ -199,7 +218,8 @@ class CameraServicesNode(Node):
         self._calib_timer = self.create_timer(0.5, self._try_calibrate)
         # A known camera pose (simulation) replaces calibration entirely:
         # _try_calibrate sees the lock and cancels itself on its first tick.
-        if settings.FIXED_CAMERA_POSE:
+        # A camera that takes its pose from TF has neither.
+        if settings.FIXED_CAMERA_POSE and not self._pose_tf_frame:
             self._apply_fixed_camera_pose()
         # Publish projected ChArUco axis keypoints at ~2 Hz for the GUI overlay.
         self.create_timer(0.5, self._publish_charuco_axis)
@@ -298,6 +318,17 @@ class CameraServicesNode(Node):
             return response
 
         self._publish_debug_pixels(request.u, request.v)
+
+        if self._pose_tf_frame:
+            error = self._refresh_pose_from_tf()
+            if error:
+                response.success = False
+                response.points = []
+                response.error_message = error
+                return response
+
+        if self._latest_depth is None and math.isfinite(self._plane_z):
+            return self._deproject_on_plane(request, response)
 
         if self._latest_depth is None:
             response.success = False
@@ -403,6 +434,48 @@ class CameraServicesNode(Node):
             f"Deproject -> {len(points)} points in {response.frame_id}, "
             f"charuco_pose_available={response.charuco_pose_available}"
         )
+        return response
+
+    def _refresh_pose_from_tf(self) -> Optional[str]:
+        """T_base_camera from TF, where the arm is now; an error message if unknown."""
+        try:
+            tf = self._tf_buffer.lookup_transform(
+                self._tf_base_frame, self._pose_tf_frame, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=1.0))
+        except Exception as exc:
+            return f"No TF {self._tf_base_frame} -> {self._pose_tf_frame}: {exc}"
+        q, t = tf.transform.rotation, tf.transform.translation
+        x, y, z, w = q.x, q.y, q.z, q.w
+        T = np.eye(4)
+        T[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+        T[:3, 3] = [t.x, t.y, t.z]
+        self._T_base_camera = T
+        return None
+
+    def _deproject_on_plane(self, request, response):
+        """Deproject for a camera without depth: rays onto the table plane."""
+        if self._latest_camera_info is None or self._T_base_camera is None:
+            response.success = False
+            response.points = []
+            response.error_message = "CameraInfo or camera pose not available yet"
+            return response
+        intrinsics = camera_info_to_intrinsics(self._latest_camera_info)
+        points = []
+        for u, v in zip(request.u, request.v):
+            p = deproject_to_plane(u, v, intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy,
+                                   self._T_base_camera, self._plane_z)
+            if p is None:
+                response.success = False
+                response.points = []
+                response.error_message = f"The ray through u={u}, v={v} does not meet the table"
+                return response
+            points.append(Point(x=p[0], y=p[1], z=p[2] + self._z_offset_m))
+        response.success = True
+        response.points = points
+        response.frame_id = "base_link"
+        response.error_message = ""
         return response
 
     def _try_calibrate(self) -> None:
@@ -823,6 +896,30 @@ def deproject_pixel_to_3d(
     point.y = (float(v) - cy) * z / fy
     point.z = z
     return point
+
+
+def deproject_to_plane(
+    u: float, v: float, fx: float, fy: float, cx: float, cy: float,
+    T_base_camera: np.ndarray, plane_z: float,
+) -> Optional[list]:
+    """Where the ray through pixel (u, v) meets the horizontal plane z = plane_z,
+    in the base frame; None if it points away from the plane.
+
+    A camera without depth (the RGB camera on the wrist, ROBOAI-47) can still
+    place what lies on the table: its pose is known from the robot's TF, so a
+    pixel is a ray, and the table is a known plane. Objects standing on the
+    table come out at their footprint seen along the ray, accurate when the
+    camera looks down at them.
+    """
+    ray_cam = np.array([(float(u) - cx) / fx, (float(v) - cy) / fy, 1.0])
+    origin = T_base_camera[:3, 3]
+    direction = T_base_camera[:3, :3] @ ray_cam
+    if abs(direction[2]) < 1e-9:
+        return None
+    s = (plane_z - origin[2]) / direction[2]
+    if s <= 0.0:
+        return None
+    return [float(c) for c in origin + s * direction]
 
 
 def local_plane_centroid(

@@ -16,6 +16,7 @@ import numpy as np
 import yaml
 from ament_index_python.packages import get_package_share_directory
 
+from robo_reason_bringup.config import settings
 from robo_reason_bringup.scenes import scene_path
 
 # Colours of scene entries, as Gazebo RGB.
@@ -163,6 +164,60 @@ def _box_model(name, center, size, rgb, static=True, mass=None, shape='box', yaw
     </model>"""
 
 
+def has_fixed_camera() -> bool:
+    """The far end depth camera exists in every camera setup but 'wrist' (ROBOAI-47)."""
+    return settings.CAMERAS != 'wrist'
+
+
+def has_wrist_camera() -> bool:
+    return 'wrist' in settings.CAMERAS
+
+
+def _rgbd_sensor(name: str, topic: str, cam: dict) -> str:
+    # Explicit intrinsics: Fortress' rgbd_camera otherwise publishes the
+    # default 320x240 ones in camera_info whatever the image size, which
+    # breaks deprojection.
+    fx = cam['width'] / 2 / math.tan(cam['horizontal_fov'] / 2)
+    return f"""
+        <sensor name="{name}" type="rgbd_camera">
+          <topic>{topic}</topic>
+          <always_on>true</always_on>
+          <update_rate>{cam['update_rate']}</update_rate>
+          <camera>
+            <horizontal_fov>{cam['horizontal_fov']}</horizontal_fov>
+            <image><width>{cam['width']}</width><height>{cam['height']}</height><format>R8G8B8</format></image>
+            <clip><near>{cam['near']}</near><far>{cam['far']}</far></clip>
+            <lens><intrinsics>
+              <fx>{fx}</fx><fy>{fx}</fy><cx>{cam['width'] / 2}</cx><cy>{cam['height'] / 2}</cy><s>0</s>
+            </intrinsics></lens>
+          </camera>
+        </sensor>"""
+
+
+WRIST_CAMERA_FRAME = 'wrist_camera_optical_frame'
+
+
+def wrist_camera_urdf(cfg: dict, namespace: str) -> str:
+    """Links, joints and Gazebo sensor of the wrist camera, to append to the
+    robot description (ROBOAI-47). Mounted on tool0 at
+    settings.WRIST_CAMERA_MOUNT; the optical frame (z forward, x right, y
+    down) is what the camera services look up in TF."""
+    x, y, z, roll, pitch, yaw = settings.WRIST_CAMERA_MOUNT
+    return f"""
+  <link name="wrist_camera_link"/>
+  <joint name="wrist_camera_joint" type="fixed">
+    <parent link="tool0"/><child link="wrist_camera_link"/>
+    <origin xyz="{x} {y} {z}" rpy="{roll} {pitch} {yaw}"/>
+  </joint>
+  <link name="{WRIST_CAMERA_FRAME}"/>
+  <joint name="wrist_camera_optical_joint" type="fixed">
+    <parent link="wrist_camera_link"/><child link="{WRIST_CAMERA_FRAME}"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+  <gazebo reference="wrist_camera_link">{_rgbd_sensor('wrist_rgbd', wrist_camera_gz_topic(namespace), cfg['wrist_camera'])}
+  </gazebo>"""
+
+
 def build_world_sdf(scene: dict, cfg: dict, namespace: str) -> str:
     table = scene['workspace']['table']
     limits = scene['workspace']['limits']
@@ -200,30 +255,12 @@ def build_world_sdf(scene: dict, cfg: dict, namespace: str) -> str:
             shape=obj.get('shape', 'box'), yaw=rest[name][3],
         ))
 
-    cam = cfg['camera']
     cx, cy, cz, cr, cp, cyaw = camera_body_pose(cfg)
-    # Explicit intrinsics: Fortress' rgbd_camera otherwise publishes the
-    # default 320x240 ones in camera_info whatever the image size, which
-    # breaks deprojection.
-    fx = cam['width'] / 2 / math.tan(cam['horizontal_fov'] / 2)
-    camera = f"""
+    camera = '' if not has_fixed_camera() else f"""
     <model name="camera">
       <static>true</static>
       <pose>{cx} {cy} {cz} {cr} {cp} {cyaw}</pose>
-      <link name="link">
-        <sensor name="rgbd" type="rgbd_camera">
-          <topic>{camera_gz_topic(namespace)}</topic>
-          <always_on>true</always_on>
-          <update_rate>{cam['update_rate']}</update_rate>
-          <camera>
-            <horizontal_fov>{cam['horizontal_fov']}</horizontal_fov>
-            <image><width>{cam['width']}</width><height>{cam['height']}</height><format>R8G8B8</format></image>
-            <clip><near>{cam['near']}</near><far>{cam['far']}</far></clip>
-            <lens><intrinsics>
-              <fx>{fx}</fx><fy>{fx}</fy><cx>{cam['width'] / 2}</cx><cy>{cam['height'] / 2}</cy><s>0</s>
-            </intrinsics></lens>
-          </camera>
-        </sensor>
+      <link name="link">{_rgbd_sensor('rgbd', camera_gz_topic(namespace), cfg['camera'])}
       </link>
     </model>"""
 
@@ -283,6 +320,10 @@ def detachable_joint_plugins(cube_names, namespace: str) -> str:
     return ''.join(blocks)
 
 
+def wrist_camera_gz_topic(namespace: str) -> str:
+    return f'/{namespace}/wrist/camera'
+
+
 def camera_gz_topic(namespace: str) -> str:
     """Gazebo topic prefix of the RGB-D sensor (image, depth_image, camera_info)."""
     return f'/{namespace}/camera'
@@ -297,15 +338,24 @@ def bridge_config(cfg: dict, names, namespace: str, cube_names) -> list:
     def ros(name):
         return f'/{namespace}/{name}'
 
-    cam = camera_gz_topic(namespace)
-    entries = [
-        (ros(names.color), f'{cam}/image', 'sensor_msgs/msg/Image', 'ignition.msgs.Image', 'GZ_TO_ROS'),
-        (ros(names.depth), f'{cam}/depth_image', 'sensor_msgs/msg/Image', 'ignition.msgs.Image', 'GZ_TO_ROS'),
-        (ros(names.camera_info), f'{cam}/camera_info', 'sensor_msgs/msg/CameraInfo',
-         'ignition.msgs.CameraInfo', 'GZ_TO_ROS'),
-        (ros('ground_truth/poses'), f"/world/{cfg['world_name']}/dynamic_pose/info",
-         'tf2_msgs/msg/TFMessage', 'ignition.msgs.Pose_V', 'GZ_TO_ROS'),
-    ]
+    def camera(gz, prefix, depth):
+        out = [(ros(prefix + names.color), f'{gz}/image', 'sensor_msgs/msg/Image', 'ignition.msgs.Image', 'GZ_TO_ROS'),
+               (ros(prefix + names.camera_info), f'{gz}/camera_info', 'sensor_msgs/msg/CameraInfo',
+                'ignition.msgs.CameraInfo', 'GZ_TO_ROS')]
+        if depth:
+            out.append((ros(prefix + names.depth), f'{gz}/depth_image', 'sensor_msgs/msg/Image',
+                        'ignition.msgs.Image', 'GZ_TO_ROS'))
+        return out
+
+    entries = [(ros('ground_truth/poses'), f"/world/{cfg['world_name']}/dynamic_pose/info",
+                'tf2_msgs/msg/TFMessage', 'ignition.msgs.Pose_V', 'GZ_TO_ROS')]
+    if has_fixed_camera():
+        entries += camera(camera_gz_topic(namespace), '', depth=True)
+    if has_wrist_camera():
+        # Sole camera: it is the primary one, under the usual names, with depth.
+        # Next to the fixed one: wrist/..., colour only, as the real RGB camera.
+        alone = not has_fixed_camera()
+        entries += camera(wrist_camera_gz_topic(namespace), '' if alone else 'wrist/', depth=alone)
     for cube in cube_names:
         for action in ('attach', 'detach'):
             topic = gripper_topic(namespace, cube, action)
