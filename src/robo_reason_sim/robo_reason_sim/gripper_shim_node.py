@@ -240,8 +240,13 @@ class GripperShimNode(Node):
                 problems.append(f'could not move {cube}')
         response.success = not problems
         response.message = '; '.join(problems) or 'scene reset to its initial state'
-        log = self.get_logger().warn if problems else self.get_logger().info
-        log(f'[GripperShim] Reset: {response.message}')
+        # Two call sites: rclpy refuses a severity change on the same one
+        # ("Logger severity cannot be changed between calls"), which killed
+        # the shim at the first reset that had a problem.
+        if problems:
+            self.get_logger().warn(f'[GripperShim] Reset: {response.message}')
+        else:
+            self.get_logger().info(f'[GripperShim] Reset: {response.message}')
         return response
 
     def _send_home(self) -> bool:
