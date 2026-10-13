@@ -15,7 +15,7 @@ def _shim(home_ok):
     publisher = SimpleNamespace(publish=lambda _msg: None)
     logger = rclpy.logging.get_logger('test_reset_logging')
     return SimpleNamespace(
-        _held=None, _cubes=['red'], _detach={'red': publisher},
+        _held=None, _drop_timer=None, _cubes=['red'], _detach={'red': publisher},
         _send_home=lambda: home_ok(), _rest_positions={'red': (0.0, 0.0, 0.0)},
         _set_pose=lambda *_args: True, get_logger=lambda: logger)
 
