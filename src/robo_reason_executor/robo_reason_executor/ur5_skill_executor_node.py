@@ -602,6 +602,18 @@ class UR5SkillExecutorNode(Node):
             if not self._gripper_close(force=force):
                 raise RuntimeError('gripper close failed')
 
+            # Lift straight back to the hover position, as release does after
+            # opening. The next approach is a joint space move: from grasp
+            # height it would carry the object off low, through whatever
+            # stands on its way (ROBOAI-42).
+            if self._last_approach_hover is not None:
+                feedback.status = 'Retracting to hover position'
+                feedback.progress = 0.85
+                goal_handle.publish_feedback(feedback)
+                if not self._move_linear(self._last_approach_hover, R=self._last_approach_R,
+                                         duration_sec=3.0, goal_handle=goal_handle):
+                    raise RuntimeError('linear retract failed during pick')
+
         elif skill_name == 'release':
             release_pos = list(args['release_position'])
             open_force = float(args.get('open_force', 20.0))
