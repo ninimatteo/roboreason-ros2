@@ -83,11 +83,12 @@ const stackStop = document.getElementById('stack-stop');
 // Provider→model maps, split by mode. Populated once in loadOptions().
 let llmProviderModels = {};
 let vlmProviderModels = {};
+let agentProviderModels = {};
 
 function currentProviderModels() {
-  return ['VLM', 'AGENT'].includes((selMode.value || 'LLM').toUpperCase())
-    ? vlmProviderModels
-    : llmProviderModels;
+  const mode = (selMode.value || 'LLM').toUpperCase();
+  if (mode === 'AGENT') return agentProviderModels;
+  return mode === 'VLM' ? vlmProviderModels : llmProviderModels;
 }
 
 // ---- toasts ----
@@ -238,6 +239,7 @@ async function loadOptions() {
 
     llmProviderModels = data.providers || {};
     vlmProviderModels = data.vlm_providers || {};
+    agentProviderModels = data.agent_providers || {};
 
     if (data.temperature_default != null) {
       inpTemp.value = data.temperature_default;
@@ -388,7 +390,9 @@ function syncModelsByMode() {
   const prevProvider = selProvider.value;
   fillSelect(selProvider, providers);
   // Preserve the selected provider if it still exists in the new list.
-  if (providers.includes(prevProvider)) selProvider.value = prevProvider;
+  // Not in AGENT mode: its first provider is the one verified to work.
+  const isAgent = (selMode.value || 'LLM').toUpperCase() === 'AGENT';
+  if (!isAgent && providers.includes(prevProvider)) selProvider.value = prevProvider;
   fillSelect(selModel, map[selProvider.value] || []);
   syncCameraToggle();
   syncGroundingVisibility();

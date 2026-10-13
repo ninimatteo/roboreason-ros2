@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # ── Closed loop agent (mode AGENT, agent_node) ───────────────────────────
     # A vision model with native tool calling. kimi-k3 answered a tool call
     # with an image in about 1.5 s when probed on 2026-10-12.
-    AGENT_MODEL_NAME: str = 'nebius/kimi-k3'
+    AGENT_MODEL_NAME: str = 'mistral/ministral-14b-latest'
     AGENT_MAX_MODEL_CALLS: int = 60      # per task, draft included
     AGENT_MAX_DURATION_S: float = 900.0  # execution phase wall clock budget
     AGENT_KEEP_IMAGES: int = 1           # camera images kept in the model context

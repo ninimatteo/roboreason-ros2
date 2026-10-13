@@ -92,7 +92,7 @@ In `config.py`, sovrascrivibili con `ROBOREASON_*`:
 
 | Campo | Default | |
 |---|---|---|
-| `AGENT_MODEL_NAME` | `nebius/kimi-k3` | modello con immagini e tool calling |
+| `AGENT_MODEL_NAME` | `mistral/ministral-14b-latest` | modello con immagini e tool calling (fino al 2026-10-13 era `nebius/kimi-k3`, budget Nebius esaurito) |
 | `AGENT_MAX_MODEL_CALLS` | 60 | per task, bozza inclusa |
 | `AGENT_MAX_DURATION_S` | 900 | budget della fase di esecuzione |
 | `AGENT_KEEP_IMAGES` | 2 | immagini tenute nel contesto |
@@ -104,13 +104,40 @@ risoluzione: con `auto` vengono riscalate per i modelli Qwen.
 
 ## Avvio
 
-Dalla GUI: mode **AGENT**, modello fra quelli vision (`kimi-k3` è il default).
+Il branch vive nel worktree `/root/ws/ws_ouroboros`, con un workspace colcon
+suo: va avviato da lì, non da `/root/ws/install` (che è `main`). Build una
+volta sola; con `--symlink-install` le modifiche Python non richiedono rebuild.
+
+```bash
+cd /root/ws/ws_ouroboros
+colcon build --symlink-install --base-paths src
+```
+
+Dalla GUI, in un terminale nuovo del container (la GUI di `main` sulla stessa
+porta va chiusa prima):
+
+```bash
+source /opt/ros/humble/setup.bash
+source /root/ws/ws_ouroboros/install/setup.bash
+source /root/ws/.bashrc_docker          # MISTRAL_API_KEY e le altre chiavi
+ROBOREASON_PROFILE=sim ros2 run robo_reason_gui gui_node   # sim, porta 8081
+# robot vero: senza ROBOREASON_PROFILE, porta 8080
+```
+
+Poi mode **AGENT**: il menu dei modelli ha una lista propria (`AGENT_MODELS` in
+`options.py`, perché il client dell'agente raggiunge provider che i client
+LLM/VLM non supportano) e parte da `mistral` / `ministral-14b-latest`.
+Il resto è il flusso solito: Plan mostra la bozza, Execute avvia il ciclo
+chiuso, la traccia live elenca le chiamate, Stop interrompe anche una chiamata
+al modello in corso. Ogni run scrive `transcript.json` e `frames/` nella
+cartella debug.
+
 A mano, in simulazione:
 
 ```bash
 ros2 launch robo_reason_sim sim.launch.py gui:=false
 ros2 launch robo_reason_bringup gui_stack.launch.py profile:=sim mode:=AGENT \
-    mock_robot:=false mock_camera:=false model_name:=nebius/kimi-k3
+    mock_robot:=false mock_camera:=false model_name:=mistral/ministral-14b-latest
 ```
 
 ## Fault injection in simulazione
