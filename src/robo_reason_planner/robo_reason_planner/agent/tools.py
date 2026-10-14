@@ -326,7 +326,7 @@ class Toolbox:
             cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step)
             ref = self._store('o', self._entity(m, box, cut_off=cut))
             wide = not self.refs[ref]['pickable']
-            entry = {'id': ref, 'color': _blob_colour(image, pixels, pts, b, bool(on_top)) if image is not None else None,
+            entry = {'id': ref, 'color': _blob_colour(image, pixels, pts, b) if image is not None else None,
                      'bbox': shown(box), 'height_m': m['height_m'], 'width_m': m.get('width_m'),
                      'depth_m': m.get('depth_m')}
             if wide:
@@ -770,17 +770,11 @@ class Toolbox:
         return [max(x0 * fx, 0.0), max(y0 * fy, 0.0), min(x1 * fx, fw - 1.0), min(y1 * fy, fh - 1.0)]
 
 
-def _blob_colour(image, pixels, pts, blob, own_top=False):
-    """Median colour of the image inside a blob's bbox, as a word. With
-    own_top, only at the blob's own top surface samples: the bbox of a thing
-    with something standing on it shows mostly that something, its sides
-    included (ROBOAI-56)."""
-    if own_top:
-        data = sorted((image.getpixel((int(u), int(v)))[:3] for u, v in blob['top_px']), key=sum)
-    else:
-        x0, y0, x1, y1 = blob['bbox_px']
-        crop = image.crop((int(x0), int(y0), int(x1) + 1, int(y1) + 1))
-        data = sorted(crop.getdata(), key=sum)
+def _blob_colour(image, pixels, pts, blob):
+    """Median colour of the image inside a blob's bbox, as a word."""
+    x0, y0, x1, y1 = blob['bbox_px']
+    crop = image.crop((int(x0), int(y0), int(x1) + 1, int(y1) + 1))
+    data = sorted(crop.getdata(), key=sum)
     if not data:
         return None
     mid = data[len(data) // 4: 3 * len(data) // 4] or data      # drop shadows and highlights

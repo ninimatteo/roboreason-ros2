@@ -264,19 +264,6 @@ def test_a_cube_on_a_block_is_measured_from_the_block():
     assert abs(below['height_m'] - 0.05) < 0.01
 
 
-def test_a_support_colour_is_its_own_top():
-    from PIL import Image, ImageDraw
-    from robo_reason_planner.agent.tools import _blob_colour
-    im = Image.new('RGB', (100, 100), (240, 240, 240))
-    d = ImageDraw.Draw(im)
-    d.rectangle((10, 10, 90, 90), fill=(10, 10, 10))        # a black block
-    d.rectangle((15, 15, 85, 85), fill=(240, 220, 20))      # a yellow cube on it, most of the box
-    ring = [(12, v) for v in range(12, 89, 4)] + [(u, 12) for u in range(12, 89, 4)]
-    blob = {'bbox_px': [10, 10, 90, 90], 'top_px': ring}
-    assert _blob_colour(im, [], [], blob) == 'yellow'
-    assert _blob_colour(im, [], [], blob, own_top=True) == 'black'
-
-
 def test_a_support_is_not_picked_from_under_what_stands_on_it():
     block = (-0.24, -0.16, -0.54, -0.46, _TABLE_Z, _TABLE_Z + 0.05)
     tb = _ray_toolbox([block, _cube(-0.2, -0.5, z0=_TABLE_Z + 0.05)])

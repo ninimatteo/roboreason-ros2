@@ -325,8 +325,7 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
         pts = [samples[i][2] for i in top]
         # the top surface only: face samples chained into the blob sit lower or higher
         surface = _dominant_height(pts, 0.01)
-        top = [i for i in top if abs(samples[i][2][2] - surface) <= step_m]
-        pts = [samples[i][2] for i in top]
+        pts = [p for p in pts if abs(p[2] - surface) <= step_m]
         us = [samples[i][0] for i in idx]
         vs = [samples[i][1] for i in idx]
         xs, ys, tz = sorted(p[0] for p in pts), sorted(p[1] for p in pts), sorted(p[2] for p in pts)
@@ -338,7 +337,6 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
             'top_center': _r([xs[len(xs) // 2], ys[len(ys) // 2], tz[len(tz) // 2]]),
             'xy_range': [[round(xs[0], 4), round(xs[-1], 4)], [round(ys[0], 4), round(ys[-1], 4)]],
             'narrow_m': round(narrowest_width(pts), 4),
-            'top_px': [(samples[i][0], samples[i][1]) for i in top],
         })
     return blobs
 
