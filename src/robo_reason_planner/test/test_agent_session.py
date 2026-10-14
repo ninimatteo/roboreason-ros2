@@ -478,3 +478,11 @@ def test_a_wrist_only_camera_measures_from_the_survey_pose(tmp_path):
     n = len(backend.skills)
     tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})       # the arm moved: back first
     assert [s[0] for s in backend.skills[n:]] == ['survey']
+
+
+def test_draft_asks_again_after_a_tool_it_does_not_offer(tmp_path):
+    lines = []
+    client = ScriptedClient([[('detect_objects', {})], PLAN])
+    session = AgentSession(client, _toolbox(FakeBackend(tmp_path), lines), 'move the cube', log=lines.append)
+    assert [s['action'] for s in session.draft_plan()] == ['pick', 'place']
+    assert client.seen[1][1][-1] == {'role': 'user', 'content': 'Call submit_plan with the steps.'}
