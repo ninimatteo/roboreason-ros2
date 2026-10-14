@@ -40,9 +40,27 @@ Il primo avvia Gazebo con la scena, il secondo lo stack RoboReason sopra.
 
 ## Cosa c'è nella scena
 
-La world viene **generata a ogni avvio da `scene_mock.json`**: tavolo, tray e
-cubi stanno esattamente dove li vede la modalità LLM. Per cambiare la scena si
-modifica `scene_mock.json`, oppure si passa `scene:=/percorso/altra_scena.json`.
+La world viene **generata a ogni avvio dalla scena selezionata**: tavolo, tray e
+oggetti stanno esattamente dove li vede la modalità LLM. Di default è
+`scene_mock.json`; le altre stanno in
+`robo_reason_task_interface/config/scenes/` (ROBOAI-49):
+
+| Scena | Cosa prova |
+|---|---|
+| `cylinders` | una lattina e una bottiglia cilindriche accanto a due cubi |
+| `long_objects` | barre allungate a 0, 45 e 90 gradi: la presa deve allinearsi al lato corto |
+| `clutter` | sei cubi a 6 cm l'uno dall'altro: segmentazione e prese senza collisioni |
+| `two_trays` | due tray, marrone a destra e bianco a sinistra |
+| `stacked_start` | il cubo rosso parte impilato sul blu |
+
+Si sceglie dal menu **Scene** della card Configuration della GUI (vale per la
+sim, che va riavviata per ricostruire la world, e per le richieste ai planner),
+oppure con `ROBOREASON_SCENE=<nome>` o `scene:=<nome o percorso>` sul launch.
+Oltre allo schema di `scene_mock.json` un oggetto può avere `shape` (`box` o
+`cylinder`), `yaw` e `on` (l'oggetto su cui parte impilato). Il gripper della
+simulazione è "magico" e non guarda l'orientamento: le barre ruotate servono
+alla percezione e alla grasp detection (ROBOAI-44), non a mettere alla prova la
+presa simulata.
 
 Il frame del mondo coincide con il frame "base" del controller UR, quello in
 cui lavorano l'IK dell'executor e `scene_mock.json`. Le coordinate della scena,

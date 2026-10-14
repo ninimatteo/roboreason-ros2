@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Selects which set of ROS names interfaces.yaml provides (see
     # robo_reason_bringup/interfaces.py). 'real' or 'sim'.
     PROFILE: str = 'real'
+    # Scene the stack works on (ROBOAI-49): '' for scene_mock.json, a scene
+    # name from robo_reason_task_interface/config/scenes, or a JSON path. See
+    # robo_reason_bringup/scenes.py.
+    SCENE: str = ''
     # Alternative interfaces.yaml to read instead of the packaged one.
     INTERFACES_FILE: str = ''
 

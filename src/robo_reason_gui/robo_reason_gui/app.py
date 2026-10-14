@@ -52,6 +52,10 @@ class DriverRequest(BaseModel):
     reverse_ip: Optional[str] = None
 
 
+class SceneRequest(BaseModel):
+    scene: str
+
+
 class SimRequest(BaseModel):
     show_gazebo: bool = True
 
@@ -96,9 +100,22 @@ def create_app(bridge, supervisor, driver, camera=None, sim=None):
         return sim.start(req.show_gazebo) if sim else {
             'ok': False, 'error': 'the simulation needs a GUI started with ROBOREASON_PROFILE=sim'}
 
+    @app.get('/api/scene')
+    def scene_get():
+        from robo_reason_bringup.config import settings
+        from robo_reason_bringup.scenes import DEFAULT_SCENE, list_scenes
+        return {'scenes': list_scenes(), 'current': settings.SCENE or DEFAULT_SCENE}
+
+    @app.post('/api/scene')
+    def scene_set(req: SceneRequest):
+        result = bridge.set_scene(req.scene)
+        # A running simulation was built from the previous scene.
+        result['restart_sim'] = bool(result.get('ok') and sim and sim.status().get('running'))
+        return result
+
     @app.post('/api/sim/reset')
     def sim_reset():
-        # Release, arm home, cubes back to scene_mock.json: ready for a new run.
+        # Release, arm home, objects back to the selected scene: ready for a new run.
         return bridge.reset_simulation() if sim else {
             'ok': False, 'error': 'no simulation in this profile'}
 

@@ -8,8 +8,9 @@ from std_srvs.srv import Trigger
 from tf2_msgs.msg import TFMessage
 from robo_reason_interfaces.srv import PlanTask, ExecutePlan
 
-from robo_reason_sim.world_builder import default_scene_path
-SCENE = str(default_scene_path())   # the scene the simulation was built from
+from robo_reason_sim.world_builder import default_scene_path, graspable_objects
+SCENE = str(default_scene_path())   # the scene the simulation was built from (ROBOREASON_SCENE)
+OBJECTS = set(graspable_objects(json.load(open(SCENE))))
 command = sys.argv[1]
 import argparse, os, subprocess
 from robo_reason_bringup.gazebo_partition import gazebo_partition
@@ -41,7 +42,7 @@ n.create_subscription(String, 'execution_log', on_log, 50)
 poses = {}
 def on_pose(m):
     for tf in m.transforms:
-        if tf.child_frame_id.endswith('cube'):
+        if tf.child_frame_id in OBJECTS:
             t = tf.transform.translation; poses[tf.child_frame_id] = (t.x, t.y, t.z)
 n.create_subscription(TFMessage, 'ground_truth/poses', on_pose, 10)
 

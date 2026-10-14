@@ -34,6 +34,7 @@ scene_mock.json places it, ready for the next run.
 """
 
 import json
+import math
 import subprocess
 import threading
 
@@ -235,8 +236,8 @@ class GripperShimNode(Node):
         if not self._send_home():
             problems.append('arm did not reach home')
         # 3. Every cube back to its starting pose, upright.
-        for cube, (x, y, z) in self._rest_positions.items():
-            if not self._set_pose(cube, x, y, z):
+        for cube, (x, y, z, yaw) in self._rest_positions.items():   # bottom up
+            if not self._set_pose(cube, x, y, z, yaw):
                 problems.append(f'could not move {cube}')
         response.success = not problems
         response.message = '; '.join(problems) or 'scene reset to its initial state'
@@ -278,10 +279,10 @@ class GripperShimNode(Node):
         done.wait(_RESET_HOME_DURATION_S + 10.0)
         return outcome.get('ok', False)
 
-    def _set_pose(self, model: str, x: float, y: float, z: float) -> bool:
-        """Teleport a model through Gazebo's set_pose service (UserCommands system)."""
+    def _set_pose(self, model: str, x: float, y: float, z: float, yaw: float = 0.0) -> bool:
+        """Teleport a model through Gazebo's set_pose service (UserCommands system), upright."""
         request = (f'name: "{model}", position: {{x: {x}, y: {y}, z: {z}}}, '
-                   f'orientation: {{x: 0, y: 0, z: 0, w: 1}}')
+                   f'orientation: {{x: 0, y: 0, z: {math.sin(yaw / 2)}, w: {math.cos(yaw / 2)}}}')
         result = subprocess.run(
             ['ign', 'service', '-s', f'/world/{self._world}/set_pose',
              '--reqtype', 'ignition.msgs.Pose', '--reptype', 'ignition.msgs.Boolean',
