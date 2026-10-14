@@ -24,6 +24,7 @@ ROS2 parameters (read per request, so the GUI can retune them live):
 """
 
 import json
+import math
 import threading
 import time
 import traceback
@@ -351,21 +352,18 @@ class _RosBackend:
 
     def deproject(self, pixels):
         """Deproject pixels; a pixel without depth gives None instead of
-        failing the whole batch (the service is all or nothing, so a failed
-        batch is split in halves until the bad pixels are isolated)."""
+        failing the whole batch (a partial request: NaN for those pixels)."""
         if not pixels:
             return []
-        req = Deproject.Request(u=[int(round(u)) for u, _ in pixels], v=[int(round(v)) for _, v in pixels])
+        req = Deproject.Request(u=[int(round(u)) for u, _ in pixels], v=[int(round(v)) for _, v in pixels],
+                                partial=True)
         resp = self.node.call(self.node._deproject, req, names.deproject)
-        if resp.success:
-            if resp.frame_id != 'base_link':
-                raise RuntimeError(f"deproject returned points in '{resp.frame_id}', expected base_link "
-                                   '(is the camera calibrated?)')
-            return [[p.x, p.y, p.z] for p in resp.points]
-        if len(pixels) == 1:
-            return [None]
-        mid = len(pixels) // 2
-        return self.deproject(pixels[:mid]) + self.deproject(pixels[mid:])
+        if not resp.success:
+            return [None] * len(pixels)
+        if resp.frame_id != 'base_link':
+            raise RuntimeError(f"deproject returned points in '{resp.frame_id}', expected base_link "
+                               '(is the camera calibrated?)')
+        return [None if math.isnan(p.z) else [p.x, p.y, p.z] for p in resp.points]
 
     def metres_per_pixel(self, point):
         """Size of one pixel, in metres, at a base frame point: (along u, along v).

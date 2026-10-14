@@ -358,6 +358,9 @@ class CameraServicesNode(Node):
                     min_depth_m=self._min_depth_m,
                     max_depth_m=self._max_depth_m,
                 )
+                if depth_m is None and request.partial:
+                    points.append(Point(x=math.nan, y=math.nan, z=math.nan))
+                    continue
                 if depth_m is None:
                     response.success = False
                     response.points = []
@@ -387,6 +390,8 @@ class CameraServicesNode(Node):
             base_points = [transform_point_to_base(p, self._T_base_camera) for p in points]
             if self._local_plane_centroid_enabled:
                 for i, (u_raw, v_raw) in enumerate(zip(request.u, request.v)):
+                    if math.isnan(points[i].z):
+                        continue
                     centroid = local_plane_centroid(
                         depth_image=depth_image,
                         u=int(u_raw),
@@ -466,6 +471,9 @@ class CameraServicesNode(Node):
         for u, v in zip(request.u, request.v):
             p = deproject_to_plane(u, v, intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy,
                                    self._T_base_camera, self._plane_z)
+            if p is None and request.partial:
+                points.append(Point(x=math.nan, y=math.nan, z=math.nan))
+                continue
             if p is None:
                 response.success = False
                 response.points = []
