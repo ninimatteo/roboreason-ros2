@@ -461,3 +461,20 @@ def test_look_through_the_wrist_camera_keeps_the_fixed_frame(tmp_path):
     r = tb.run('look', {'camera': 'wrist'})
     assert r.image_path.endswith('wrist.png')
     assert (tb.last_full, tb.full_size) == fixed      # bboxes still map onto the fixed camera
+
+
+def test_a_wrist_only_camera_measures_from_the_survey_pose(tmp_path):
+    backend, lines = FakeBackend(tmp_path), []
+    tb = _toolbox(backend, lines)
+    tb.config.survey = True
+    tb.capture()
+    assert [s[0] for s in backend.skills] == ['survey']
+    tb.run('inspect_object', {'bbox': [80, 80, 120, 120]})
+    assert [s[0] for s in backend.skills] == ['survey']          # still there: no move
+    tb.run('pick', {'object': 'o1'})
+    assert backend.skills[-1][0] == 'survey'                     # the image after the action
+    tb.config.auto_look_after_action = False
+    tb.run('move_home', {})
+    n = len(backend.skills)
+    tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})       # the arm moved: back first
+    assert [s[0] for s in backend.skills[n:]] == ['survey']

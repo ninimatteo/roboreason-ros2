@@ -161,6 +161,10 @@ class ToolboxConfig:
     robot_base_radius_m: float = 0.15
     # An RGB camera on the wrist next to the fixed one: look(camera='wrist').
     wrist_camera: bool = False
+    # The wrist camera is the only one (ROBOAI-48): every image is taken from
+    # the survey pose, and measurements need the arm back there, since the
+    # depth and the camera pose are read when the pixels are deprojected.
+    survey: bool = False
 
 
 @dataclass
@@ -181,6 +185,7 @@ class Toolbox:
     # ([[x0, x1], [y0, y1]], surface_z) of the areas (trays) found by the last
     # detect: what an object measured there stands on
     surfaces: list = field(default_factory=list)
+    at_survey: bool = False                      # arm still where the last image was taken (survey mode)
 
     # ── entry point ────────────────────────────────────────────────────────
 
@@ -200,12 +205,28 @@ class Toolbox:
 
     def capture(self) -> str:
         """Grab a frame; returns the path of the image to show the model."""
+        self._to_survey()
         path, w, h = self.backend.capture()
         self.full_size = self.image_size = (w, h)
         self.last_full = path
         path, self.image_size = self._downscale(path, w, h)
         self.images.append(path)
         return path
+
+    def _to_survey(self):
+        if self.config.survey and not self.at_survey:
+            ok, error = self.backend.run_skill('survey', {})
+            if not ok:
+                raise RuntimeError(f'survey pose not reached: {error}')
+            self.at_survey = True
+
+    def _deproject(self, pixels):
+        self._to_survey()
+        return self.backend.deproject(pixels)
+
+    def _metres_per_pixel(self, point):
+        self._to_survey()
+        return self.backend.metres_per_pixel(point)
 
     def _downscale(self, path, w, h):
         sw = self.config.send_width
@@ -246,7 +267,7 @@ class Toolbox:
         step = self.config.detect_step_px
         cols, rows = int((fw - step) // step) + 1, int((fh - step) // step) + 1
         pixels = [(step / 2 + c * step, step / 2 + r * step) for r in range(rows) for c in range(cols)]
-        pts = self.backend.deproject(pixels)
+        pts = self._deproject(pixels)
         blobs = geometry.detect_blobs([(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows)
         image = self._full_image()
         sx, sy = self.image_size[0] / fw, self.image_size[1] / fh
@@ -256,7 +277,7 @@ class Toolbox:
         for b in blobs:
             x0, y0, x1, y1 = b['bbox_px']
             box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
-            scale = self.backend.metres_per_pixel(b['top_center'])
+            scale = self._metres_per_pixel(b['top_center'])
             size = max((box[2] - box[0]) * scale[0], (box[3] - box[1]) * scale[1]) if scale else None
             sized.append((b, box, size))
         self.surfaces = [(b['xy_range'], b['top_center'][2]) for b, _, size in sized
@@ -319,7 +340,7 @@ class Toolbox:
         """Measurement of the object inside a full resolution bbox, or None."""
         px = geometry.bbox_sample_pixels(bbox, self.config.edge_inset_frac)
         order = ['center', 'left', 'right', 'top', 'bottom']
-        pts = dict(zip(order, self.backend.deproject([px[k] for k in order])))
+        pts = dict(zip(order, self._deproject([px[k] for k in order])))
         if pts['center'] is None:
             return None
         edges = {k: v for k, v in pts.items() if k != 'center' and v is not None}
@@ -332,8 +353,8 @@ class Toolbox:
         step = self.config.refine_step_px
         cols, rows = int((bbox[2] - bbox[0]) // step) + 1, int((bbox[3] - bbox[1]) // step) + 1
         grid = [(bbox[0] + i * step, bbox[1] + j * step) for j in range(rows) for i in range(cols)]
-        top = [p for p in self.backend.deproject(grid) if p is not None and abs(p[2] - c[2]) <= 0.01]
-        scale = self.backend.metres_per_pixel(c)
+        top = [p for p in self._deproject(grid) if p is not None and abs(p[2] - c[2]) <= 0.01]
+        scale = self._metres_per_pixel(c)
         if len(top) >= 4 and scale is not None:
             # the samples' extent, widened by half a step on each side
             m['width_m'] = round(max(p[0] for p in top) - min(p[0] for p in top) + step * scale[0], 4)
@@ -392,7 +413,7 @@ class Toolbox:
         step = step or self.config.snap_step_px
         cols, rows = int((sx1 - sx0) // step) + 1, int((sy1 - sy0) // step) + 1
         pixels = [(sx0 + c * step, sy0 + r * step) for r in range(rows) for c in range(cols)]
-        pts = self.backend.deproject(pixels)
+        pts = self._deproject(pixels)
         found = geometry.snap_to_object(
             [(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows,
             ((x0 + x1) / 2, (y0 + y1) / 2), self.config.table_z, level_z=level_z)
@@ -407,7 +428,7 @@ class Toolbox:
         x0, y0, x1, y1 = bbox
         ix, iy = self.config.edge_inset_frac * (x1 - x0), self.config.edge_inset_frac * (y1 - y0)
         corners_px = [(x0 + ix, y0 + iy), (x1 - ix, y0 + iy), (x0 + ix, y1 - iy), (x1 - ix, y1 - iy)]
-        pts = self.backend.deproject([px['center']] + corners_px)
+        pts = self._deproject([px['center']] + corners_px)
         if pts[0] is None:
             return ToolResult(f'ERROR: no depth at the centre of bbox {bbox}')
         m = geometry.surface_measurement(pts[0], [p for p in pts[1:] if p is not None])
@@ -431,7 +452,7 @@ class Toolbox:
             for j in range(n) for i in range(n)
         ]
         spot = geometry.free_spot(
-            self.backend.deproject(pixels), float(footprint_m), self.config.free_spot_margin_m,
+            self._deproject(pixels), float(footprint_m), self.config.free_spot_margin_m,
             count=int(count), arrangement=str(arrangement),
             allowed=lambda q: self._check(q, lift=self.config.approach_offset_m) is None,
             surface_z=surface_z,
@@ -511,6 +532,7 @@ class Toolbox:
     def _sequence(self, tool, summary_args, skills, verify=None):
         for skill, args in skills:
             ok, error = self.backend.run_skill(skill, args)
+            self.at_survey = False
             if skill == 'pick':
                 # The executor opens the gripper before closing it, so even a
                 # failed pick may have dropped what was held.
@@ -557,7 +579,8 @@ class Toolbox:
         return None, 'An object now stands at the target. ' + self._objects_now(found), image
 
     def _look_from_home(self):
-        self.backend.run_skill('move_home', {})
+        if not self.config.survey:   # in survey mode capture() moves the arm itself
+            self.backend.run_skill('move_home', {})
         image = self.capture()
         return self._detect(), image
 
