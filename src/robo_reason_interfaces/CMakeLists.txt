@@ -14,12 +14,14 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PixelArray.msg"
+  "msg/Mask.msg"
   "srv/PlanTask.srv"
   "srv/ExecutePlan.srv"
   "srv/CancelExecution.srv"
   "srv/GetImage.srv"
   "srv/Deproject.srv"
   "srv/GetDepth.srv"
+  "srv/Segment.srv"
   "action/ExecuteSkill.action"
   DEPENDENCIES action_msgs sensor_msgs geometry_msgs std_msgs
 )

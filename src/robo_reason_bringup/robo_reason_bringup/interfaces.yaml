@@ -33,6 +33,8 @@ internal:
   get_image: camera/get_image
   deproject: camera/deproject
   get_depth: camera/get_depth
+  # Served by the GPU perception container (ROBOAI-60).
+  segment: perception/segment
   recalibrate: camera/recalibrate
   pixel_debug: camera/debug_pixels
   charuco_axis: camera/charuco_axis

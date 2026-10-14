@@ -1,0 +1,13 @@
+# Segment.srv
+# Segment an image with SAM 2, on the GPU perception container (ROBOAI-60).
+# The three kinds of prompt can be combined in one call; each mask says which
+# one it came from.
+sensor_msgs/Image image
+bool automatic                 # SAM automatic masks over the whole image
+string[] names                 # GroundingDINO detects these, SAM segments each box
+geometry_msgs/Point[] points   # x = u, y = v in pixels; three masks per point (part, object, group)
+---
+bool success
+robo_reason_interfaces/Mask[] masks
+float32 seconds                # time spent on the GPU side
+string error_message
