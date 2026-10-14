@@ -1,0 +1,14 @@
+# Installed into PERCEPTION_HOME/pylib by run.sh --setup (ROBOAI-60).
+# CUDA 12.6 wheels bundle their own CUDA libraries: the host needs only the
+# NVIDIA driver and the container toolkit.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.8.0
+torchvision==0.23.0
+# ROS Humble's message bindings are built against numpy 1.x
+numpy>=1.24,<2
+# the SAM 2 commit the ROBOAI-56 spike ran
+SAM-2 @ git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4
+transformers>=4.51,<6
+pydantic-settings
+pyyaml
+pillow

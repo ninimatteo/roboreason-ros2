@@ -541,6 +541,21 @@ Add a small positive `z_offset_m` (e.g. `0.01`) to lift deprojected points sligh
 
 ---
 
+## GPU Perception Service (SAM 2 + GroundingDINO)
+
+`perception/segment` (`Segment.srv`) returns masks for an image: automatic (SAM 2 AMG), by object name (GroundingDINO box then SAM 2) or by pixel point. Masks travel as RLE, decode with `robo_reason_perception.rle.decode`. It runs in its own container on the `roboreason:ur` image, with torch and the models installed under `~/docker_ws/perception` on `/home` (nothing is added to the Docker storage on `/`).
+
+```bash
+docker/perception/run.sh --setup     # once: pip installs into ~/docker_ws/perception/pylib (~6 GB)
+docker/perception/run.sh             # starts roboreason_perception (real profile, domain 42)
+ROBOREASON_PROFILE=sim docker/perception/run.sh   # roboreason_perception_sim on /sim/perception/segment
+docker logs -f roboreason_perception  # wait for "models loaded"
+```
+
+The models (`models/sam2/sam2.1_hiera_base_plus.pt`, `models/hf/` for grounding-dino-tiny) must already be in `~/docker_ws/perception/models`: the container runs with `HF_HUB_OFFLINE=1`. DDS goes over UDP only (`fastdds_udp.xml`) because the two containers don't share `/dev/shm`. `ROS_LOCALHOST_ONLY=1` clients cannot reach it.
+
+---
+
 ## Configuration via Environment Variables
 
 All defaults are defined in `robo_reason_bringup/robo_reason_bringup/config.py` and can be overridden with `ROBOREASON_` prefixed environment variables:

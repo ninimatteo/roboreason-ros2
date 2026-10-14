@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # ── GPU perception container (ROBOAI-60) ─────────────────────────────────
     # Read by segment_node inside the container (docker/perception): paths are
     # the container's. Thresholds are the ones validated in the ROBOAI-56 spike.
-    PERCEPTION_SAM2_CHECKPOINT: str = '/models/sam2/sam2.1_hiera_base_plus.pt'
+    PERCEPTION_SAM2_CHECKPOINT: str = '/perception/models/sam2/sam2.1_hiera_base_plus.pt'
     PERCEPTION_SAM2_CONFIG: str = 'configs/sam2.1/sam2.1_hiera_b+.yaml'
     PERCEPTION_DETECTOR: str = 'IDEA-Research/grounding-dino-tiny'
     PERCEPTION_BOX_THRESHOLD: float = 0.30
