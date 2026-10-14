@@ -59,7 +59,7 @@ DEFAULT_TEMPERATURE = 0.1
 # GET /v1/models — that listing has lagged real availability both ways) each
 # time before trusting an entry here, not just once.
 VISION_MODELS: dict = {
-    'groq':   ['qwen3.6-27b', 'qwen3.8-27b'],
+    'groq':   ['qwen3.8-27b'],
     'nebius': ['kimi-k2.6', 'nvidia-cosmos3-33b', 'minicpm-v-4.5',
                'kimi-k3', 'deepseek-v4.1-flash', 'glm-5.3-flash'],
 }
@@ -94,7 +94,7 @@ NON_CHAT_MODELS: dict = {
 MODEL_SPEED_TIER: dict = {
     'groq': {
         'openai-oss-20b': 'fast', 'openai-oss-120b': 'fast',
-        'qwen3.6-27b': 'fast', 'qwen3.8-27b': 'fast',
+        'qwen3.8-27b': 'fast',
     },
     'nebius': {
         'minicpm-v-4.5': 'fast', 'qwen3-30b': 'fast', 'qwen3-235b': 'fast',

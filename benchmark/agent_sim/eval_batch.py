@@ -1,7 +1,7 @@
 """Run benchmark tasks (plus fault variants) on a running sim stack and grade them on ground truth.
 
 usage: python3 eval_batch.py MODEL OUT_CSV [scenario ids...]
-         [--mode AGENT|LLM] [--env CONTAINER_ENV_SCRIPT] [--runner CONTAINER_PATH_TO_run_task.py]
+         [--mode AGENT|LLM|VLM] [--env CONTAINER_ENV_SCRIPT] [--runner CONTAINER_PATH_TO_run_task.py]
        python3 eval_batch.py --regrade LOG_DIR
 
 The stack (sim plus gui_stack.launch.py in the given mode) must already be
@@ -73,7 +73,7 @@ def regrade(log_dir: Path):
         print(f'{log.stem:55s} {done}/{req} agent={r["agent_success"]}')
 
 
-PLANNER_NODE = {'AGENT': 'agent_node', 'LLM': 'llm_planner_node'}
+PLANNER_NODE = {'AGENT': 'agent_node', 'LLM': 'llm_planner_node', 'VLM': 'vlm_planner_node'}
 
 
 def main():
