@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     PERCEPTION_DETECTOR: str = 'IDEA-Research/grounding-dino-tiny'
     PERCEPTION_BOX_THRESHOLD: float = 0.30
     PERCEPTION_TEXT_THRESHOLD: float = 0.25
+    # How the agent's detect_objects finds things (ROBOAI-61): 'depth' segments
+    # the depth grid, 'sam' asks the perception service for SAM 2 masks and
+    # keeps those standing above the table. Needs the container running.
+    PERCEPTION_SEGMENTER: str = 'depth'
+    PERCEPTION_TIMEOUT_S: float = 30.0
 
     # ── Closed loop agent (mode AGENT, agent_node) ───────────────────────────
     # A vision model with native tool calling. kimi-k3 answered a tool call
