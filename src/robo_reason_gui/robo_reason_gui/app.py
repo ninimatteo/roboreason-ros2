@@ -56,6 +56,10 @@ class SceneRequest(BaseModel):
     scene: str
 
 
+class CamerasRequest(BaseModel):
+    cameras: str
+
+
 class SimRequest(BaseModel):
     show_gazebo: bool = True
 
@@ -110,6 +114,18 @@ def create_app(bridge, supervisor, driver, camera=None, sim=None):
     def scene_set(req: SceneRequest):
         result = bridge.set_scene(req.scene)
         # A running simulation was built from the previous scene.
+        result['restart_sim'] = bool(result.get('ok') and sim and sim.status().get('running'))
+        return result
+
+    @app.get('/api/cameras')
+    def cameras_get():
+        from robo_reason_bringup.config import CAMERA_SETUPS, settings
+        return {'setups': list(CAMERA_SETUPS), 'current': settings.CAMERAS}
+
+    @app.post('/api/cameras')
+    def cameras_set(req: CamerasRequest):
+        result = bridge.set_cameras(req.cameras)
+        # the simulation mounts its sensors when it starts, the stack its camera nodes
         result['restart_sim'] = bool(result.get('ok') and sim and sim.status().get('running'))
         return result
 

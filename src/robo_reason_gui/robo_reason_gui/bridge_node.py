@@ -318,6 +318,17 @@ class GuiBridgeNode(Node):
         self.get_logger().info(f'[GuiBridgeNode] scene set to {scene}')
         return {'ok': True, 'scene': scene}
 
+    def set_cameras(self, cameras: str) -> dict:
+        """Camera setup for the next simulation and stack start (ROBOAI-47),
+        exported as ROBOREASON_CAMERAS like the scene."""
+        from robo_reason_bringup.config import CAMERA_SETUPS, settings
+        if cameras not in CAMERA_SETUPS:
+            return {'ok': False, 'error': f'unknown camera setup {cameras!r}'}
+        os.environ['ROBOREASON_CAMERAS'] = cameras
+        settings.CAMERAS = cameras
+        self.get_logger().info(f'[GuiBridgeNode] cameras set to {cameras}')
+        return {'ok': True, 'cameras': cameras}
+
     def _load_scene(self):
         try:
             from robo_reason_bringup.scenes import scene_path as selected_scene

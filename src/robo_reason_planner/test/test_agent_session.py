@@ -435,3 +435,29 @@ def test_a_line_on_the_table_area_avoids_objects_and_the_floor(tmp_path):
         x, y, z = tb.refs[sid]['position']
         assert z == 0.0                                             # table, not the room floor
         assert not (abs(x - 0.1) < 0.05 and abs(y + 0.4) < 0.05)   # not on the cube
+
+
+class _WristBackend(FakeBackend):
+    def capture(self, camera='fixed'):
+        if camera != 'wrist':
+            return super().capture()
+        path = self.tmp / 'wrist.png'
+        path.write_bytes(PNG)
+        return str(path), 320, 240
+
+
+def test_look_through_the_wrist_camera_keeps_the_fixed_frame(tmp_path):
+    lines = []
+    tb = _toolbox(_WristBackend(tmp_path), lines)
+    look = next(t for t in tb.execution_tools() if t['function']['name'] == 'look')
+    assert 'camera' not in look['function']['parameters'].get('properties', {})
+    assert tb.run('look', {'camera': 'wrist'}).text.startswith('ERROR')
+
+    tb.config.wrist_camera = True
+    look = next(t for t in tb.execution_tools() if t['function']['name'] == 'look')
+    assert look['function']['parameters']['properties']['camera']['enum'] == ['fixed', 'wrist']
+    tb.run('look', {})
+    fixed = (tb.last_full, tb.full_size)
+    r = tb.run('look', {'camera': 'wrist'})
+    assert r.image_path.endswith('wrist.png')
+    assert (tb.last_full, tb.full_size) == fixed      # bboxes still map onto the fixed camera
