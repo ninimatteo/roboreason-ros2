@@ -87,20 +87,20 @@ class TestFoundationClients(unittest.TestCase):
         self.genai_patcher.stop()
 
     def test_registry(self):
-        self.assertEqual(ModelRegistry.get_model_id("groq", "llama3.1-8b"), "llama-3.1-8b-instant")
+        self.assertEqual(ModelRegistry.get_model_id("groq", "openai-oss-20b"), "openai/gpt-oss-20b")
         self.assertEqual(ModelRegistry.get_model_id("openai", "gpt-4o"), "gpt-4o")
-        self.assertEqual(ModelRegistry.get_model_id("nebius", "llama3.1-70b"), "meta-llama/Meta-Llama-3.1-70B-Instruct")
-        self.assertEqual(ModelRegistry.get_model_id("nebius", "qwen2-vl-72b"), "Qwen/Qwen2-VL-72B-Instruct")
+        self.assertEqual(ModelRegistry.get_model_id("nebius", "llama-3.3-70b"), "meta-llama/Llama-3.3-70B-Instruct")
+        self.assertEqual(ModelRegistry.get_model_id("nebius", "kimi-k3"), "moonshotai/Kimi-K3")
         self.assertEqual(ModelRegistry.get_model_id("unknown", "test-model"), "test-model")
 
     def test_llm_client_groq_init(self):
-        client = LLMClient(model_name="groq/llama3.1-8b", api_key="test_key")
+        client = LLMClient(model_name="groq/openai-oss-20b", api_key="test_key")
         self.assertEqual(client.provider, "groq")
-        self.assertEqual(client.model_name, "llama-3.1-8b-instant")
-        self.mock_groq.assert_called_with(api_key="test_key")
+        self.assertEqual(client.model_name, "openai/gpt-oss-20b")
+        self.mock_groq.assert_called_with(api_key="test_key", timeout=client.request_timeout_s)
 
     def test_llm_client_call_groq(self):
-        client = LLMClient(model_name="groq/llama3.1-8b", api_key="test_key")
+        client = LLMClient(model_name="groq/openai-oss-20b", api_key="test_key")
         
         # Mock response
         mock_chat = self.mock_groq_instance.chat.completions.create
@@ -119,16 +119,17 @@ class TestFoundationClients(unittest.TestCase):
              pass
 
     def test_llm_client_nebius_init(self):
-        client = LLMClient(model_name="nebius/llama3.1-70b", api_key="test_key")
+        client = LLMClient(model_name="nebius/llama-3.3-70b", api_key="test_key")
         self.assertEqual(client.provider, "nebius")
-        self.assertEqual(client.model_name, "meta-llama/Meta-Llama-3.1-70B-Instruct")
+        self.assertEqual(client.model_name, "meta-llama/Llama-3.3-70B-Instruct")
         self.mock_openai.assert_called_with(
             api_key="test_key",
-            base_url="https://api.tokenfactory.nebius.com/v1/"
+            base_url="https://api.tokenfactory.nebius.com/v1/",
+            timeout=client.request_timeout_s,
         )
 
     def test_llm_client_call_nebius_params(self):
-        client = LLMClient(model_name="nebius/llama3.1-70b", api_key="test_key")
+        client = LLMClient(model_name="nebius/llama-3.3-70b", api_key="test_key")
 
         mock_create = self.mock_openai_instance.chat.completions.create
         mock_message = MagicMock()
@@ -180,7 +181,7 @@ class TestFoundationClients(unittest.TestCase):
 
         self.assertEqual(response, "Nebius response")
         call_args = mock_create.call_args[1]
-        self.assertEqual(call_args["model"], "meta-llama/Meta-Llama-3.1-70B-Instruct")
+        self.assertEqual(call_args["model"], "meta-llama/Llama-3.3-70B-Instruct")
         self.assertEqual(call_args["messages"], messages)
         self.assertEqual(call_args["max_tokens"], 100)
         self.assertEqual(call_args["temperature"], 1)
@@ -218,7 +219,7 @@ class TestFoundationClients(unittest.TestCase):
         self.assertEqual(call_args['messages'][0]['content'][1]['type'], "image_url")
 
     def test_vlm_client_nebius_call(self):
-        client = VLMClient(model_name="nebius/qwen2-vl-72b", api_key="test_key")
+        client = VLMClient(model_name="nebius/kimi-k3", api_key="test_key")
 
         mock_create = self.mock_openai_instance.chat.completions.create
         mock_message = MagicMock()
@@ -241,11 +242,12 @@ class TestFoundationClients(unittest.TestCase):
         self.assertEqual(response, "Nebius image description")
         self.mock_openai.assert_called_with(
             api_key="test_key",
-            base_url="https://api.tokenfactory.nebius.com/v1/"
+            base_url="https://api.tokenfactory.nebius.com/v1/",
+            timeout=client.request_timeout_s,
         )
 
         call_args = mock_create.call_args[1]
-        self.assertEqual(call_args["model"], "Qwen/Qwen2-VL-72B-Instruct")
+        self.assertEqual(call_args["model"], "moonshotai/Kimi-K3")
         self.assertEqual(call_args["max_tokens"], 300)
         self.assertEqual(call_args["temperature"], 0.2)
         self.assertEqual(call_args["top_p"], 0.9)
@@ -266,7 +268,7 @@ class TestFoundationClients(unittest.TestCase):
         )
 
     def test_llm_client_groq_structured_output(self):
-        client = LLMClient(model_name="groq/llama3.1-8b", api_key="test_key")
+        client = LLMClient(model_name="groq/openai-oss-20b", api_key="test_key")
 
         mock_create = self.mock_groq_instance.chat.completions.create
         mock_message = MagicMock()
@@ -282,7 +284,7 @@ class TestFoundationClients(unittest.TestCase):
         )
 
         call_args = mock_create.call_args[1]
-        self.assertEqual(call_args["model"], "llama-3.1-8b-instant")
+        self.assertEqual(call_args["model"], "openai/gpt-oss-20b")
         expected_schema = TestResponseModel.model_json_schema()
         self.assertEqual(
             call_args["response_format"],
@@ -297,7 +299,7 @@ class TestFoundationClients(unittest.TestCase):
         self.assertEqual(response, '{"name": "Alice", "age": 30}')
 
     def test_llm_client_groq_json_mode_only(self):
-        client = LLMClient(model_name="groq/llama3.1-8b", api_key="test_key")
+        client = LLMClient(model_name="groq/openai-oss-20b", api_key="test_key")
 
         mock_create = self.mock_groq_instance.chat.completions.create
         mock_message = MagicMock()
@@ -316,7 +318,7 @@ class TestFoundationClients(unittest.TestCase):
         self.assertEqual(response, '{"key": "value"}')
 
     def test_vlm_client_groq_structured_output(self):
-        client = VLMClient(model_name="groq/llama4-scout-17b", api_key="test_key")
+        client = VLMClient(model_name="groq/qwen3.6-27b", api_key="test_key")
 
         mock_create = self.mock_groq_instance.chat.completions.create
         mock_message = MagicMock()
@@ -333,7 +335,7 @@ class TestFoundationClients(unittest.TestCase):
         )
 
         call_args = mock_create.call_args[1]
-        self.assertEqual(call_args["model"], "meta-llama/llama-4-scout-17b-16e-instruct")
+        self.assertEqual(call_args["model"], "qwen/qwen3.6-27b")
         expected_schema = TestResponseModel.model_json_schema()
         self.assertEqual(
             call_args["response_format"],
@@ -348,7 +350,7 @@ class TestFoundationClients(unittest.TestCase):
         self.assertEqual(response, '{"name": "Bob", "age": 25}')
 
     def test_vlm_client_groq_json_mode_only(self):
-        client = VLMClient(model_name="groq/llama4-scout-17b", api_key="test_key")
+        client = VLMClient(model_name="groq/qwen3.6-27b", api_key="test_key")
 
         mock_create = self.mock_groq_instance.chat.completions.create
         mock_message = MagicMock()
@@ -363,8 +365,9 @@ class TestFoundationClients(unittest.TestCase):
             force_json=True
         )
 
+        # Groq VLMs reject json_object: JSON is asked for in the prompt instead
         call_args = mock_create.call_args[1]
-        self.assertEqual(call_args["response_format"], {"type": "json_object"})
+        self.assertNotIn("response_format", call_args)
         self.assertEqual(response, '{"result": "ok"}')
 
 
