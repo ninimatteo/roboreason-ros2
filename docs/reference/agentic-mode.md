@@ -126,11 +126,11 @@ calibra la camera:
 | `WRIST_CAMERA_DEVICE` | `/dev/video0` | device V4L2 |
 | `WRIST_CAMERA_INTRINSICS` | `[]` | `[fx, fy, cx, cy]` calibrati; vuoto: dal FOV |
 | `WRIST_CAMERA_HFOV` | `1.2` | rad, usato solo senza intrinseci |
-| `SURVEY_POSITION` | `[0.05, -0.42, 0.45]` | TCP della skill `survey` (solo `CAMERAS=wrist`) |
+| `SURVEY_POSITION` | `[0.05, -0.42, 0.52]` | TCP della skill `survey` (solo `CAMERAS=wrist`) |
 
 Con `CAMERAS=wrist` (solo polso, con depth; ROBOAI-48) la camera viaggia col
 braccio. La skill `survey` dell'executor porta il TCP a `SURVEY_POSITION`
-(default `[0.05, -0.42, 0.45]`, gripper verso il basso) con una IK risolta una
+(default `[0.05, -0.42, 0.52]`, gripper verso il basso) con una IK risolta una
 volta sola, così ogni immagine ha la stessa posa di camera. L'agent ci va da
 solo: prima di ogni immagine, al posto della home nella verifica dopo pick e
 place, e prima di ogni misura se il braccio si è mosso dall'ultima immagine,

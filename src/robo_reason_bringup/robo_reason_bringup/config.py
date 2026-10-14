@@ -191,7 +191,7 @@ class Settings(BaseSettings):
     # 'survey' skill (ROBOAI-48): TCP point [x, y, z] in base_link, gripper
     # pointing down, from which a wrist camera sees the whole table. Used
     # when the wrist camera is the only one (CAMERAS=wrist).
-    SURVEY_POSITION: List[float] = [0.05, -0.42, 0.45]
+    SURVEY_POSITION: List[float] = [0.05, -0.42, 0.52]
     # TCP offset (metres) — tool + gripper stack, e.g. OnRobot RG2 on UR5cb.
     # Set ROBOREASON_TCP_OFFSET_X/Y/Z env vars (or .env) to override without rebuild.
     TCP_OFFSET_X: float = 0.0
