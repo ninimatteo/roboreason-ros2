@@ -6,6 +6,7 @@
 # u and v MUST have the same length; point i corresponds to (u[i], v[i]).
 uint32[] u                  # pixel column = width  coordinate (w), one per point
 uint32[] v                  # pixel row    = height coordinate (h), one per point
+bool partial                # true: a pixel without depth comes back as a NaN point instead of failing the batch
 ---
 # Response
 bool success
