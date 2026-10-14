@@ -25,8 +25,9 @@ function calling nativo:
 Le correzioni deterministiche non spariscono: diventano **tool** che il modello
 sceglie di usare, e di cui vede il risultato. Il modello non tocca mai una
 coordinata: legge una bbox dall'immagine, il tool di percezione misura e
-restituisce un id (`o1` per un oggetto, `a1` per un'area, `s1` per uno spot
-libero), e `pick` e `place` prendono quell'id. Prima le azioni prendevano i
+restituisce un id (`o1` per una cosa sul tavolo, tray compresi, `table` per
+il tavolo, `a1` per una regione disegnata con `inspect_area`, `s1` per uno
+spot libero), e `pick` e `place` prendono quell'id. Prima le azioni prendevano i
 numeri, e copiarli era un failure mode a sé: Qwen su Groq perdeva i segni
 meno in ogni tool call.
 
@@ -34,13 +35,13 @@ meno in ogni tool call.
 
 | Tool | Cosa fa | Da dove viene |
 |---|---|---|
-| `detect_objects` | segmenta dalla depth tutto quello che sta sul tavolo: id, colore (dall'RGB), dimensioni; il tavolo e i tray come aree | nuovo: il modello deve solo scegliere l'id giusto, non localizzare |
+| `detect_objects` | segmenta dalla depth tutto quello che sta sul tavolo: un id per cosa, disegnato sull'immagine restituita, con colore (dall'RGB), dimensioni, `stands_on`, `cut_off`, `pickable` (vedi sotto) | nuovo: il modello deve solo scegliere l'id giusto, non localizzare |
 | `look(camera)` | immagine nuova; con `CAMERAS=fixed+wrist` anche `camera='wrist'` (vedi sotto) | |
 | `inspect_object(bbox)` | top centre, altezza, larghezza, `grasp_point` a metà corpo, `held_height_below_grasp_m`, `looks_empty` | compensazione di profondità e grasp width di `vlm_planner_node` |
 | `inspect_area(bbox)` | quota della superficie ed estensione xy | lookup della superficie di `_fix_release_height` |
-| `find_free_spot(bbox, footprint_m)` | il punto libero migliore dentro un'area, lontano da oggetti già presenti e dai bordi | `distribute_zone_releases`, ma misurato dalla depth invece che dedotto dal plan |
+| `find_free_spot(area, object)` | i punti liberi migliori sopra una cosa (il tavolo, un tray) o dentro una bbox, lontani da oggetti già presenti e dai bordi | `distribute_zone_releases`, ma misurato dalla depth invece che dedotto dal plan |
 | `pick(object)` | approach, pick, risalita sull'oggetto misurato | sequenza fissa di skill dell'executor |
-| `place(target)` | approach, release (che risale da sola) su uno spot, un'area o sopra un oggetto | idem |
+| `place(target)` | approach, release (che risale da sola) su uno spot, un'area, sopra una cosa stretta (pila) o in un punto libero sopra una cosa larga (tray, tavolo) | idem |
 | `move_home` | braccio in home, quasi fuori dall'inquadratura | |
 | `update_plan`, `report_progress` | rivedono la bozza e segnano i passi fatti nella GUI | |
 | `finish(success, summary)` | chiude il task | |
@@ -56,6 +57,37 @@ place), e `inspect_object` segnala quando ha misurato qualcosa molto sopra il
 tavolo, cioè il braccio o l'oggetto che tiene. Senza queste due indicazioni il
 modello scambiava il cubo appeso al polso in home per un cubo spinto sul
 tavolo.
+
+## Cose unificate e Set of Mark (ROBOAI-55)
+
+`detect_objects` non divide più in oggetti e aree. Ogni segmento della depth
+è una cosa con un id `o`, e il tavolo ha l'id fisso `table`. La divisione per
+dimensione (oltre 12 cm era un'area) sbagliava proprio nei casi difficili: un
+tray tagliato dal bordo dell'immagine diventava un oggetto, e un cubo su un
+altro cubo non aveva un supporto.
+
+* **Set of Mark.** L'immagine restituita da `detect_objects` (e quella del
+  controllo dopo pick e place) ha ogni id disegnato sulla sua cosa. Il modello
+  dice solo quale id è il cubo rosso: chi riconosce è il VLM, chi misura è la
+  depth. Il VLM è l'agent stesso, quindi nessuna chiamata in più.
+* **`stands_on`.** Ogni cosa dice su cosa poggia: la più alta fra le altre
+  che contengono il suo centro in xy e che stanno almeno 2 cm più in basso
+  (`geometry.support_index`), altrimenti `table`. Altezza e punto di presa
+  si misurano da lì.
+* **`pickable=false`** per le cose più larghe di `max_grasp_width_m` (0.10 m,
+  RG2): `pick` rifiuta, `place` su di loro cerca un punto libero sulla loro
+  superficie invece di andare al centro.
+* **`cut_off`**: i bordi dell'immagine che la cosa tocca. Dimensioni e centro
+  sono solo della parte visibile; è il segnale per la rescan di ROBOAI-48.
+* **Cose a contatto alla stessa quota** formano un solo segmento. Il box del
+  modello su `inspect_object` è l'unica divisione possibile: quando il
+  contorno trovato attorno al box continua oltre la finestra di ricerca, si
+  misura il box così com'è invece di allargarlo al segmento.
+
+Limite noto: una pila di cubi uguali vista dalla camera fissa è una cosa
+sola alta quanto la pila, perché la faccia superiore del cubo sotto è
+nascosta. La separano la posa per contatto (ROBOAI-53) o una seconda vista
+(ROBOAI-48, ROBOAI-57).
 
 ## Architettura
 
