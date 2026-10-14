@@ -298,26 +298,31 @@ class Toolbox:
                  # the robot's own base stands at the origin of its frame
                  and math.hypot(b['top_center'][0], b['top_center'][1]) >= self.config.robot_base_radius_m]
         self.surfaces = [(b['xy_range'], b['top_center'][2]) for b in blobs]
-        ids, entries = [], []
+        belows = []
         for i, b in enumerate(blobs):
             below = geometry.support_index(b['top_center'], b['top_center'][2],
                                            self.surfaces[:i] + self.surfaces[i + 1:])
-            if below is not None and below >= i:
-                below += 1
+            belows.append(below + 1 if below is not None and below >= i else below)
+        ids, entries = [], []
+        for i, (b, below) in enumerate(zip(blobs, belows)):
+            # what stands on this thing: its box holds those too (ROBOAI-56)
+            on_top = [blobs[j]['bbox_px'] for j, k in enumerate(belows) if k == i]
             support_z = self.surfaces[below][1] if below is not None else self.config.table_z
             x0, y0, x1, y1 = b['bbox_px']
             box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
             (xa, xb), (ya, yb) = b['xy_range']
-            wide = max(xb - xa, yb - ya) > self.config.max_grasp_width_m
+            wide = b['narrow_m'] > self.config.max_grasp_width_m
             m = None
-            if not wide:
+            if not wide and not on_top:
                 box = self._refine(box, top_z=b['top_center'][2]) or box
                 m = self._measure(box, support_z=support_z)
             if m is None:
-                # too wide to pick: the blob's own extent is enough to place on it
+                # too wide to pick, or something stands on it and its box would
+                # measure that too: the blob's own top surface
                 top = b['top_center']
                 m = {'top_center': top, 'height_m': round(top[2] - support_z, 4),
-                     'width_m': round(xb - xa, 4), 'depth_m': round(yb - ya, 4), 'looks_empty': False}
+                     'width_m': round(xb - xa, 4), 'depth_m': round(yb - ya, 4),
+                     'narrow_m': b['narrow_m'], 'looks_empty': False}
             cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step)
             ref = self._store('o', self._entity(m, box, cut_off=cut))
             wide = not self.refs[ref]['pickable']
@@ -408,6 +413,7 @@ class Toolbox:
             # the samples' extent, widened by half a step on each side
             m['width_m'] = round(max(p[0] for p in top) - min(p[0] for p in top) + step * scale[0], 4)
             m['depth_m'] = round(max(p[1] for p in top) - min(p[1] for p in top) + step * scale[1], 4)
+            m['narrow_m'] = round(geometry.narrowest_width(top) + step * min(scale), 4)
         return m
 
     def _tool_inspect_object(self, bbox):
@@ -448,7 +454,9 @@ class Toolbox:
     def _entity(self, m, box, **extra):
         """What is stored under an object id: the measurement, plus what
         place and find_free_spot need to put something on top of it."""
-        wide = max(m.get('width_m') or 0.0, m.get('depth_m') or 0.0) > self.config.max_grasp_width_m
+        # the gripper closes across the narrowest side, not the image axes
+        narrow = m.get('narrow_m') or min(m.get('width_m') or 0.0, m.get('depth_m') or 0.0)
+        wide = narrow > self.config.max_grasp_width_m
         return {'kind': 'object', **m, 'bbox_full': box, 'surface_z': m['top_center'][2],
                 'position': m['top_center'], 'pickable': not wide, **extra}
 
@@ -549,6 +557,10 @@ class Toolbox:
         if not obj.get('pickable', True):
             return self._refused('pick', object, f'{object} is wider than the gripper opens '
                                  f'({self.config.max_grasp_width_m} m): it can only be placed on')
+        if 'grasp_point' not in obj:
+            # measured from its own top only, because something stands on it (ROBOAI-56)
+            return self._refused('pick', object, f'something stands on {object}: move that first, '
+                                 'then detect again')
         grasp_point = obj['grasp_point']
         err = self._check(grasp_point, lift=self.config.approach_offset_m)
         if err:

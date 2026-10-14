@@ -260,6 +260,17 @@ def test_a_cube_on_a_block_is_measured_from_the_block():
     assert below['stands_on'] == 'table' and tb.refs[below['id']]['pickable']
     assert abs(top['height_m'] - 0.045) < 0.01                       # from the block, not the table
     assert tb.refs[top['id']]['grasp_point'][2] > _TABLE_Z + 0.05    # above the block's top
+    # the block's box holds the cube too: the block is measured from its own top (ROBOAI-56)
+    assert abs(below['height_m'] - 0.05) < 0.01
+
+
+def test_a_support_is_not_picked_from_under_what_stands_on_it():
+    block = (-0.24, -0.16, -0.54, -0.46, _TABLE_Z, _TABLE_Z + 0.05)
+    tb = _ray_toolbox([block, _cube(-0.2, -0.5, z0=_TABLE_Z + 0.05)])
+    found = tb._detect()
+    support = next(f['id'] for f in found if f['id'] != 'table' and f['stands_on'] == 'table')
+    r = tb._tool_pick(support)
+    assert 'stands on' in r.text and not tb.skills
 
 
 def test_a_stack_of_equal_cubes_is_one_thing_from_the_fixed_camera():
@@ -283,3 +294,18 @@ def test_place_on_a_wide_thing_finds_a_free_place_on_it():
     x, y, z = tb.skills[-1][1]['release_position']
     assert abs(z - 0.06) < 0.01 and 0.24 <= x <= 0.46 and -0.43 <= y <= -0.12
     assert math.dist([x, y], [0.35, -0.275]) > 0.045                 # not on the cube already there
+
+
+def test_a_long_bar_is_pickable_across_its_short_side():
+    # 12 x 3 cm: wider than the gripper along x, 3 cm across (ROBOAI-56)
+    tb = _ray_toolbox([(-0.26, -0.14, -0.515, -0.485, _TABLE_Z, _TABLE_Z + 0.03), _cube(0.0, -0.4)])
+    found = [f for f in tb._detect() if f['id'] != 'table']
+    assert len(found) == 2 and all(tb.refs[f['id']]['pickable'] for f in found)
+
+
+def test_narrowest_width_of_a_bar_lying_askew():
+    a = 0.5
+    pts = [(u * math.cos(a) - v * math.sin(a), u * math.sin(a) + v * math.cos(a))
+           for u in (-0.06, 0.0, 0.06) for v in (-0.015, 0.015)]
+    assert max(p[0] for p in pts) - min(p[0] for p in pts) > 0.10       # wide on the image axes
+    assert abs(geometry.narrowest_width(pts) - 0.03) < 0.003

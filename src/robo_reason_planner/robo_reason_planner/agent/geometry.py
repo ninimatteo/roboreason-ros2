@@ -336,6 +336,7 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
             'footprint_m': round(max(xs[-1] - xs[0], ys[-1] - ys[0]), 4),
             'top_center': _r([xs[len(xs) // 2], ys[len(ys) // 2], tz[len(tz) // 2]]),
             'xy_range': [[round(xs[0], 4), round(xs[-1], 4)], [round(ys[0], 4), round(ys[-1], 4)]],
+            'narrow_m': round(narrowest_width(pts), 4),
         })
     return blobs
 
@@ -475,6 +476,18 @@ def _dominant_height(points, tolerance):
         if n > best_n:
             best_n, best_z = n, zs[(i + j) // 2]
     return best_z
+
+
+def narrowest_width(points, step_deg=5) -> float:
+    """The narrowest xy extent of points over all directions: the side a
+    gripper closes on. A bar lying askew is wide along the image axes and
+    narrow across itself (ROBOAI-56)."""
+    best = math.inf
+    for k in range(0, 180, step_deg):
+        a = math.radians(k)
+        proj = [p[0] * math.cos(a) + p[1] * math.sin(a) for p in points]
+        best = min(best, max(proj) - min(proj))
+    return best if points else 0.0
 
 
 def _dist_xy(a, b):
