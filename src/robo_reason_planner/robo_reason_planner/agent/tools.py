@@ -67,8 +67,9 @@ SUBMIT_PLAN = _fn(
 _REF = {'type': 'string', 'description': 'id from a perception result'}
 DETECT_OBJECTS = _fn(
     'detect_objects',
-    'Find everything standing on the table with the depth camera: ids (o1... objects, a1... '
-    'areas such as trays), colour, size, bbox. Use the ids directly with pick, place and '
+    'Find everything standing on the table with the depth camera, trays and boxes included: one id '
+    'each (o1...), drawn on the image that comes back, with colour, size, what it stands on and '
+    'which image border cuts it off. "table" is the table. Use the ids with pick, place and '
     'find_free_spot.')
 
 LOOK = _fn('look', 'Fresh camera image (attached after the result).')
@@ -90,17 +91,18 @@ EXECUTION_TOOLS = [
         'plus surface_z and x/y extent.',
         {'bbox': _BBOX}, ['bbox']),
     _fn('find_free_spot',
-        'Free spots on an area for objects like `object`, clear of other objects, edges and each '
-        "other. Returns ids (s1...) for place. count>1 for several, arrangement='line' for an evenly "
-        'spaced row.',
-        {'area': {'type': 'string', 'description': 'area id (a1...), or give bbox'}, 'bbox': _BBOX,
-         'object': _REF, 'count': {'type': 'integer'},
+        'Free spots on top of something (the table, a tray, an area) for objects like `object`, clear '
+        "of other objects, edges and each other. Returns ids (s1...) for place. count>1 for several, "
+        "arrangement='line' for an evenly spaced row.",
+        {'area': {'type': 'string', 'description': 'id of what to put them on, or give bbox'},
+         'bbox': _BBOX, 'object': _REF, 'count': {'type': 'integer'},
          'arrangement': {'type': 'string', 'enum': ['any', 'line']}},
         ['object']),
     _fn('pick', 'Grasp a measured object: hover, descend, close gripper, lift. Opens first: drops '
         'anything held.',
         {'object': _REF}, ['object']),
-    _fn('place', 'Put the held object on target: a spot (s), an area (a), or on top of an object (o).',
+    _fn('place', 'Put the held object on target: a spot (s), an area (a), or any object id: on top of '
+        'it, at a free place when it is wide (a tray, the table).',
         {'target': _REF}, ['target']),
     _fn('move_home', 'Arm to home pose, mostly out of view.'),
     _fn('update_plan', 'Replace the plan when reality differs.',
@@ -149,12 +151,14 @@ class ToolboxConfig:
     snap_to_object: bool = True
     snap_step_px: float = 4.0
     snap_min_margin_px: float = 30.0
-    # detect_objects: depth grid step over the whole image, smallest blob kept,
-    # and the size above which a blob is a placement area (tray) not an object.
+    # detect_objects: depth grid step over the whole image, smallest blob kept.
     detect_step_px: float = 8.0
     detect_min_samples: int = 4
-    area_min_size_m: float = 0.12
     refine_step_px: float = 2.0
+    # Widest object the gripper can take (RG2: 0.11 m fully open). Anything
+    # wider is still a thing in the scene, only not pickable: placing on it
+    # looks for a free place on its top.
+    max_grasp_width_m: float = 0.10
     # After pick and place: arm home, detect, and check the outcome.
     verify_actions: bool = True
     verify_radius_m: float = 0.03
@@ -182,8 +186,8 @@ class Toolbox:
     gripper: str = 'open'
     refs: dict = field(default_factory=dict)     # id -> what a perception tool measured
     held: dict = None                            # measurement of the object picked last
-    # ([[x0, x1], [y0, y1]], surface_z) of the areas (trays) found by the last
-    # detect: what an object measured there stands on
+    # ([[x0, x1], [y0, y1]], top_z) of everything found by the last detect:
+    # what an object measured there stands on
     surfaces: list = field(default_factory=list)
     at_survey: bool = False                      # arm still where the last image was taken (survey mode)
 
@@ -211,6 +215,7 @@ class Toolbox:
         self.last_full = path
         path, self.image_size = self._downscale(path, w, h)
         self.images.append(path)
+        self.last_sent = path
         return path
 
     def _to_survey(self):
@@ -242,6 +247,7 @@ class Toolbox:
 
     _pending_hold = None
     last_full = None
+    last_sent = None
 
     def _tool_look(self, camera='fixed'):
         if camera == 'wrist':
@@ -257,12 +263,16 @@ class Toolbox:
 
     def _tool_detect_objects(self):
         found = self._detect()
-        if not found:
+        if len(found) <= 1:
             return ToolResult('Nothing found standing on the table.')
-        return ToolResult(json.dumps(found))
+        return ToolResult(json.dumps(found), image_path=self._marked(found))
 
     def _detect(self) -> list:
-        """Objects and areas standing on the table, stored under new ids."""
+        """Everything standing on the table, stored under new ids, the table
+        first. No split into objects and areas (ROBOAI-55): a tray is a thing
+        like a cube, only too wide to pick, and each thing says what it
+        stands on, so a stack or a cube on a tray is measured from its own
+        support."""
         fw, fh = self.full_size
         step = self.config.detect_step_px
         cols, rows = int((fw - step) // step) + 1, int((fh - step) // step) + 1
@@ -271,48 +281,84 @@ class Toolbox:
         blobs = geometry.detect_blobs([(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows)
         image = self._full_image()
         sx, sy = self.image_size[0] / fw, self.image_size[1] / fh
+
+        def shown(box):
+            return [round(box[0] * sx), round(box[1] * sy), round(box[2] * sx), round(box[3] * sy)]
+
         found = []
-        # areas first: the objects measured below stand on them
-        sized = []
-        for b in blobs:
-            x0, y0, x1, y1 = b['bbox_px']
-            box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
-            scale = self._metres_per_pixel(b['top_center'])
-            size = max((box[2] - box[0]) * scale[0], (box[3] - box[1]) * scale[1]) if scale else None
-            sized.append((b, box, size))
-        self.surfaces = [(b['xy_range'], b['top_center'][2]) for b, _, size in sized
-                         if size is not None and size > self.config.area_min_size_m]
-        # The table itself, as an area: "in a line on the table" is then a
-        # find_free_spot on it (the room floor beyond the edge, objects and
-        # the robot's reach are excluded there), with no box to draw.
+        # The table itself: "in a line on the table" is then a find_free_spot
+        # on it (the room floor beyond the edge, objects and the robot's reach
+        # are excluded there), with no box to draw.
         table = self._table_area(pixels, pts)
         if table is not None:
-            ref = self._store('a', table)
-            found.append({'id': ref, 'kind': 'area', 'name': 'table', 'bbox': [
-                round(table['bbox_full'][0] * sx), round(table['bbox_full'][1] * sy),
-                round(table['bbox_full'][2] * sx), round(table['bbox_full'][3] * sy)]})
-        for b, box, size in sorted(sized, key=lambda t: (t[0]['bbox_px'][0], t[0]['bbox_px'][1])):
-            if b['samples'] < self.config.detect_min_samples:
-                continue
-            # the robot's own base stands at the origin of its frame
-            if math.hypot(b['top_center'][0], b['top_center'][1]) < self.config.robot_base_radius_m:
-                continue
-            colour = _blob_colour(image, pixels, pts, b) if image is not None else None
-            shown = [round(box[0] * sx), round(box[1] * sy), round(box[2] * sx), round(box[3] * sy)]
-            if size is not None and size > self.config.area_min_size_m:
-                ref = self._store('a', {'kind': 'area', 'position': b['top_center'], 'bbox_full': box,
-                                        'surface_z': b['top_center'][2]})
-                found.append({'id': ref, 'kind': 'area', 'color': colour, 'bbox': shown,
-                              'size_m': round(size, 3)})
-            else:
+            self.refs['table'] = table
+            found.append({'id': 'table', 'bbox': shown(table['bbox_full'])})
+        blobs = [b for b in sorted(blobs, key=lambda b: (b['bbox_px'][0], b['bbox_px'][1]))
+                 if b['samples'] >= self.config.detect_min_samples
+                 # the robot's own base stands at the origin of its frame
+                 and math.hypot(b['top_center'][0], b['top_center'][1]) >= self.config.robot_base_radius_m]
+        self.surfaces = [(b['xy_range'], b['top_center'][2]) for b in blobs]
+        ids, entries = [], []
+        for i, b in enumerate(blobs):
+            below = geometry.support_index(b['top_center'], b['top_center'][2],
+                                           self.surfaces[:i] + self.surfaces[i + 1:])
+            if below is not None and below >= i:
+                below += 1
+            support_z = self.surfaces[below][1] if below is not None else self.config.table_z
+            x0, y0, x1, y1 = b['bbox_px']
+            box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
+            (xa, xb), (ya, yb) = b['xy_range']
+            wide = max(xb - xa, yb - ya) > self.config.max_grasp_width_m
+            m = None
+            if not wide:
                 box = self._refine(box, top_z=b['top_center'][2]) or box
-                m = self._measure(box)
-                if m is None:
-                    continue
-                ref = self._store('o', {'kind': 'object', **m})
-                found.append({'id': ref, 'kind': 'object', 'color': colour, 'bbox': shown,
-                              'height_m': m['height_m'], 'width_m': m.get('width_m')})
+                m = self._measure(box, support_z=support_z)
+            if m is None:
+                # too wide to pick: the blob's own extent is enough to place on it
+                top = b['top_center']
+                m = {'top_center': top, 'height_m': round(top[2] - support_z, 4),
+                     'width_m': round(xb - xa, 4), 'depth_m': round(yb - ya, 4), 'looks_empty': False}
+            cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step)
+            ref = self._store('o', self._entity(m, box, cut_off=cut))
+            wide = not self.refs[ref]['pickable']
+            entry = {'id': ref, 'color': _blob_colour(image, pixels, pts, b) if image is not None else None,
+                     'bbox': shown(box), 'height_m': m['height_m'], 'width_m': m.get('width_m'),
+                     'depth_m': m.get('depth_m')}
+            if wide:
+                entry['pickable'] = False
+            if cut:
+                entry['cut_off'] = cut      # seen only in part: size and centre are not the real ones
+            ids.append(ref)
+            entries.append((entry, below))
+        for entry, below in entries:
+            entry['stands_on'] = ids[below] if below is not None else 'table'
+            found.append(entry)
         return found
+
+    def _marked(self, found):
+        """The image the model last saw, with every id drawn at its thing
+        (Set of Mark): the model names what it sees by id, the depth decides
+        where each thing is and how big."""
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            im = Image.open(self.last_sent).convert('RGB')
+        except Exception:
+            return None
+        draw = ImageDraw.Draw(im)
+        font = ImageFont.load_default(size=max(11, im.size[0] // 40))
+        for f in found:
+            if f['id'] == 'table':
+                continue
+            x0, y0, x1, y1 = f['bbox']
+            draw.rectangle([x0, y0, x1, y1], outline=(255, 255, 0), width=1)
+            tx, ty = x0, max(y0 - font.size - 2, 0)
+            box = draw.textbbox((tx, ty), f['id'], font=font)
+            draw.rectangle([box[0] - 1, box[1] - 1, box[2] + 1, box[3] + 1], fill=(0, 0, 0))
+            draw.text((tx, ty), f['id'], fill=(255, 255, 0), font=font)
+        path = str(self.last_sent).rsplit('.', 1)[0] + '_marked.png'
+        im.save(path)
+        self.images.append(path)
+        return path
 
     def _table_area(self, pixels, pts):
         """The table surface: the dominant height of the depth grid."""
@@ -326,8 +372,9 @@ class Toolbox:
         us, vs = [uv[0] for uv, _ in on], [uv[1] for uv, _ in on]
         xs, ys = sorted(p[0] for _, p in on), sorted(p[1] for _, p in on)
         centre = [xs[len(xs) // 2], ys[len(ys) // 2], floor]
-        return {'kind': 'area', 'name': 'table', 'position': centre, 'surface_z': floor,
-                'bbox_full': [min(us), min(vs), max(us), max(vs)]}
+        return {'kind': 'object', 'name': 'table', 'position': centre, 'top_center': centre,
+                'surface_z': floor, 'bbox_full': [min(us), min(vs), max(us), max(vs)],
+                'pickable': False, 'looks_empty': False}
 
     def _full_image(self):
         try:
@@ -336,8 +383,9 @@ class Toolbox:
         except Exception:
             return None
 
-    def _measure(self, bbox):
-        """Measurement of the object inside a full resolution bbox, or None."""
+    def _measure(self, bbox, support_z=None):
+        """Measurement of the object inside a full resolution bbox, or None.
+        support_z: the height of what it stands on, when already known."""
         px = geometry.bbox_sample_pixels(bbox, self.config.edge_inset_frac)
         order = ['center', 'left', 'right', 'top', 'bottom']
         pts = dict(zip(order, self._deproject([px[k] for k in order])))
@@ -345,7 +393,8 @@ class Toolbox:
             return None
         edges = {k: v for k, v in pts.items() if k != 'center' and v is not None}
         c = pts['center']
-        support = geometry.support_height(c[:2], c[2], self.surfaces, self.config.table_z)
+        support = (support_z if support_z is not None
+                   else geometry.support_height(c[:2], c[2], self.surfaces, self.config.table_z))
         m = geometry.object_measurement(c, edges, support, self.config.grasp)
         # Size from the top surface in metres: the bbox in pixels times the
         # scale overstates it when the camera sees the object off axis (a
@@ -369,8 +418,13 @@ class Toolbox:
         if not m['looks_empty']:
             # on an object: tighten the outline for its size, then measure again
             tight = self._refine(given, top_z=m['top_center'][2])
+            if tight and self._runs_past_window(tight, given):
+                # The level top goes on past the search window: two things
+                # touching at the same height, one depth segment. The model's
+                # box is the only split there is (ROBOAI-55).
+                tight = None
             m = (self._measure(tight) if tight else None) or m
-            ref = self._store('o', {'kind': 'object', **m})
+            ref = self._store('o', self._entity(m, tight or given))
             return ToolResult(json.dumps({'id': ref, **_public(m)}))
         # The spot itself is empty: say so (that is what a check after a pick
         # asks), and offer the nearest object in case the box just missed it.
@@ -381,7 +435,7 @@ class Toolbox:
             near = self._refine(near, top_z=pre['top_center'][2] if pre else None) or near
             nm = self._measure(near)
             if nm is not None and not nm['looks_empty']:
-                ref = self._store('o', {'kind': 'object', **nm})
+                ref = self._store('o', self._entity(nm, near))
                 sx, sy = self.image_size[0] / self.full_size[0], self.image_size[1] / self.full_size[1]
                 dist = math.hypot(((near[0] + near[2]) - (given[0] + given[2])) / 2 * sx,
                                   ((near[1] + near[3]) - (given[1] + given[3])) / 2 * sy)
@@ -390,6 +444,25 @@ class Toolbox:
                     'bbox': [round(near[0] * sx), round(near[1] * sy), round(near[2] * sx), round(near[3] * sy)],
                     **_public(nm)}
         return ToolResult(json.dumps(out))
+
+    def _entity(self, m, box, **extra):
+        """What is stored under an object id: the measurement, plus what
+        place and find_free_spot need to put something on top of it."""
+        wide = max(m.get('width_m') or 0.0, m.get('depth_m') or 0.0) > self.config.max_grasp_width_m
+        return {'kind': 'object', **m, 'bbox_full': box, 'surface_z': m['top_center'][2],
+                'position': m['top_center'], 'pickable': not wide, **extra}
+
+    def _runs_past_window(self, outline, bbox) -> bool:
+        """Whether an outline found by _refine around bbox reaches the edge
+        of its search window (not the image border): one object fits in the
+        window, a segment that runs past it is more than the object the box
+        was drawn on."""
+        margin = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / 2 + 8
+        fw, fh = self.full_size
+        window = [bbox[0] - margin, bbox[1] - margin, bbox[2] + margin, bbox[3] + margin]
+        inside = [window[0] > 0, window[1] > 0, window[2] < fw - 1, window[3] < fh - 1]
+        reach = 2 * self.config.refine_step_px
+        return any(ok and abs(o - w) <= reach for o, w, ok in zip(outline, window, inside))
 
     def _refine(self, bbox, top_z=None):
         """Outline of the object at a bbox on a fine grid. The search reaches
@@ -436,10 +509,15 @@ class Toolbox:
         return ToolResult(json.dumps({'id': ref, **{k: v for k, v in m.items() if k != 'center'}}))
 
     def _tool_find_free_spot(self, object, area=None, bbox=None, count=1, arrangement='any'):
-        footprint_m = self._ref(object, 'object').get('width_m') or 0.05
+        return self._free_spots(self._ref(object, 'object'), area, bbox, count, arrangement)
+
+    def _free_spots(self, obj, area=None, bbox=None, count=1, arrangement='any'):
+        footprint_m = obj.get('width_m') or 0.05
         surface_z = None
         if area is not None:
-            measured = self._ref(area, 'area')
+            measured = self._ref(area)
+            if 'bbox_full' not in measured:
+                raise ValueError(f'{area} is a {measured["kind"]}: give the id of what to put things on')
             bbox, surface_z = measured['bbox_full'], measured.get('surface_z')
         elif bbox is not None:
             bbox = self._to_pixels(bbox)
@@ -468,6 +546,9 @@ class Toolbox:
         obj = self._ref(object, 'object')
         if obj['looks_empty']:
             return self._refused('pick', object, f'{object} looked empty when measured, nothing to grasp')
+        if not obj.get('pickable', True):
+            return self._refused('pick', object, f'{object} is wider than the gripper opens '
+                                 f'({self.config.max_grasp_width_m} m): it can only be placed on')
         grasp_point = obj['grasp_point']
         err = self._check(grasp_point, lift=self.config.approach_offset_m)
         if err:
@@ -486,10 +567,18 @@ class Toolbox:
 
     def _tool_place(self, target):
         ref = self._ref(target)
-        # on top of an object: its top surface; spot or area: the surface point
-        position = ref['top_center'] if ref['kind'] == 'object' else ref['position']
         if self.held is None:
             return self._refused('place', target, 'no object is known to be held: pick one first')
+        if ref['kind'] == 'object' and not ref.get('pickable', True):
+            # a tray, the table: a free place on its top, not its centre
+            spot = json.loads(self._free_spots(self.held, area=target).text)
+            if not spot.get('ok'):
+                return self._refused('place', target, f'no free place on {target} for the held object: '
+                                     f'{json.dumps(spot)}')
+            position = self.refs[spot['spots'][0]]['position']
+        else:
+            # on top of an object: its top surface; spot or area: the surface point
+            position = ref['top_center'] if ref['kind'] == 'object' else ref['position']
         held = max(float(self.held['held_height_below_grasp_m']), 0.0)
         err = self._check(position, lift=held + self.config.approach_offset_m)
         if err:
@@ -565,7 +654,7 @@ class Toolbox:
     def _verify_pick(self, obj):
         found, image = self._look_from_home()
         spot = obj['top_center']
-        if self._object_near(found, spot, self.config.verify_radius_m):
+        if self._object_near(found, spot, self.config.verify_radius_m, level=spot[2]):
             self.held = None
             return ('the object is still at its spot, the grasp missed; nothing is held.',
                     self._objects_now(found), image)
@@ -573,7 +662,7 @@ class Toolbox:
 
     def _verify_place(self, target_xyz):
         found, image = self._look_from_home()
-        if not self._object_near(found, target_xyz, self.config.verify_radius_m + 0.01):
+        if not self._object_near(found, target_xyz, self.config.verify_radius_m + 0.01, above=target_xyz[2]):
             return ('nothing stands at the target; the object was probably dropped on the way. '
                     'Find it in the list below.', self._objects_now(found), image)
         return None, 'An object now stands at the target. ' + self._objects_now(found), image
@@ -581,16 +670,26 @@ class Toolbox:
     def _look_from_home(self):
         if not self.config.survey:   # in survey mode capture() moves the arm itself
             self.backend.run_skill('move_home', {})
-        image = self.capture()
-        return self._detect(), image
+        self.capture()
+        found = self._detect()
+        return found, self._marked(found)
 
-    def _object_near(self, found, xyz, radius) -> bool:
+    def _object_near(self, found, xyz, radius, level=None, above=None) -> bool:
+        """Something whose top is within radius of xyz in x and y, and at
+        the given level (the object still where it was picked) or above the
+        given height (something now standing on the place target, not the
+        tray or table around it)."""
         for f in found:
-            if f['kind'] != 'object':
+            if f['id'] == 'table':
                 continue
             c = self.refs[f['id']]['top_center']
-            if math.hypot(c[0] - xyz[0], c[1] - xyz[1]) <= radius:
-                return True
+            if math.hypot(c[0] - xyz[0], c[1] - xyz[1]) > radius:
+                continue
+            if level is not None and abs(c[2] - level) > 0.015:
+                continue
+            if above is not None and c[2] <= above + 0.01:
+                continue
+            return True
         return False
 
     @staticmethod

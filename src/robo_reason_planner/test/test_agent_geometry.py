@@ -222,9 +222,64 @@ def test_cubes_on_the_tray_measure_as_cubes_standing_on_it():
                                                                 'z': (-0.03, 0.55)}, grasp=GEO),
                  log=lambda *_: None)
     tb.full_size = tb.image_size = (1280, 720)
-    objects = [tb.refs[f['id']] for f in tb._detect() if f['kind'] == 'object']
+    found = tb._detect()
+    objects = [tb.refs[f['id']] for f in found if f['id'] != 'table' and tb.refs[f['id']]['pickable']]
     assert len(objects) == 4
     for m in objects:
         assert abs(m['height_m'] - s) < 0.01                        # from the tray, not the table
         assert m['grasp_point'][2] > 0.06 + 0.01                    # above the tray top
         assert abs(m['width_m'] - s) < 0.012                        # the cube, not the tray around it
+    tray = next(f for f in found if f['id'] != 'table' and not tb.refs[f['id']]['pickable'])
+    assert tray['stands_on'] == 'table'
+    assert all(f['stands_on'] == tray['id'] for f in found if f['id'] not in ('table', tray['id']))
+
+
+# --- unified things (ROBOAI-55): no objects and areas, each says what it stands on ---
+
+def _ray_toolbox(boxes):
+    from robo_reason_planner.agent.tools import Toolbox, ToolboxConfig
+    tb = Toolbox(backend=_RayBackend(boxes),
+                 config=ToolboxConfig(table_z=_TABLE_Z, limits={'x': (-0.6, 0.6), 'y': (-0.8, 0.0),
+                                                                'z': (-0.03, 0.55)}, grasp=GEO,
+                                      verify_actions=False, auto_look_after_action=False),
+                 log=lambda *_: None)
+    tb.full_size = tb.image_size = (1280, 720)
+    tb.backend.run_skill = lambda name, args: (tb.skills.append((name, args)) or (True, ''))
+    tb.skills = []
+    return tb
+
+
+def test_a_cube_on_a_block_is_measured_from_the_block():
+    # a 4.5 cm cube on an 8 cm block: the block's top shows around the cube
+    block = (-0.24, -0.16, -0.54, -0.46, _TABLE_Z, _TABLE_Z + 0.05)
+    tb = _ray_toolbox([block, _cube(-0.2, -0.5, z0=_TABLE_Z + 0.05), _cube(0.0, -0.4)])
+    found = {f['id']: f for f in tb._detect()}
+    top = max((f for f in found.values() if f['id'] != 'table'),
+              key=lambda f: tb.refs[f['id']]['top_center'][2])
+    below = found[top['stands_on']]
+    assert below['stands_on'] == 'table' and tb.refs[below['id']]['pickable']
+    assert abs(top['height_m'] - 0.045) < 0.01                       # from the block, not the table
+    assert tb.refs[top['id']]['grasp_point'][2] > _TABLE_Z + 0.05    # above the block's top
+
+
+def test_a_stack_of_equal_cubes_is_one_thing_from_the_fixed_camera():
+    # Known limit: the lower cube's top is hidden under the upper one, so the
+    # depth sees one thing as tall as the stack. Place by contact (ROBOAI-53)
+    # or a second view is what tells them apart.
+    tb = _ray_toolbox([_cube(-0.2, -0.5), _cube(-0.2, -0.5, z0=_TABLE_Z + 0.045)])
+    found = tb._detect()
+    assert len(found) == 2 and abs(found[1]['height_m'] - 0.09) < 0.01
+
+
+def test_place_on_a_wide_thing_finds_a_free_place_on_it():
+    tb = _ray_toolbox([TRAY, _cube(0.35, -0.275, z0=0.06), _cube(-0.2, -0.5)])
+    found = tb._detect()
+    tray = next(f['id'] for f in found if f['id'] != 'table' and not tb.refs[f['id']]['pickable'])
+    loose = next(f['id'] for f in found if f['id'] != 'table' and f['stands_on'] == 'table'
+                 and tb.refs[f['id']]['pickable'])
+    assert tb.run('pick', {'object': tray}).text.startswith('REFUSED')
+    assert tb.run('pick', {'object': loose}).text.startswith('pick completed')
+    assert tb.run('place', {'target': tray}).text.startswith('place completed')
+    x, y, z = tb.skills[-1][1]['release_position']
+    assert abs(z - 0.06) < 0.01 and 0.24 <= x <= 0.46 and -0.43 <= y <= -0.12
+    assert math.dist([x, y], [0.35, -0.275]) > 0.045                 # not on the cube already there

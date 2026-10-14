@@ -371,22 +371,45 @@ def _merge_side_faces(groups, samples, tolerance_m: float = 0.01) -> list:
     return [(all_idx, top) for all_idx, top, _ in out]
 
 
-def support_height(xy, top_z: float, surfaces, table_z: float, margin_m: float = 0.01) -> float:
-    """Height of the surface under a point seen from above: the highest known
-    surface (a tray) whose xy range contains it and which is not above it;
-    the table otherwise. On the tray itself that is the tray, so an empty
-    spot there looks empty.
+def support_index(xy, top_z: float, surfaces, margin_m: float = 0.01, inner_m: float = 0.05):
+    """Index in surfaces of the surface under a point seen from above, or
+    None for the table. That is the highest surface whose xy range contains
+    the point and which is lower than it by more than EMPTY_BELOW_M. A
+    surface at the point's own level counts too (the point lies on it, an
+    empty spot) only when the point is inner_m inside its range: a spot on a
+    tray, not the top of a cube measured at its own centre. Every detected
+    thing is a surface (ROBOAI-55); one too narrow for that margin is too
+    narrow for the gripper to hold something else on it anyway.
 
-    surfaces: ([[x0, x1], [y0, y1]], surface_z) of the areas last detected.
+    surfaces: ([[x0, x1], [y0, y1]], surface_z) of the things last detected.
     Measured from the table, a cube on a tray came out three times as tall
     and the grasp went below the tray top (ROBOAI-51).
     """
-    best = table_z
-    for (xr, yr), z in surfaces:
-        if (xr[0] - margin_m <= xy[0] <= xr[1] + margin_m and yr[0] - margin_m <= xy[1] <= yr[1] + margin_m
-                and best < z <= top_z + margin_m):
-            best = z
+    best, best_z = None, -math.inf
+    x, y = xy[0], xy[1]
+    for i, ((xr, yr), z) in enumerate(surfaces):
+        if not (xr[0] - margin_m <= x <= xr[1] + margin_m and yr[0] - margin_m <= y <= yr[1] + margin_m):
+            continue
+        if z <= best_z or z > top_z + margin_m:
+            continue
+        if z < top_z - EMPTY_BELOW_M or min(x - xr[0], xr[1] - x, y - yr[0], yr[1] - y) >= inner_m:
+            best, best_z = i, z
     return best
+
+
+def support_height(xy, top_z: float, surfaces, table_z: float, margin_m: float = 0.01) -> float:
+    """Height of the surface under a point (support_index), the table when none."""
+    i = support_index(xy, top_z, surfaces, margin_m)
+    return table_z if i is None or surfaces[i][1] <= table_z else surfaces[i][1]
+
+
+def cut_off_sides(bbox_px, width: int, height: int, step: float) -> list:
+    """Image borders a blob touches: the camera sees only part of it there,
+    so its size (and its centre) along that side is not the real one."""
+    x0, y0, x1, y1 = bbox_px
+    sides = [('left', x0 <= step), ('top', y0 <= step),
+             ('right', x1 >= width - 1 - step), ('bottom', y1 >= height - 1 - step)]
+    return [name for name, touches in sides if touches]
 
 
 def color_name(rgb) -> str:
