@@ -311,7 +311,7 @@ class Toolbox:
             x0, y0, x1, y1 = b['bbox_px']
             box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
             (xa, xb), (ya, yb) = b['xy_range']
-            wide = max(xb - xa, yb - ya) > self.config.max_grasp_width_m
+            wide = b['narrow_m'] > self.config.max_grasp_width_m
             m = None
             if not wide and not on_top:
                 box = self._refine(box, top_z=b['top_center'][2]) or box
@@ -321,7 +321,8 @@ class Toolbox:
                 # measure that too: the blob's own top surface
                 top = b['top_center']
                 m = {'top_center': top, 'height_m': round(top[2] - support_z, 4),
-                     'width_m': round(xb - xa, 4), 'depth_m': round(yb - ya, 4), 'looks_empty': False}
+                     'width_m': round(xb - xa, 4), 'depth_m': round(yb - ya, 4),
+                     'narrow_m': b['narrow_m'], 'looks_empty': False}
             cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step)
             ref = self._store('o', self._entity(m, box, cut_off=cut))
             wide = not self.refs[ref]['pickable']
@@ -412,6 +413,7 @@ class Toolbox:
             # the samples' extent, widened by half a step on each side
             m['width_m'] = round(max(p[0] for p in top) - min(p[0] for p in top) + step * scale[0], 4)
             m['depth_m'] = round(max(p[1] for p in top) - min(p[1] for p in top) + step * scale[1], 4)
+            m['narrow_m'] = round(geometry.narrowest_width(top) + step * min(scale), 4)
         return m
 
     def _tool_inspect_object(self, bbox):
@@ -452,7 +454,9 @@ class Toolbox:
     def _entity(self, m, box, **extra):
         """What is stored under an object id: the measurement, plus what
         place and find_free_spot need to put something on top of it."""
-        wide = max(m.get('width_m') or 0.0, m.get('depth_m') or 0.0) > self.config.max_grasp_width_m
+        # the gripper closes across the narrowest side, not the image axes
+        narrow = m.get('narrow_m') or min(m.get('width_m') or 0.0, m.get('depth_m') or 0.0)
+        wide = narrow > self.config.max_grasp_width_m
         return {'kind': 'object', **m, 'bbox_full': box, 'surface_z': m['top_center'][2],
                 'position': m['top_center'], 'pickable': not wide, **extra}
 

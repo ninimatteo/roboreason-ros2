@@ -297,3 +297,18 @@ def test_place_on_a_wide_thing_finds_a_free_place_on_it():
     x, y, z = tb.skills[-1][1]['release_position']
     assert abs(z - 0.06) < 0.01 and 0.24 <= x <= 0.46 and -0.43 <= y <= -0.12
     assert math.dist([x, y], [0.35, -0.275]) > 0.045                 # not on the cube already there
+
+
+def test_a_long_bar_is_pickable_across_its_short_side():
+    # 12 x 3 cm: wider than the gripper along x, 3 cm across (ROBOAI-56)
+    tb = _ray_toolbox([(-0.26, -0.14, -0.515, -0.485, _TABLE_Z, _TABLE_Z + 0.03), _cube(0.0, -0.4)])
+    found = [f for f in tb._detect() if f['id'] != 'table']
+    assert len(found) == 2 and all(tb.refs[f['id']]['pickable'] for f in found)
+
+
+def test_narrowest_width_of_a_bar_lying_askew():
+    a = 0.5
+    pts = [(u * math.cos(a) - v * math.sin(a), u * math.sin(a) + v * math.cos(a))
+           for u in (-0.06, 0.0, 0.06) for v in (-0.015, 0.015)]
+    assert max(p[0] for p in pts) - min(p[0] for p in pts) > 0.10       # wide on the image axes
+    assert abs(geometry.narrowest_width(pts) - 0.03) < 0.003
