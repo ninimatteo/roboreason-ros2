@@ -41,6 +41,7 @@ from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
+from robo_reason_planner import model_coords
 from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
 from robo_reason_planner.planning_cancel import PlanningCancellation, PlanningCancelled
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
@@ -67,6 +68,7 @@ class VLMPlannerNode(Node):
         self.declare_parameter('tmp_dir', settings.TMP_DIR)
         self.declare_parameter('grounding_mode', settings.VLM_GROUNDING_MODE)
         self.declare_parameter('reasoning_effort', settings.VLM_REASONING_EFFORT)
+        self.declare_parameter('coords', settings.VLM_COORDS)
 
         dotenv.load_dotenv()
 
@@ -190,6 +192,12 @@ class VLMPlannerNode(Node):
             'image': image_paths[-1],
         }, cancelled=cancelled)
         run.log(f'VLM raw pixel steps: {json.dumps(pixel_steps)}')
+        coords = model_coords.resolve(self.get_parameter('coords').value, model_name)
+        if coords != 'pixel':
+            for step in pixel_steps:
+                for field in ('target_position', 'release_position'):
+                    step[field] = model_coords.to_pixels(step.get(field), img_resp.image.width, coords)
+            run.log(f'VLM pixel steps ({coords} -> pixels): {json.dumps(pixel_steps)}')
 
         # 3b. Save debug image with pixel markers — written before deprojection
         #     so it exists even when the plan fails mid-way or deproject errors.

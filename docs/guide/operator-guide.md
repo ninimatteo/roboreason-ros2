@@ -172,7 +172,7 @@ export GROQ_API_KEY=gsk_...
 # Terminal 1: all services
 ros2 launch robo_reason_bringup vlm_dry_run.launch.py \
   images_dir:=/root/ws/src/mock_frames \
-  model_name:=groq/qwen3.6-27b \
+  model_name:=groq/qwen3.8-27b \
   reasoning_method:=fhp
 
 # Terminal 2: CLI
@@ -191,7 +191,7 @@ ros2 run robo_reason_task_interface task_interface_node
 | Parameter | Default | Description |
 |---|---|---|
 | `reasoning_method` | `fhp` | Reasoning method |
-| `model_name` | `groq/qwen3.6-27b` | VLM model (must support vision) |
+| `model_name` | `groq/qwen3.8-27b` | VLM model (must support vision) |
 | `temperature` | `0.1` | LLM temperature |
 | `images_dir` | `/root/ws/src/mock_frames` | Folder with `.png` files to serve |
 | `include_task_interface` | `false` | Launch CLI in same process |
@@ -275,7 +275,7 @@ ros2 launch robo_reason_bringup real_robot.launch.py \
 ```bash
 ros2 launch robo_reason_bringup real_robot.launch.py \
   mode:=VLM \
-  model_name:=groq/qwen3.6-27b \
+  model_name:=groq/qwen3.8-27b \
   temperature:=0.1
 ```
 
@@ -286,7 +286,7 @@ ros2 launch robo_reason_bringup real_robot.launch.py \
 | `mode` | `LLM` | `LLM` or `VLM` |
 | `robot_ip` | `192.168.2.60` | UR5 robot IP |
 | `reasoning_method` | `fhp` | Reasoning method (LLM mode) |
-| `model_name` | `groq/qwen3.6-27b` | LLM/VLM model |
+| `model_name` | `groq/qwen3.8-27b` | LLM/VLM model |
 | `temperature` | `0.1` | 0.0 = deterministic |
 | `use_mock_llm` | `false` | Skip LLM, use hardcoded plan (LLM mode only) |
 | `include_task_interface` | `false` | Launch CLI in same process (not recommended) |
@@ -377,8 +377,7 @@ Select with `reasoning_method:=<value>`.
 |---|---|---|
 | `groq/openai-oss-20b` | `openai/gpt-oss-20b` | OpenAI OSS model |
 | `groq/openai-oss-120b` | `openai/gpt-oss-120b` | Largest OSS model on Groq |
-| `groq/qwen3.6-27b` | `qwen/qwen3.6-27b` | Vision enabled — use for VLM mode |
-| `groq/qwen3.8-27b` | `qwen/qwen3.8-27b` | Vision enabled, newer |
+| `groq/qwen3.8-27b` | `qwen/qwen3.8-27b` | Vision enabled, the only one left on Groq (`qwen3.6-27b` was removed, ROBOAI-43). Answers image coordinates in 0..1000 of the image width: see `VLM_COORDS` |
 
 ### Nebius (OpenAI-compatible API)
 
@@ -412,8 +411,8 @@ Set `NEBIUS_API_KEY` and use `nebius/` prefix.
 | `nebius/nvidia-cosmos3-33b` | `nvidia/Cosmos3-Super-Reasoner` | Vision enabled — 64B, physical-AI-reasoning. ⚠️ 409 "model is stopped" as of 2026-09-04 |
 | `nebius/minicpm-v-4.5` | `openbmb/MiniCPM-V-4_5` | Vision enabled — 8B, smallest |
 
-> For VLM mode, only vision-enabled models work: `groq/qwen3.6-27b`,
-> `groq/qwen3.8-27b`, `nebius/kimi-k2.6`, `nebius/nvidia-cosmos3-33b`,
+> For VLM mode, only vision-enabled models work: `groq/qwen3.8-27b`,
+> `nebius/kimi-k2.6`, `nebius/nvidia-cosmos3-33b`,
 > `nebius/minicpm-v-4.5` (the GUI's model dropdown restricts VLM mode to
 > these automatically — see `robo_reason_gui/options.py`'s
 > `VISION_MODELS`). These same models also work in LLM mode (text-only,
