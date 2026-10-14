@@ -327,13 +327,14 @@ def test_detect_objects_finds_ids_colours_and_sizes(tmp_path):
     backend, lines = PaintedBackend(tmp_path), []
     tb = _toolbox(backend, lines)
     tb.capture()
-    found = json.loads(tb.run('detect_objects', {}).text)
-    assert [f.get('name') for f in found if f['kind'] == 'area'] == ['table']
-    objects = [f for f in found if f['kind'] == 'object']
-    assert len(objects) == 1
-    o = objects[0]
-    assert o['id'] == 'o1' and o['color'] == 'red'
+    res = tb.run('detect_objects', {})
+    found = json.loads(res.text)
+    assert [f['id'] for f in found] == ['table', 'o1']
+    o = found[1]
+    assert o['color'] == 'red' and o['stands_on'] == 'table' and 'cut_off' not in o
     assert o['height_m'] == 0.04 and abs(o['width_m'] - 0.045) <= 0.006
+    # the ids drawn on the image the model saw
+    assert res.image_path.endswith('_marked.png') and Image.open(res.image_path).size == (640, 480)
     # and the id works straight away
     assert tb.run('pick', {'object': 'o1'}).text.startswith('pick completed')
 
@@ -345,6 +346,37 @@ def test_colour_names():
     assert color_name((60, 110, 230)) == 'blue'
     assert color_name((245, 245, 245)) == 'white'
     assert color_name((220, 40, 40)) == 'red'
+
+
+class _GridBackend(FakeBackend):
+    """Flat table at z=0 and 4 cm cubes given as pixel squares [u0, v0, u1, v1]."""
+
+    def __init__(self, tmp_path, cubes):
+        super().__init__(tmp_path)
+        self.cubes = cubes
+
+    def deproject(self, pixels):
+        return [[0.1 + (u - 100) * 0.001, -0.4 + (v - 100) * 0.001,
+                 0.04 if any(a <= u <= c and b <= v <= d for a, b, c, d in self.cubes) else 0.0]
+                for u, v in pixels]
+
+
+def test_a_thing_at_the_image_border_is_cut_off(tmp_path):
+    tb = _toolbox(_GridBackend(tmp_path, [(0, 200, 30, 240), (300, 200, 340, 240)]), [])
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {}).text)
+    assert [f.get('cut_off') for f in found[1:]] == [['left'], None]
+
+
+def test_a_box_on_one_of_two_touching_things_measures_that_one(tmp_path):
+    # two 4 cm cubes side by side at the same height: one depth segment 80 px wide
+    tb = _toolbox(_GridBackend(tmp_path, [(80, 80, 120, 120), (121, 80, 160, 120)]), [])
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {}).text)
+    assert len(found) == 2 and abs(found[1]['width_m'] - 0.08) < 0.01
+    res = json.loads(tb.run('inspect_object', {'bbox': [124, 84, 156, 116]}).text)
+    assert abs(res['width_m'] - 0.04) < 0.01
+    assert tb.refs[res['id']]['grasp_point'][0] > 0.12               # the right hand cube
 
 
 class LiveBackend(FakeBackend):
@@ -390,11 +422,11 @@ def test_verified_pick_and_place(tmp_path):
     backend, lines = LiveBackend(tmp_path), []
     tb = _live_toolbox(backend, lines)
     tb.capture()
-    tb.run('detect_objects', {})                                     # a1 is the table
-    tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})            # a2, empty table at (0.2, -0.4)
+    tb.run('detect_objects', {})
+    tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})            # a1, empty table at (0.2, -0.4)
     res = tb.run('pick', {'object': 'o1'}).text
     assert res.startswith('pick completed and checked') and 'held' in res
-    res = tb.run('place', {'target': 'a2'}).text
+    res = tb.run('place', {'target': 'a1'}).text
     assert res.startswith('place completed and checked') and 'Objects now' in res
     assert backend.cube == (200, 100)
 
@@ -417,7 +449,7 @@ def test_a_drop_in_transit_is_caught_by_the_check(tmp_path):
     tb.run('detect_objects', {})
     tb.run('inspect_area', {'bbox': [180, 80, 220, 120]})
     tb.run('pick', {'object': 'o1'})
-    res = tb.run('place', {'target': 'a2'}).text
+    res = tb.run('place', {'target': 'a1'}).text
     assert res.startswith('ERROR') and 'dropped' in res
     assert '"height_m": 0.04' in res          # the list shows where it fell
 
@@ -427,7 +459,7 @@ def test_a_line_on_the_table_area_avoids_objects_and_the_floor(tmp_path):
     tb = _live_toolbox(backend, lines)
     tb.capture()
     found = json.loads(tb.run('detect_objects', {}).text)
-    table = next(f['id'] for f in found if f.get('name') == 'table')
+    table = found[0]['id']
     res = json.loads(tb.run('find_free_spot', {'area': table, 'object': 'o1', 'count': 3,
                                                'arrangement': 'line'}).text)
     assert res['ok'] and len(res['spots']) == 3
