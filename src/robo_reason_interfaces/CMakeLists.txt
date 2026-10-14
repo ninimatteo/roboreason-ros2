@@ -19,6 +19,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/CancelExecution.srv"
   "srv/GetImage.srv"
   "srv/Deproject.srv"
+  "srv/GetDepth.srv"
   "action/ExecuteSkill.action"
   DEPENDENCIES action_msgs sensor_msgs geometry_msgs std_msgs
 )

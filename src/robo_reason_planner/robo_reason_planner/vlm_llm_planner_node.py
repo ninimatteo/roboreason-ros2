@@ -44,10 +44,10 @@ from std_srvs.srv import Trigger
 
 from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import names
-from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
+from robo_reason_interfaces.srv import Deproject, GetDepth, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
 from robo_reason_planner import model_coords
-from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
+from robo_reason_planner.debug_recorder import DebugRun, fetch_depth, fetch_terminal_logs
 from robo_reason_planner.planning_cancel import PlanningCancellation, PlanningCancelled
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
 from robo_reason_reasoning.scene_grounder import SceneGrounder
@@ -111,6 +111,9 @@ class VLMLLMPlannerNode(Node):
         )
         self._deproject_client = self.create_client(
             Deproject, names.deproject, callback_group=self._cb_group,
+        )
+        self._get_depth_client = self.create_client(
+            GetDepth, names.get_depth, callback_group=self._cb_group,
         )
         self._terminal_logs_client = self.create_client(
             Trigger, names.terminal_logs, callback_group=self._cb_group,
@@ -178,6 +181,11 @@ class VLMLLMPlannerNode(Node):
         self.get_logger().info(f'[VLMLLMPlannerNode] Saved frame → {image_path}')
         run.log(f'Saved frame -> {image_path}')
         run.save_raw_frame(image_path)
+        depth = fetch_depth(self._get_depth_client)
+        if depth is None:
+            run.log(f'[debug] no depth from {names.get_depth}: raw frame saved without it')
+        else:
+            run.save_depth(depth, Path(image_path).name)
 
         # 2. VLM scene-grounding call — detect objects/targets as pixel centers.
         vlm_model_name = self.get_parameter('vlm_model_name').value

@@ -26,6 +26,8 @@ from zoneinfo import ZoneInfo
 
 from std_srvs.srv import Trigger
 
+from robo_reason_interfaces.srv import GetDepth
+
 from robo_reason_bringup.config import settings
 
 _TZ = ZoneInfo(settings.DEBUG_TIMEZONE)
@@ -120,6 +122,54 @@ def _ensure_csv_header(path: Path, fields: list) -> None:
         pass
 
 
+def fetch_depth(client, timeout_s: float = 3.0):
+    """The camera's GetDepth response, or None when the camera node does not
+    serve it (the mock camera) or it fails: a debug run never blocks planning."""
+    if not client.wait_for_service(timeout_sec=0.5):
+        return None
+    future = client.call_async(GetDepth.Request())
+    deadline = time.monotonic() + timeout_s
+    while not future.done():
+        if time.monotonic() > deadline:
+            return None
+        time.sleep(0.02)
+    resp = future.result()
+    return resp if resp is not None and resp.success else None
+
+
+def write_depth(resp, frame_png) -> None:
+    """Write a GetDepth response next to the RGB frame <stem>.png (ROBOAI-59):
+    <stem>_depth.png, 16 bit millimetres with 0 for no depth, and
+    <stem>_camera.json. vlm_camera_service.depth_snapshot reads them back and
+    redoes the deprojection offline."""
+    import cv2
+    import numpy as np
+
+    msg = resp.depth
+    if msg.encoding not in ('16UC1', '32FC1'):
+        raise ValueError(f"unsupported depth encoding '{msg.encoding}'")
+    dtype = np.dtype(np.uint16 if msg.encoding == '16UC1' else np.float32)
+    if msg.is_bigendian:
+        dtype = dtype.newbyteorder('>')
+    rows = np.frombuffer(bytes(msg.data), dtype=dtype, count=msg.step // dtype.itemsize * msg.height)
+    depth = rows.reshape(msg.height, -1)[:, :msg.width]
+    if msg.encoding == '32FC1':
+        mm = np.nan_to_num(depth.astype(np.float64) * 1000.0, nan=0.0, posinf=0.0, neginf=0.0)
+        depth = np.clip(np.round(mm), 0, 65535)
+    stem = str(frame_png)[:-len('.png')]
+    cv2.imwrite(stem + '_depth.png', depth.astype(np.uint16))
+    info = resp.camera_info
+    Path(stem + '_camera.json').write_text(json.dumps({
+        'width': info.width, 'height': info.height, 'frame_id': info.header.frame_id,
+        'k': list(info.k), 'd': list(info.d), 'distortion_model': info.distortion_model,
+        'depth_encoding': msg.encoding,
+        'depth_stamp': msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+        'calibrated': resp.calibrated,
+        'base_from_camera': list(resp.base_from_camera) if resp.calibrated else None,
+        'deproject_params': json.loads(resp.deproject_params or '{}'),
+    }, indent=2))
+
+
 class DebugRun:
     """Records all debug artifacts for a single planner call."""
 
@@ -152,6 +202,15 @@ class DebugRun:
             shutil.copy2(source_path, raw_dir / Path(source_path).name)
         except OSError as exc:
             self.log(f'[debug] failed to copy raw frame {source_path}: {exc}')
+
+    def save_depth(self, resp, frame_name: str) -> None:
+        """Save a GetDepth response next to the raw frame frame_name in <run>/raw/."""
+        raw_dir = self.dir / 'raw'
+        raw_dir.mkdir(exist_ok=True)
+        try:
+            write_depth(resp, raw_dir / frame_name)
+        except (OSError, ValueError) as exc:
+            self.log(f'[debug] failed to save depth for {frame_name}: {exc}')
 
     def save_debug_image(self, source_path: str) -> None:
         """Copy an already-rendered point+bounding-box overlay into <run>/debug/."""
