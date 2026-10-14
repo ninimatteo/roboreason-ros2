@@ -199,7 +199,8 @@ def _best_line(on_surface, candidates, clearance, bounds, count, spacing, allowe
 
 
 def snap_to_object(samples, cols: int, rows: int, center_uv, table_z: float,
-                   min_height: float = 0.02, max_height: float = ABOVE_TABLE_NOTE_M):
+                   min_height: float = 0.02, max_height: float = ABOVE_TABLE_NOTE_M,
+                   level_z: float = None, level_tol: float = 0.01):
     """Find the object nearest to a rough bbox in a depth grid around it.
 
     samples: row major list of (u, v, [x, y, z] or None), cols x rows. Samples
@@ -210,6 +211,12 @@ def snap_to_object(samples, cols: int, rows: int, center_uv, table_z: float,
 
     Small VLMs place boxes 15 to 30 px off an object of that size; measuring
     the box as given then reads the table next to the object.
+
+    level_z, when the object's top height is known, keeps only the samples
+    within level_tol of it: the outline of the top surface. Raised above the
+    floor is not enough for an object standing on a tray seen obliquely: the
+    window then reaches the table, the tray is raised too, and the cube came
+    out as one blob with the tray around it, twice its width (ROBOAI-51).
     """
     # Heights from the local floor (the dominant height around the box), not
     # from the configured table height: a calibration offset of a centimetre
@@ -218,7 +225,10 @@ def snap_to_object(samples, cols: int, rows: int, center_uv, table_z: float,
     if not valid:
         return None
     floor = _dominant_height(valid, 0.01)
-    raised = [p is not None and min_height <= p[2] - floor <= max_height for _, _, p in samples]
+    if level_z is not None:
+        raised = [p is not None and abs(p[2] - level_z) <= level_tol for _, _, p in samples]
+    else:
+        raised = [p is not None and min_height <= p[2] - floor <= max_height for _, _, p in samples]
     seen = [False] * len(samples)
     best, best_d = None, float('inf')
     for start in range(len(samples)):
@@ -325,6 +335,7 @@ def detect_blobs(samples, cols: int, rows: int, min_height: float = 0.02,
             'height_m': round(tz[len(tz) // 2] - floor, 4),
             'footprint_m': round(max(xs[-1] - xs[0], ys[-1] - ys[0]), 4),
             'top_center': _r([xs[len(xs) // 2], ys[len(ys) // 2], tz[len(tz) // 2]]),
+            'xy_range': [[round(xs[0], 4), round(xs[-1], 4)], [round(ys[0], 4), round(ys[-1], 4)]],
         })
     return blobs
 
@@ -358,6 +369,24 @@ def _merge_side_faces(groups, samples, tolerance_m: float = 0.01) -> list:
         else:
             host[0].extend(idx)
     return [(all_idx, top) for all_idx, top, _ in out]
+
+
+def support_height(xy, top_z: float, surfaces, table_z: float, margin_m: float = 0.01) -> float:
+    """Height of the surface under a point seen from above: the highest known
+    surface (a tray) whose xy range contains it and which is not above it;
+    the table otherwise. On the tray itself that is the tray, so an empty
+    spot there looks empty.
+
+    surfaces: ([[x0, x1], [y0, y1]], surface_z) of the areas last detected.
+    Measured from the table, a cube on a tray came out three times as tall
+    and the grasp went below the tray top (ROBOAI-51).
+    """
+    best = table_z
+    for (xr, yr), z in surfaces:
+        if (xr[0] - margin_m <= xy[0] <= xr[1] + margin_m and yr[0] - margin_m <= xy[1] <= yr[1] + margin_m
+                and best < z <= top_z + margin_m):
+            best = z
+    return best
 
 
 def color_name(rgb) -> str:
