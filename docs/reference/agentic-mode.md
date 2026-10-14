@@ -116,7 +116,9 @@ Codice, tutto in `robo_reason_planner`:
 
 Ogni task scrive una cartella DebugRun con `mode=AGENT`: `transcript.json` (ogni
 messaggio, ogni tool call con argomenti e risultato, latenza e token di ogni
-chiamata al modello) e `frames/` con tutte le immagini che il modello ha visto.
+chiamata al modello) e `frames/` con tutte le immagini che il modello ha visto. Accanto a ogni frame
+della camera depth ci sono `<frame>_depth.png` e `<frame>_camera.json`, per
+rifare la deprojection offline con `vlm_camera_service.depth_snapshot` (ROBOAI-59).
 
 ## Configurazione
 

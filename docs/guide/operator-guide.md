@@ -569,8 +569,17 @@ repo root (`Settings.DEBUG_DIR`), regardless of mode or reasoning method:
 | `response.json` | the parsed plan (empty string if the call raised — see below) |
 | `error.txt` | present only on failure — exception type + message |
 | `logs.txt` | planner log lines captured during the call |
-| `raw/` | the captured camera frame (VLM mode only) |
+| `raw/` | the captured camera frame (VLM and VLM_LLM modes), with `<frame>_depth.png` (aligned depth, 16 bit mm, 0 = none) and `<frame>_camera.json` (intrinsics, camera pose in `base_link`, deprojection settings) when the camera serves depth |
 | `debug/debug.png` | pixel/ChArUco overlay image (VLM mode only) |
+
+The depth and camera files let a run be deprojected again offline with the
+live service's own code (ROBOAI-59):
+
+```python
+from vlm_camera_service import depth_snapshot
+snap = depth_snapshot.load('debug/<run>/raw/0000_<stamp>.png')
+points = depth_snapshot.deproject(snap, us, vs)   # base_link [x, y, z] or None per pixel
+```
 
 A row is appended to a root-level `debug/summary.csv` for every run (mode,
 reasoning method, provider/model, success, timestamp), making it easy to
