@@ -24,6 +24,17 @@ camera:
   near: 0.1
   far: 3.0
 
+wrist_camera:
+  # Camera on the wrist (ROBOAI-47), mounted at settings.WRIST_CAMERA_MOUNT.
+  # A webcam like field of view; depth is bridged only when it is the sole
+  # camera (CAMERAS=wrist), so in fixed+wrist the stack sees a plain RGB one.
+  width: 640
+  height: 480
+  horizontal_fov: 1.2   # rad, about 69 degrees
+  update_rate: 10
+  near: 0.05
+  far: 2.0
+
 robot:
   ur_type: ur5
   # The executor's IK works in the UR controller "base" frame, which

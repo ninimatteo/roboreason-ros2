@@ -86,3 +86,35 @@ def test_camera_point_to_charuco_identity_pose() -> None:
     assert converted.x == pytest.approx(point.x)
     assert converted.y == pytest.approx(point.y)
     assert converted.z == pytest.approx(point.z)
+
+
+# --- RGB only camera (ROBOAI-47): a pixel's ray meets the table plane ---
+
+import numpy as np
+
+from vlm_camera_service.camera_services_node import deproject_to_plane
+
+
+def _down_camera(height):
+    """Camera at (0, 0, height) looking straight down: optical x = +x, y = -y, z = -z."""
+    T = np.eye(4)
+    T[:3, :3] = np.column_stack([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    T[:3, 3] = [0.0, 0.0, height]
+    return T
+
+
+def test_centre_pixel_lands_below_the_camera_on_the_plane() -> None:
+    p = deproject_to_plane(320, 240, 600.0, 600.0, 320.0, 240.0, _down_camera(1.0), plane_z=-0.03)
+    assert p == pytest.approx([0.0, 0.0, -0.03])
+
+
+def test_off_centre_pixel_scales_with_the_distance_to_the_plane() -> None:
+    # 600 px right of centre with fx 600: one unit sideways per unit of distance
+    p = deproject_to_plane(920, 240, 600.0, 600.0, 320.0, 240.0, _down_camera(1.0), plane_z=0.0)
+    assert p == pytest.approx([1.0, 0.0, 0.0])
+
+
+def test_a_ray_that_never_meets_the_plane_gives_none() -> None:
+    T = _down_camera(1.0)
+    T[:3, :3] = np.column_stack([[1, 0, 0], [0, 0, -1], [0, 1, 0]])   # looking up-ish: optical z = +z
+    assert deproject_to_plane(320, 240, 600.0, 600.0, 320.0, 240.0, T, plane_z=0.0) is None

@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     # name from robo_reason_task_interface/config/scenes, or a JSON path. See
     # robo_reason_bringup/scenes.py.
     SCENE: str = ''
+    # Which cameras the stack runs (ROBOAI-47): 'fixed' (the depth camera at
+    # the far end of the table), 'fixed+wrist' (plus an RGB camera on the
+    # wrist, under the wrist/ namespace) or 'wrist' (a depth camera on the
+    # wrist is the only, primary camera).
+    CAMERAS: str = 'fixed'
+    # Mount of the wrist camera body in the tool0 frame, [x, y, z, roll, pitch,
+    # yaw] (metres, radians, body +x forward like Gazebo cameras): looking
+    # along the tool axis, 7 cm to the side so the gripper fingers stay out of
+    # most of the view. The simulation mounts its sensor here; on the robot
+    # the same numbers are published as a static TF (measure the real mount).
+    WRIST_CAMERA_MOUNT: List[float] = [0.0, -0.07, 0.03, 0.0, -1.5708, 0.0]
     # Alternative interfaces.yaml to read instead of the packaged one.
     INTERFACES_FILE: str = ''
 
