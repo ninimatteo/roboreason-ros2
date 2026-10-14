@@ -71,9 +71,17 @@ DETECT_OBJECTS = _fn(
     'areas such as trays), colour, size, bbox. Use the ids directly with pick, place and '
     'find_free_spot.')
 
+LOOK = _fn('look', 'Fresh camera image (attached after the result).')
+# With an RGB camera on the wrist (CAMERAS=fixed+wrist, ROBOAI-47) look can
+# show its close view too; ids and bboxes always refer to the fixed camera.
+LOOK_WRIST = _fn(
+    'look', 'Fresh camera image (attached after the result). camera "wrist": close view from the '
+    'gripper, to check a grasp or a placement; bboxes and ids always refer to the fixed camera.',
+    {'camera': {'type': 'string', 'enum': ['fixed', 'wrist']}})
+
 EXECUTION_TOOLS = [
     DETECT_OBJECTS,
-    _fn('look', 'Fresh camera image (attached after the result).'),
+    LOOK,
     _fn('inspect_object',
         'Depth measurement of an object. Returns an id (o1, o2...) for pick, plus height_m, width_m, '
         'looks_empty.',
@@ -151,6 +159,8 @@ class ToolboxConfig:
     verify_actions: bool = True
     verify_radius_m: float = 0.03
     robot_base_radius_m: float = 0.15
+    # An RGB camera on the wrist next to the fixed one: look(camera='wrist').
+    wrist_camera: bool = False
 
 
 @dataclass
@@ -185,27 +195,42 @@ class Toolbox:
         except Exception as exc:   # tool failures go back to the model, not up the stack
             return ToolResult(f'ERROR: {name} failed: {type(exc).__name__}: {exc}')
 
+    def execution_tools(self) -> list:
+        return [LOOK_WRIST if t is LOOK and self.config.wrist_camera else t for t in EXECUTION_TOOLS]
+
     def capture(self) -> str:
         """Grab a frame; returns the path of the image to show the model."""
         path, w, h = self.backend.capture()
         self.full_size = self.image_size = (w, h)
         self.last_full = path
+        path, self.image_size = self._downscale(path, w, h)
+        self.images.append(path)
+        return path
+
+    def _downscale(self, path, w, h):
         sw = self.config.send_width
         if sw and w > sw:
             from PIL import Image
             sh = round(h * sw / w)
             small = str(path).rsplit('.', 1)[0] + f'_{sw}.png'
             Image.open(path).resize((sw, sh), Image.LANCZOS).save(small)
-            path, self.image_size = small, (sw, sh)
-        self.images.append(path)
-        return path
+            return small, (sw, sh)
+        return path, (w, h)
 
     # ── perception ─────────────────────────────────────────────────────────
 
     _pending_hold = None
     last_full = None
 
-    def _tool_look(self):
+    def _tool_look(self, camera='fixed'):
+        if camera == 'wrist':
+            if not self.config.wrist_camera:
+                return ToolResult('ERROR: there is no wrist camera in this setup; look without camera.')
+            # the fixed camera's frame stays the one bboxes and ids refer to
+            path, w, h = self.backend.capture(camera='wrist')
+            path, _ = self._downscale(path, w, h)
+            self.images.append(path)
+            return ToolResult('Wrist camera image attached below.', image_path=path)
         path = self.capture()
         return ToolResult('New image attached below.', image_path=path)
 

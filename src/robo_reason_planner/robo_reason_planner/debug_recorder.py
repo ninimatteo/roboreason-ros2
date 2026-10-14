@@ -126,6 +126,8 @@ class DebugRun:
     def __init__(self, mode: str, command: str, config: dict):
         self.mode = mode
         self.command = command
+        # the camera setup (ROBOAI-47) is part of every trial's variant
+        config = {**config, 'cameras': settings.CAMERAS}
         self.config = config
         self._started = _now()
         self._logs = []

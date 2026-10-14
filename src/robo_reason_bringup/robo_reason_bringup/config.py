@@ -19,6 +19,10 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Camera setups for settings.CAMERAS (ROBOAI-47), as the GUI lists them.
+CAMERA_SETUPS = ('fixed', 'fixed+wrist', 'wrist')
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix='ROBOREASON_',
@@ -38,13 +42,19 @@ class Settings(BaseSettings):
     # the far end of the table), 'fixed+wrist' (plus an RGB camera on the
     # wrist, under the wrist/ namespace) or 'wrist' (a depth camera on the
     # wrist is the only, primary camera).
-    CAMERAS: str = 'fixed'
+    CAMERAS: str = 'fixed'   # one of CAMERA_SETUPS
     # Mount of the wrist camera body in the tool0 frame, [x, y, z, roll, pitch,
     # yaw] (metres, radians, body +x forward like Gazebo cameras): looking
     # along the tool axis, 7 cm to the side so the gripper fingers stay out of
     # most of the view. The simulation mounts its sensor here; on the robot
     # the same numbers are published as a static TF (measure the real mount).
     WRIST_CAMERA_MOUNT: List[float] = [0.0, -0.07, 0.03, 0.0, -1.5708, 0.0]
+    # Real wrist RGB camera for 'fixed+wrist' (wrist_rgb_camera_node, plain
+    # V4L2): its device, and [fx, fy, cx, cy] once calibrated. Empty
+    # intrinsics: estimated from the horizontal field of view (rad).
+    WRIST_CAMERA_DEVICE: str = '/dev/video0'
+    WRIST_CAMERA_INTRINSICS: List[float] = []
+    WRIST_CAMERA_HFOV: float = 1.2
     # Alternative interfaces.yaml to read instead of the packaged one.
     INTERFACES_FILE: str = ''
 

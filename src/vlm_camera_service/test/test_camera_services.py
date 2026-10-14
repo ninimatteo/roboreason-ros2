@@ -1,3 +1,4 @@
+import math
 import pytest
 
 from geometry_msgs.msg import Point
@@ -118,3 +119,11 @@ def test_a_ray_that_never_meets_the_plane_gives_none() -> None:
     T = _down_camera(1.0)
     T[:3, :3] = np.column_stack([[1, 0, 0], [0, 0, -1], [0, 1, 0]])   # looking up-ish: optical z = +z
     assert deproject_to_plane(320, 240, 600.0, 600.0, 320.0, 240.0, T, plane_z=0.0) is None
+
+
+def test_wrist_camera_intrinsics_from_its_field_of_view() -> None:
+    from vlm_camera_service.wrist_rgb_camera_node import camera_info, intrinsics_from_fov
+    fx, fy, cx, cy = intrinsics_from_fov(640, 480, math.pi / 2)   # 90 deg: f is half the width
+    assert abs(fx - 320.0) < 1e-9 and fx == fy and (cx, cy) == (320.0, 240.0)
+    info = camera_info(640, 480, [fx, fy, cx, cy], 'wrist_camera_optical_frame')
+    assert info.k[0] == fx and info.k[2] == cx and info.k[5] == cy

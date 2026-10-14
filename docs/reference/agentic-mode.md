@@ -35,7 +35,7 @@ meno in ogni tool call.
 | Tool | Cosa fa | Da dove viene |
 |---|---|---|
 | `detect_objects` | segmenta dalla depth tutto quello che sta sul tavolo: id, colore (dall'RGB), dimensioni; il tavolo e i tray come aree | nuovo: il modello deve solo scegliere l'id giusto, non localizzare |
-| `look` | immagine nuova | |
+| `look(camera)` | immagine nuova; con `CAMERAS=fixed+wrist` anche `camera='wrist'` (vedi sotto) | |
 | `inspect_object(bbox)` | top centre, altezza, larghezza, `grasp_point` a metà corpo, `held_height_below_grasp_m`, `looks_empty` | compensazione di profondità e grasp width di `vlm_planner_node` |
 | `inspect_area(bbox)` | quota della superficie ed estensione xy | lookup della superficie di `_fix_release_height` |
 | `find_free_spot(bbox, footprint_m)` | il punto libero migliore dentro un'area, lontano da oggetti già presenti e dai bordi | `distribute_zone_releases`, ma misurato dalla depth invece che dedotto dal plan |
@@ -97,6 +97,38 @@ In `config.py`, sovrascrivibili con `ROBOREASON_*`:
 | `AGENT_MAX_DURATION_S` | 900 | budget della fase di esecuzione |
 | `AGENT_KEEP_IMAGES` | 2 | immagini tenute nel contesto |
 | `EXECUTE_TIMEOUT_S` | 900 | alzato da 300: l'esecuzione include le chiamate al modello |
+
+### Camera al polso (ROBOAI-47)
+
+`CAMERAS` sceglie il setup: `fixed` (default, la sola camera fissa),
+`fixed+wrist` o `wrist`. Si cambia anche dalla GUI, selettore "Cameras" nella
+Configuration (`GET`/`POST /api/cameras`; in simulazione il cambio vale dal
+prossimo avvio della sim, perché la camera al polso sta nella robot
+description, e la GUI lo ricorda con un avviso).
+
+Con `fixed+wrist` l'agent ha `look(camera='wrist')`: un'immagine RGB dal polso,
+solo per guardare da vicino (un cubo coperto, un'etichetta, se il gripper tiene
+l'oggetto). Le bbox e tutti i tool di misura restano sull'ultima immagine della
+camera fissa, che `look(camera='wrist')` non sostituisce. Nel debug run le
+immagini del polso sono `NNN_wrist.png`, e `config.json` registra `cameras`.
+
+Sul robot vero il polso è una webcam qualsiasi letta da `wrist_rgb_camera_node`
+(V4L2 via OpenCV, `vlm_camera_service`), lanciato da `gui_stack.launch.py` sui
+topic `wrist/camera/color/*`. La posa viene dal TF statico
+`tool0 → wrist_camera_link` costruito da `WRIST_CAMERA_MOUNT` (da misurare sul
+montaggio reale). Gli intrinseci sono stimati dal field of view finché non si
+calibra la camera:
+
+| Campo | Default | |
+|---|---|---|
+| `CAMERAS` | `fixed` | `fixed`, `fixed+wrist`, `wrist` |
+| `WRIST_CAMERA_MOUNT` | `[0, -0.07, 0.03, 0, -1.5708, 0]` | posa del corpo camera in `tool0` |
+| `WRIST_CAMERA_DEVICE` | `/dev/video0` | device V4L2 |
+| `WRIST_CAMERA_INTRINSICS` | `[]` | `[fx, fy, cx, cy]` calibrati; vuoto: dal FOV |
+| `WRIST_CAMERA_HFOV` | `1.2` | rad, usato solo senza intrinseci |
+
+Il setup `wrist` (solo polso, con depth) richiede la survey pose di ROBOAI-48
+e sul robot vero una camera RGBD al polso, che oggi non c'è.
 
 Il parametro ROS `coords` (`auto`, `pixel`, `norm1000`) gestisce i modelli Qwen,
 che danno le bbox in coordinate normalizzate 0..1000 qualunque sia la

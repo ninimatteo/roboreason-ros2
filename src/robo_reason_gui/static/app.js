@@ -709,6 +709,32 @@ selScene.addEventListener('change', async () => {
   }
 });
 
+// ---- cameras (ROBOAI-47) ----
+const selCameras = document.getElementById('sel-cameras');
+
+async function loadCameras() {
+  try {
+    const data = await (await fetch('/api/cameras')).json();
+    fillSelect(selCameras, data.setups || []);
+    selCameras.value = data.current;
+  } catch (_e) {}
+}
+
+selCameras.addEventListener('change', async () => {
+  try {
+    const data = await postJSON('/api/cameras', { cameras: selCameras.value });
+    if (!data.ok) {
+      toast('Cameras: ' + data.error, 'error');
+      return loadCameras();
+    }
+    toast(data.restart_sim
+      ? `Cameras ${data.cameras}: restart the simulation and the stack`
+      : `Cameras ${data.cameras}: applies at the next stack start`, 'info');
+  } catch (err) {
+    toast('Camera change failed: ' + err, 'error');
+  }
+});
+
 // (isSim is declared at the top, next to the other shared state.)
 const simState = document.getElementById('sim-state');
 const simInfo = document.getElementById('sim-info');
@@ -1213,6 +1239,7 @@ chatForm.addEventListener('submit', async (e) => {
 
 loadOptions();
 loadScenes();
+loadCameras();
 loadBenchmarkTasks();
 loadProfile().then(() => {
   pollDriver();

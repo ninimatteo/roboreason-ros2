@@ -84,6 +84,9 @@ class AgentNode(Node):
         self.create_service(CancelExecution, names.cancel_execution, self._on_cancel, callback_group=cb)
         self._cancellation = PlanningCancellation(self, cb)
         self._get_image = self.create_client(GetImage, names.get_image, callback_group=cb)
+        # the RGB camera on the wrist, under wrist/ (ROBOAI-47)
+        self._get_wrist_image = (self.create_client(GetImage, f'wrist/{names.get_image}', callback_group=cb)
+                                 if settings.CAMERAS == 'fixed+wrist' else None)
         self._deproject = self.create_client(Deproject, names.deproject, callback_group=cb)
         self._terminal_logs = self.create_client(Trigger, names.terminal_logs, callback_group=cb)
         self._skills = ActionClient(self, ExecuteSkill, names.execute_skill, callback_group=cb)
@@ -235,6 +238,7 @@ class AgentNode(Node):
             free_spot_margin_m=settings.ZONE_PLACEMENT_MARGIN_M,
             coords=params['coords'],
             send_width=params['image_width'],
+            wrist_camera=self._get_wrist_image is not None,
         )
 
         def log(line):
@@ -340,13 +344,14 @@ class _RosBackend:
         self.frames = frames
         self.count = 0
 
-    def capture(self):
-        resp = self.node.call(self.node._get_image, GetImage.Request(), names.get_image)
+    def capture(self, camera='fixed'):
+        client = self.node._get_wrist_image if camera == 'wrist' else self.node._get_image
+        resp = self.node.call(client, GetImage.Request(), client.srv_name)
         if not resp.success:
             raise RuntimeError(f'get_image failed: {resp.error_message}')
         img = self.node._bridge.imgmsg_to_cv2(resp.image, desired_encoding='bgr8')
         self.count += 1
-        path = self.frames / f'{self.count:03d}.png'
+        path = self.frames / f'{self.count:03d}{"_wrist" if camera == "wrist" else ""}.png'
         self.node._cv2.imwrite(str(path), img)
         return str(path), img.shape[1], img.shape[0]
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from robo_reason_planner.agent import prompts
-from robo_reason_planner.agent.tools import ACTION_TOOLS, EXECUTION_TOOLS, SUBMIT_PLAN, Toolbox, ToolResult
+from robo_reason_planner.agent.tools import ACTION_TOOLS, SUBMIT_PLAN, Toolbox, ToolResult
 from robo_reason_planner.planning_cancel import PlanningCancelled
 
 
@@ -103,7 +103,7 @@ class AgentSession:
                 break
             self._compact_history()
 
-            reply = self._chat(EXECUTION_TOOLS, cancelled=cancelled)
+            reply = self._chat(self.toolbox.execution_tools(), cancelled=cancelled)
             if reply.content.strip():
                 self.log(f'[Agent] says: {reply.content.strip()[:300]}')
             if not reply.tool_calls:

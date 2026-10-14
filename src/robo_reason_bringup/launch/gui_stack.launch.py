@@ -74,7 +74,8 @@ def _wrist_cameras(context):
     comes from TF at every request and pixels are deprojected onto the table
     plane. It stays in the stack's namespace, so it reads the stack's TF. 'wrist': the wrist camera (with depth) is the primary one,
     under the usual names. On the real robot the camera's mount is published
-    as a static TF from tool0; in simulation the robot description has it.
+    as a static TF from tool0 and, for 'fixed+wrist', the RGB frames come
+    from wrist_rgb_camera_node (plain V4L2); in simulation Gazebo has both.
     """
     if 'wrist' not in settings.CAMERAS:
         return []
@@ -109,6 +110,13 @@ def _wrist_cameras(context):
                  arguments=['--roll', '-1.5708', '--yaw', '-1.5708',
                             '--frame-id', 'wrist_camera_link', '--child-frame-id', WRIST_CAMERA_FRAME]),
         ]
+        if not alone:
+            actions.append(Node(
+                package='vlm_camera_service', executable='wrist_rgb_camera_node', output='screen',
+                parameters=[{'device': settings.WRIST_CAMERA_DEVICE, 'horizontal_fov': settings.WRIST_CAMERA_HFOV,
+                             'intrinsics': list(settings.WRIST_CAMERA_INTRINSICS) or [0.0],
+                             'frame_id': WRIST_CAMERA_FRAME, 'color_topic': f'wrist/{names.color}',
+                             'camera_info_topic': f'wrist/{names.camera_info}'}]))
     return actions
 
 
