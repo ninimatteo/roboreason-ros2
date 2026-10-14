@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # most of the view. The simulation mounts its sensor here; on the robot
     # the same numbers are published as a static TF (measure the real mount).
     WRIST_CAMERA_MOUNT: List[float] = [0.0, -0.07, 0.03, 0.0, -1.5708, 0.0]
+    # Real wrist RGB camera for 'fixed+wrist' (wrist_rgb_camera_node, plain
+    # V4L2): its device, and [fx, fy, cx, cy] once calibrated. Empty
+    # intrinsics: estimated from the horizontal field of view (rad).
+    WRIST_CAMERA_DEVICE: str = '/dev/video0'
+    WRIST_CAMERA_INTRINSICS: List[float] = []
+    WRIST_CAMERA_HFOV: float = 1.2
     # Alternative interfaces.yaml to read instead of the packaged one.
     INTERFACES_FILE: str = ''
 

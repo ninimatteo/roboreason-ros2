@@ -37,6 +37,11 @@ ros2 run robo_reason_gui gui_node
   temperature, mock LLM. **Apply to running planner** pushes these onto the
   live `llm_planner_node`/`vlm_planner_node` via ROS `SetParameters` — no
   relaunch needed.
+- **Cameras** (in Configuration) — camera setup: `fixed`, `fixed+wrist`,
+  `wrist` (`ROBOREASON_CAMERAS`). With `fixed+wrist` the AGENT mode can look
+  through the wrist camera; on the real robot the wrist webcam is read by
+  `wrist_rgb_camera_node` (`ROBOREASON_WRIST_CAMERA_DEVICE`). See
+  `docs/reference/agentic-mode.md`.
 - **Camera (service)** — start/stop the Orbbec camera script, **Recalibrate
   ChArUco** to force a fresh camera→base transform without restarting the
   camera node, and a "Calibrated" LED reflecting `/camera/calibration_status`.

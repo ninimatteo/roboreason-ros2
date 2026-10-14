@@ -26,6 +26,7 @@ setup(
             "camera_services_node = vlm_camera_service.camera_services_node:main",
             "mock_camera_service_node = vlm_camera_service.mock_camera_service_node:main",
             "pixel_overlay_viewer_node = vlm_camera_service.pixel_overlay_viewer_node:main",
+            "wrist_rgb_camera_node = vlm_camera_service.wrist_rgb_camera_node:main",
         ],
     },
 )
