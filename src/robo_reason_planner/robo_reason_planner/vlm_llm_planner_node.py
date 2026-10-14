@@ -46,6 +46,7 @@ from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.srv import Deproject, GetImage, PlanTask
 from robo_reason_planner.agent_runner import run_plan_loop
+from robo_reason_planner import model_coords
 from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
 from robo_reason_planner.planning_cancel import PlanningCancellation, PlanningCancelled
 from robo_reason_reasoning.embodied_agent import EmbodiedAgent
@@ -80,6 +81,7 @@ class VLMLLMPlannerNode(Node):
         self.declare_parameter('vlm_model_name', settings.VLM_MODEL_NAME)
         self.declare_parameter('vlm_temperature', settings.VLM_TEMPERATURE)
         self.declare_parameter('reasoning_effort', settings.VLM_REASONING_EFFORT)
+        self.declare_parameter('coords', settings.VLM_COORDS)
         self.declare_parameter('tmp_dir', settings.TMP_DIR)
 
         dotenv.load_dotenv()
@@ -198,6 +200,12 @@ class VLMLLMPlannerNode(Node):
             f'VLM detected {len(detected.objects)} objects, {len(detected.targets)} targets: '
             f'{detected.model_dump_json()}'
         )
+
+        coords = model_coords.resolve(self.get_parameter('coords').value, vlm_model_name)
+        if coords != 'pixel':
+            width = img_resp.image.width
+            for entry in [*detected.objects, *detected.targets]:
+                entry.pixel_center = model_coords.to_pixels(entry.pixel_center, width, coords)
 
         # 2b. Debug overlay of detected pixel centers — written before deprojection
         #     so it exists even if deprojection fails.

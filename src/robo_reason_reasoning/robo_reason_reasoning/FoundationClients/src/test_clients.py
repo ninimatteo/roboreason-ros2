@@ -318,7 +318,7 @@ class TestFoundationClients(unittest.TestCase):
         self.assertEqual(response, '{"key": "value"}')
 
     def test_vlm_client_groq_structured_output(self):
-        client = VLMClient(model_name="groq/qwen3.6-27b", api_key="test_key")
+        client = VLMClient(model_name="groq/qwen3.8-27b", api_key="test_key")
 
         mock_create = self.mock_groq_instance.chat.completions.create
         mock_message = MagicMock()
@@ -335,7 +335,7 @@ class TestFoundationClients(unittest.TestCase):
         )
 
         call_args = mock_create.call_args[1]
-        self.assertEqual(call_args["model"], "qwen/qwen3.6-27b")
+        self.assertEqual(call_args["model"], "qwen/qwen3.8-27b")
         expected_schema = TestResponseModel.model_json_schema()
         self.assertEqual(
             call_args["response_format"],
@@ -350,7 +350,7 @@ class TestFoundationClients(unittest.TestCase):
         self.assertEqual(response, '{"name": "Bob", "age": 25}')
 
     def test_vlm_client_groq_json_mode_only(self):
-        client = VLMClient(model_name="groq/qwen3.6-27b", api_key="test_key")
+        client = VLMClient(model_name="groq/qwen3.8-27b", api_key="test_key")
 
         mock_create = self.mock_groq_instance.chat.completions.create
         mock_message = MagicMock()

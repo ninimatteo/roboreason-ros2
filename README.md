@@ -201,7 +201,7 @@ ros2 run robo_reason_task_interface task_interface_node
 # Place PNGs in /your_path/mock_frames/ first
 ros2 launch robo_reason_bringup vlm_dry_run.launch.py \
   images_dir:=/your_path/mock_frames \
-  model_name:=groq/qwen3.6-27b
+  model_name:=groq/qwen3.8-27b
 # In a second terminal:
 ros2 run robo_reason_task_interface task_interface_node
 ```

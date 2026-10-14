@@ -53,11 +53,11 @@ class ModelRegistry:
     # dropped 'qwen3-32b' (qwen/qwen3-32b, no vision) entirely since the last
     # check; removed rather than left dangling. Added 'qwen3.8-27b', a newly
     # listed vision-enabled model alongside the existing qwen3.6-27b.
+    # 2026-10-13: qwen3.6-27b answers 404 model_not_found, removed (ROBOAI-43).
     GROQ_MODELS = {
         "openai-oss-20b": "openai/gpt-oss-20b",
         "openai-oss-120b": "openai/gpt-oss-120b",
         # vision enabled models
-        "qwen3.6-27b": "qwen/qwen3.6-27b",
         "qwen3.8-27b": "qwen/qwen3.8-27b",
     }
 

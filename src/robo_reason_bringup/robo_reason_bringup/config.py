@@ -127,10 +127,17 @@ class Settings(BaseSettings):
     # Applies to both the direct VLM planner (vlm_planner_node) and the
     # VLM->LLM hybrid's scene-grounding call (vlm_llm_planner_node).
     VLM_REASONING_EFFORT: str = ''
+    # How the VLM writes image coordinates, for both VLM planners:
+    # 'pixel'    — pixels of the image it was sent.
+    # 'norm1000' — 0..1000 on both axes relative to the image width, what the
+    #              Qwen vision models on Groq answer whatever the image size
+    #              (ROBOAI-43; the agent's own 'coords' parameter is the same).
+    # 'auto'     — norm1000 for Qwen models, pixel otherwise.
+    VLM_COORDS: str = 'auto'
 
     # ── VLM+LLM hybrid planner (scene grounding call, independent of MODEL_NAME
     # which is used for the subsequent LLM planning call) ─────────────────────
-    VLM_MODEL_NAME: str = 'groq/qwen3.6-27b'
+    VLM_MODEL_NAME: str = 'groq/qwen3.8-27b'
     VLM_TEMPERATURE: float = 0.1
 
     # ── Depth-informed grasp geometry (VLM/VLM_LLM pipelines) ──────────────────

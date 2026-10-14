@@ -276,7 +276,7 @@ ros2 run robo_reason_task_interface task_interface_node
 **VLM dry-run (mock PNG camera):**
 ```bash
 ros2 launch robo_reason_bringup vlm_dry_run.launch.py \
-  images_dir:=/path/to/mock_frames model_name:=groq/qwen3.6-27b
+  images_dir:=/path/to/mock_frames model_name:=groq/qwen3.8-27b
 ```
 
 **API keys** — set `{PROVIDER}_API_KEY` env vars (e.g. `GROQ_API_KEY`, `NEBIUS_API_KEY`, `ANTHROPIC_API_KEY`) or add them to a `.env` file in the working directory.
@@ -334,7 +334,7 @@ See `docs/reference/agentic-mode.md`; sim evaluation in `benchmark/agent_sim/`.
 
 `EmbodiedAgent` is the entry point: it selects one of 7 reasoning method classes (`FHP`, `React`, `CoTSC`, `StepAction`, `SelfRefine`, `TreeOfThought`) based on `reasoning_mode`, and instantiates either `LLMClient` or `VLMClient`.
 
-All clients use the `provider/model-name` format (e.g. `groq/qwen3.6-27b`, `nebius/nvidia-nemotron-120b`). The `ModelRegistry` in `base_client.py` maps short names to official API IDs; pass the full `provider/model-name` string directly if the model isn't registered there.
+All clients use the `provider/model-name` format (e.g. `groq/qwen3.8-27b`, `nebius/nvidia-nemotron-120b`). The `ModelRegistry` in `base_client.py` maps short names to official API IDs; pass the full `provider/model-name` string directly if the model isn't registered there.
 
 Supported providers: Groq, Nebius (OpenAI-compatible), OpenAI, Anthropic, Google Gemini — selected by the prefix.
 
