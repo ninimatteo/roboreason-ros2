@@ -83,6 +83,7 @@ class UR5SkillExecutorNode(Node):
       open_gripper  → gripper_open()
       close_gripper → gripper_close()
       move_home     → move_to_joints(HOME_JOINTS)
+      survey        → IK → move_to_joints() at SURVEY_POSITION, gripper down
       wait          → time.sleep(t)
 
     Gripper is controlled via /io_and_status_controller/set_io (digital out 0).
@@ -129,6 +130,7 @@ class UR5SkillExecutorNode(Node):
         self._current_joints = None
         self._joint_lock = threading.Lock()
 
+        self._survey_joints = None        # IK of SURVEY_POSITION, solved once
         # State from last 'approach' — reused by 'pick' and 'release'
         self._last_approach_R = None      # rotation matrix
         self._last_approach_hover = None  # hover position [x, y, z]
@@ -672,6 +674,19 @@ class UR5SkillExecutorNode(Node):
             goal_handle.publish_feedback(feedback)
             if not self._move_to_joints(self.HOME_JOINTS, duration_sec=4.0, goal_handle=goal_handle):
                 raise RuntimeError('move_to home failed')
+
+        elif skill_name == 'survey':
+            # IK solved once and reused: every survey image is taken from the
+            # same camera pose, whatever pose the arm starts from.
+            if self._survey_joints is None:
+                self._survey_joints = self._compute_ik(*settings.SURVEY_POSITION)
+            if self._survey_joints is None:
+                raise ValueError(f'IK failed for the survey position {settings.SURVEY_POSITION}')
+            feedback.status = 'Moving to the survey pose'
+            feedback.progress = 0.3
+            goal_handle.publish_feedback(feedback)
+            if not self._move_to_joints(self._survey_joints, duration_sec=4.0, goal_handle=goal_handle):
+                raise RuntimeError('move_to survey failed')
 
         elif skill_name == 'open_gripper':
             force = float(args.get('force', 20.0))

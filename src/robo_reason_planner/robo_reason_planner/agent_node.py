@@ -239,6 +239,7 @@ class AgentNode(Node):
             coords=params['coords'],
             send_width=params['image_width'],
             wrist_camera=self._get_wrist_image is not None,
+            survey=settings.CAMERAS == 'wrist',
         )
 
         def log(line):

@@ -2,7 +2,7 @@
 
 from robo_reason_bringup.config import settings
 
-ALLOWED_SKILLS = {"approach", "pick", "release", "move_home", "wait"}
+ALLOWED_SKILLS = {"approach", "pick", "release", "move_home", "survey", "wait"}
 
 # How close two releases' (x, y) need to be to count as "the same spot" —
 # for LLM this is a near-exact echo of a target's position, but VLM/VLM_LLM

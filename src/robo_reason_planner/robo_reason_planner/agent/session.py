@@ -78,7 +78,7 @@ class AgentSession:
                 submitted = submitted or (call.name == 'submit_plan' and not result.text.startswith('ERROR'))
             if submitted and self.toolbox.plan:
                 return self.toolbox.plan
-            if not reply.tool_calls:
+            if not submitted:   # no call, or a tool the draft does not offer
                 self._add_user('Call submit_plan with the steps.')
         raise RuntimeError('the model did not submit a plan')
 
