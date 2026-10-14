@@ -260,6 +260,20 @@ def test_a_cube_on_a_block_is_measured_from_the_block():
     assert below['stands_on'] == 'table' and tb.refs[below['id']]['pickable']
     assert abs(top['height_m'] - 0.045) < 0.01                       # from the block, not the table
     assert tb.refs[top['id']]['grasp_point'][2] > _TABLE_Z + 0.05    # above the block's top
+    # the block's box holds the cube too: the block is measured from its own top (ROBOAI-56)
+    assert abs(below['height_m'] - 0.05) < 0.01
+
+
+def test_a_support_colour_leaves_out_what_stands_on_it():
+    from PIL import Image, ImageDraw
+    from robo_reason_planner.agent.tools import _blob_colour
+    im = Image.new('RGB', (100, 100), (240, 240, 240))
+    d = ImageDraw.Draw(im)
+    d.rectangle((10, 10, 90, 90), fill=(10, 10, 10))        # a black block
+    d.rectangle((15, 15, 85, 85), fill=(240, 220, 20))      # a yellow cube on it, most of the box
+    blob = {'bbox_px': [10, 10, 90, 90]}
+    assert _blob_colour(im, [], [], blob) == 'yellow'
+    assert _blob_colour(im, [], [], blob, [[15, 15, 85, 85]]) == 'black'
 
 
 def test_a_stack_of_equal_cubes_is_one_thing_from_the_fixed_camera():

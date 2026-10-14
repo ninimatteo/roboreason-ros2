@@ -298,30 +298,34 @@ class Toolbox:
                  # the robot's own base stands at the origin of its frame
                  and math.hypot(b['top_center'][0], b['top_center'][1]) >= self.config.robot_base_radius_m]
         self.surfaces = [(b['xy_range'], b['top_center'][2]) for b in blobs]
-        ids, entries = [], []
+        belows = []
         for i, b in enumerate(blobs):
             below = geometry.support_index(b['top_center'], b['top_center'][2],
                                            self.surfaces[:i] + self.surfaces[i + 1:])
-            if below is not None and below >= i:
-                below += 1
+            belows.append(below + 1 if below is not None and below >= i else below)
+        ids, entries = [], []
+        for i, (b, below) in enumerate(zip(blobs, belows)):
+            # what stands on this thing: its box holds those too (ROBOAI-56)
+            on_top = [blobs[j]['bbox_px'] for j, k in enumerate(belows) if k == i]
             support_z = self.surfaces[below][1] if below is not None else self.config.table_z
             x0, y0, x1, y1 = b['bbox_px']
             box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
             (xa, xb), (ya, yb) = b['xy_range']
             wide = max(xb - xa, yb - ya) > self.config.max_grasp_width_m
             m = None
-            if not wide:
+            if not wide and not on_top:
                 box = self._refine(box, top_z=b['top_center'][2]) or box
                 m = self._measure(box, support_z=support_z)
             if m is None:
-                # too wide to pick: the blob's own extent is enough to place on it
+                # too wide to pick, or something stands on it and its box would
+                # measure that too: the blob's own top surface
                 top = b['top_center']
                 m = {'top_center': top, 'height_m': round(top[2] - support_z, 4),
                      'width_m': round(xb - xa, 4), 'depth_m': round(yb - ya, 4), 'looks_empty': False}
             cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step)
             ref = self._store('o', self._entity(m, box, cut_off=cut))
             wide = not self.refs[ref]['pickable']
-            entry = {'id': ref, 'color': _blob_colour(image, pixels, pts, b) if image is not None else None,
+            entry = {'id': ref, 'color': _blob_colour(image, pixels, pts, b, on_top) if image is not None else None,
                      'bbox': shown(box), 'height_m': m['height_m'], 'width_m': m.get('width_m'),
                      'depth_m': m.get('depth_m')}
             if wide:
@@ -758,11 +762,15 @@ class Toolbox:
         return [max(x0 * fx, 0.0), max(y0 * fy, 0.0), min(x1 * fx, fw - 1.0), min(y1 * fy, fh - 1.0)]
 
 
-def _blob_colour(image, pixels, pts, blob):
-    """Median colour of the image inside a blob's bbox, as a word."""
-    x0, y0, x1, y1 = blob['bbox_px']
-    crop = image.crop((int(x0), int(y0), int(x1) + 1, int(y1) + 1))
-    data = sorted(crop.getdata(), key=sum)
+def _blob_colour(image, pixels, pts, blob, holes=()):
+    """Median colour of the image inside a blob's bbox, as a word, leaving out
+    the boxes in holes (the things standing on it)."""
+    x0, y0, x1, y1 = (int(v) for v in blob['bbox_px'])
+    crop = image.crop((x0, y0, x1 + 1, y1 + 1))
+    w = crop.size[0]
+    data = [c for i, c in enumerate(crop.getdata())
+            if not any(h[0] <= x0 + i % w <= h[2] and h[1] <= y0 + i // w <= h[3] for h in holes)]
+    data = sorted(data, key=sum)
     if not data:
         return None
     mid = data[len(data) // 4: 3 * len(data) // 4] or data      # drop shadows and highlights
