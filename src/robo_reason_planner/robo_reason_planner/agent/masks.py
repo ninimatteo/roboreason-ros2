@@ -15,6 +15,8 @@ The output has the shape of detect_blobs, so ids, stands_on, Set of Mark and
 the measurements downstream are the same for both segmenters.
 """
 
+import math
+
 import numpy as np
 
 from robo_reason_planner.agent import geometry
@@ -37,12 +39,13 @@ def sample_pixels(mask, max_samples: int, step: int = 4) -> list:
         step *= 2
 
 
-def blob(mask, pts, floor: float, raised_m: float = 0.01, min_frac: float = 0.6,
+def blob(mask, pixels, pts, floor: float, raised_m: float = 0.01, min_frac: float = 0.6,
          max_height: float = geometry.ABOVE_TABLE_NOTE_M, top_m: float = 0.015,
          min_samples: int = 5):
     """A mask as a detect_blobs entry, or None when it is not a thing.
 
-    pts: deprojected samples of the mask (None where there is no depth).
+    pixels, pts: samples of the mask and their deprojection (None where
+    there is no depth).
     The top is the dominant height among the raised samples: side faces seen
     obliquely spread over many heights, the top surface shares one.
     """
@@ -53,7 +56,9 @@ def blob(mask, pts, floor: float, raised_m: float = 0.01, min_frac: float = 0.6,
     if len(raised) < min_frac * len(valid) or len(raised) < min_samples:
         return None
     surface = geometry._dominant_height(raised, 0.01)
-    top = [p for p in raised if abs(p[2] - surface) <= top_m]
+    on_top = [abs(p[2] - surface) <= top_m and raised_m < p[2] - floor <= max_height
+              if p is not None else False for p in pts]
+    top = [p for p, t in zip(pts, on_top) if t]
     vs, us = np.nonzero(mask)
     xs, ys, tz = sorted(p[0] for p in top), sorted(p[1] for p in top), sorted(p[2] for p in top)
     return {
@@ -64,7 +69,9 @@ def blob(mask, pts, floor: float, raised_m: float = 0.01, min_frac: float = 0.6,
         'top_center': geometry._r([xs[len(xs) // 2], ys[len(ys) // 2], tz[len(tz) // 2]]),
         'xy_range': [[round(xs[0], 4), round(xs[-1], 4)], [round(ys[0], 4), round(ys[-1], 4)]],
         'narrow_m': round(geometry.narrowest_width(top), 4),
-        'top_points': top,
+        'top_pixels': [px for px, t in zip(pixels, on_top) if t],
+        # nearest the robot's base axis any sample of the mask comes
+        'min_reach_m': round(min(math.hypot(p[0], p[1]) for p in valid), 4),
         'mask': mask,
     }
 

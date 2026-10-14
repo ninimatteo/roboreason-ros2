@@ -377,8 +377,10 @@ class Toolbox:
         pts = iter(self._deproject(flat))
         blobs = []
         for mask, px in zip(pieces, samples):
-            b = sam_masks.blob(mask, [next(pts) for _ in px], floor)
-            if b is not None:
+            b = sam_masks.blob(mask, px, [next(pts) for _ in px], floor)
+            # nothing on the table overlaps the robot's base: a mask reaching
+            # into it is the robot
+            if b is not None and b['min_reach_m'] >= self.config.robot_base_radius_m:
                 blobs.append(b)
         return sam_masks.drop_covered(blobs)
 
@@ -820,10 +822,12 @@ class Toolbox:
 
 
 def _blob_colour(image, blob):
-    """Median colour of the image inside a blob's mask (SAM) or bbox, as a word."""
-    if 'mask' in blob:
-        import numpy as np
-        data = sorted(map(tuple, np.asarray(image)[blob['mask']].tolist()), key=sum)
+    """Median colour of a blob's top surface (SAM) or of the image inside its
+    bbox, as a word. The top, not the whole mask: shaded sides make a white
+    cube gray."""
+    if blob.get('top_pixels'):
+        data = sorted((image.getpixel((min(int(u), image.width - 1), min(int(v), image.height - 1)))
+                       for u, v in blob['top_pixels']), key=sum)
     else:
         x0, y0, x1, y1 = blob['bbox_px']
         crop = image.crop((int(x0), int(y0), int(x1) + 1, int(y1) + 1))
