@@ -168,6 +168,9 @@ class Toolbox:
     gripper: str = 'open'
     refs: dict = field(default_factory=dict)     # id -> what a perception tool measured
     held: dict = None                            # measurement of the object picked last
+    # ([[x0, x1], [y0, y1]], surface_z) of the areas (trays) found by the last
+    # detect: what an object measured there stands on
+    surfaces: list = field(default_factory=list)
 
     # ── entry point ────────────────────────────────────────────────────────
 
@@ -223,6 +226,16 @@ class Toolbox:
         image = self._full_image()
         sx, sy = self.image_size[0] / fw, self.image_size[1] / fh
         found = []
+        # areas first: the objects measured below stand on them
+        sized = []
+        for b in blobs:
+            x0, y0, x1, y1 = b['bbox_px']
+            box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
+            scale = self.backend.metres_per_pixel(b['top_center'])
+            size = max((box[2] - box[0]) * scale[0], (box[3] - box[1]) * scale[1]) if scale else None
+            sized.append((b, box, size))
+        self.surfaces = [(b['xy_range'], b['top_center'][2]) for b, _, size in sized
+                         if size is not None and size > self.config.area_min_size_m]
         # The table itself, as an area: "in a line on the table" is then a
         # find_free_spot on it (the room floor beyond the edge, objects and
         # the robot's reach are excluded there), with no box to draw.
@@ -232,16 +245,12 @@ class Toolbox:
             found.append({'id': ref, 'kind': 'area', 'name': 'table', 'bbox': [
                 round(table['bbox_full'][0] * sx), round(table['bbox_full'][1] * sy),
                 round(table['bbox_full'][2] * sx), round(table['bbox_full'][3] * sy)]})
-        for b in sorted(blobs, key=lambda b: (b['bbox_px'][0], b['bbox_px'][1])):
+        for b, box, size in sorted(sized, key=lambda t: (t[0]['bbox_px'][0], t[0]['bbox_px'][1])):
             if b['samples'] < self.config.detect_min_samples:
                 continue
             # the robot's own base stands at the origin of its frame
             if math.hypot(b['top_center'][0], b['top_center'][1]) < self.config.robot_base_radius_m:
                 continue
-            x0, y0, x1, y1 = b['bbox_px']
-            box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
-            scale = self.backend.metres_per_pixel(b['top_center'])
-            size = max((box[2] - box[0]) * scale[0], (box[3] - box[1]) * scale[1]) if scale else None
             colour = _blob_colour(image, pixels, pts, b) if image is not None else None
             shown = [round(box[0] * sx), round(box[1] * sy), round(box[2] * sx), round(box[3] * sy)]
             if size is not None and size > self.config.area_min_size_m:
@@ -250,7 +259,7 @@ class Toolbox:
                 found.append({'id': ref, 'kind': 'area', 'color': colour, 'bbox': shown,
                               'size_m': round(size, 3)})
             else:
-                box = self._refine(box) or box
+                box = self._refine(box, top_z=b['top_center'][2]) or box
                 m = self._measure(box)
                 if m is None:
                     continue
@@ -289,11 +298,21 @@ class Toolbox:
         if pts['center'] is None:
             return None
         edges = {k: v for k, v in pts.items() if k != 'center' and v is not None}
-        m = geometry.object_measurement(pts['center'], edges, self.config.table_z, self.config.grasp)
-        scale = self.backend.metres_per_pixel(pts['center'])
-        if scale is not None:
-            m['width_m'] = round((bbox[2] - bbox[0]) * scale[0], 4)
-            m['depth_m'] = round((bbox[3] - bbox[1]) * scale[1], 4)
+        c = pts['center']
+        support = geometry.support_height(c[:2], c[2], self.surfaces, self.config.table_z)
+        m = geometry.object_measurement(c, edges, support, self.config.grasp)
+        # Size from the top surface in metres: the bbox in pixels times the
+        # scale overstates it when the camera sees the object off axis (a
+        # square top becomes a wider parallelogram).
+        step = self.config.refine_step_px
+        cols, rows = int((bbox[2] - bbox[0]) // step) + 1, int((bbox[3] - bbox[1]) // step) + 1
+        grid = [(bbox[0] + i * step, bbox[1] + j * step) for j in range(rows) for i in range(cols)]
+        top = [p for p in self.backend.deproject(grid) if p is not None and abs(p[2] - c[2]) <= 0.01]
+        scale = self.backend.metres_per_pixel(c)
+        if len(top) >= 4 and scale is not None:
+            # the samples' extent, widened by half a step on each side
+            m['width_m'] = round(max(p[0] for p in top) - min(p[0] for p in top) + step * scale[0], 4)
+            m['depth_m'] = round(max(p[1] for p in top) - min(p[1] for p in top) + step * scale[1], 4)
         return m
 
     def _tool_inspect_object(self, bbox):
@@ -303,7 +322,7 @@ class Toolbox:
             return ToolResult(f'ERROR: no depth at the centre of bbox {bbox}')
         if not m['looks_empty']:
             # on an object: tighten the outline for its size, then measure again
-            tight = self._refine(given)
+            tight = self._refine(given, top_z=m['top_center'][2])
             m = (self._measure(tight) if tight else None) or m
             ref = self._store('o', {'kind': 'object', **m})
             return ToolResult(json.dumps({'id': ref, **_public(m)}))
@@ -312,7 +331,8 @@ class Toolbox:
         out = {'looks_empty': True, 'top_z': m['top_center'][2]}
         near = self._snap(given) if self.config.snap_to_object else None
         if near is not None:
-            near = self._refine(near) or near
+            pre = self._measure(near)
+            near = self._refine(near, top_z=pre['top_center'][2] if pre else None) or near
             nm = self._measure(near)
             if nm is not None and not nm['looks_empty']:
                 ref = self._store('o', {'kind': 'object', **nm})
@@ -325,14 +345,16 @@ class Toolbox:
                     **_public(nm)}
         return ToolResult(json.dumps(out))
 
-    def _refine(self, bbox):
+    def _refine(self, bbox, top_z=None):
         """Outline of the object at a bbox on a fine grid. The search reaches
         past the box (half its size plus a few pixels) so the table around
-        the object is in it: heights are relative to the dominant one."""
+        the object is in it: heights are relative to the dominant one. With
+        the object's top height known, the outline is that of its top
+        surface (geometry.snap_to_object)."""
         margin = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / 2 + 8
-        return self._snap(bbox, step=self.config.refine_step_px, margin=margin)
+        return self._snap(bbox, step=self.config.refine_step_px, margin=margin, level_z=top_z)
 
-    def _snap(self, bbox, step=None, margin=None):
+    def _snap(self, bbox, step=None, margin=None, level_z=None):
         """Search the depth around a bbox for the nearest raised object
         (geometry.snap_to_object); None when there is nothing raised. By
         default the search reaches one box size around it; a small margin and
@@ -348,7 +370,7 @@ class Toolbox:
         pts = self.backend.deproject(pixels)
         found = geometry.snap_to_object(
             [(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows,
-            ((x0 + x1) / 2, (y0 + y1) / 2), self.config.table_z)
+            ((x0 + x1) / 2, (y0 + y1) / 2), self.config.table_z, level_z=level_z)
         if found is None:
             return None
         # the blob's sample extent, widened by half a step on each side

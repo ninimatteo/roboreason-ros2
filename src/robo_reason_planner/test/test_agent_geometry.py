@@ -123,31 +123,36 @@ def _rot(roll, pitch, yaw):
             @ np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]]))
 
 
+def _cast(boxes, u, v, w=1280, h=720, f=670.0):
+    """Base frame point the far end camera sees at pixel (u, v), or None off
+    the table (each box: (x0, x1, y0, y1, z0, z1))."""
+    origin = np.array(_CAM[:3])
+    d = _rot(*_CAM[3:]) @ np.array([(u - w / 2) / f, (v - h / 2) / f, 1.0])
+    best = (_TABLE_Z - origin[2]) / d[2] if d[2] < 0 else math.inf
+    for x0, x1, y0, y1, z0, z1 in boxes:
+        tmin, tmax = 0.0, math.inf
+        for o, dd, lo, hi in zip(origin, d, (x0, y0, z0), (x1, y1, z1)):
+            if abs(dd) < 1e-12:
+                if not lo <= o <= hi:
+                    tmin, tmax = 1, 0
+                continue
+            t1, t2 = sorted(((lo - o) / dd, (hi - o) / dd))
+            tmin, tmax = max(tmin, t1), min(tmax, t2)
+        if tmin <= tmax and tmin < best:
+            best = tmin
+    p = origin + best * d
+    return ([float(p[0]), float(p[1]), float(p[2])]
+            if best < math.inf and -0.6 <= p[0] <= 0.6 and -0.8 <= p[1] <= 0.05 else None)
+
+
 def _ray_cast(boxes, step=8, w=1280, h=720, f=670.0):
-    """Depth grid samples as the far end camera sees the table and boxes
-    (each box: (x0, x1, y0, y1, z0, z1)). Returns (samples, cols, rows)."""
-    origin = np.array(_CAM[:3]); R = _rot(*_CAM[3:])
+    """Depth grid samples over the whole image. Returns (samples, cols, rows)."""
     cols, rows = int((w - step) // step) + 1, int((h - step) // step) + 1
     samples = []
     for r in range(rows):
         for c in range(cols):
             u, v = step / 2 + c * step, step / 2 + r * step
-            d = R @ np.array([(u - w / 2) / f, (v - h / 2) / f, 1.0])
-            best = (_TABLE_Z - origin[2]) / d[2] if d[2] < 0 else math.inf
-            for x0, x1, y0, y1, z0, z1 in boxes:
-                tmin, tmax = 0.0, math.inf
-                for o, dd, lo, hi in zip(origin, d, (x0, y0, z0), (x1, y1, z1)):
-                    if abs(dd) < 1e-12:
-                        if not lo <= o <= hi:
-                            tmin, tmax = 1, 0
-                        continue
-                    t1, t2 = sorted(((lo - o) / dd, (hi - o) / dd))
-                    tmin, tmax = max(tmin, t1), min(tmax, t2)
-                if tmin <= tmax and tmin < best:
-                    best = tmin
-            p = origin + best * d
-            samples.append((u, v, [float(p[0]), float(p[1]), float(p[2])]
-                            if best < math.inf and -0.6 <= p[0] <= 0.6 and -0.8 <= p[1] <= 0.05 else None))
+            samples.append((u, v, _cast(boxes, u, v, w, h, f)))
     return samples, cols, rows
 
 
@@ -184,3 +189,42 @@ def test_free_spot_on_a_known_surface_ignores_the_table_behind_it():
     spot = geometry.free_spot(pts, footprint_m=0.045, margin_m=0.01, surface_z=0.05)
     assert spot['ok'] and spot['surface_z'] == 0.05
     assert 0.25 <= spot['position'][0] <= 0.45
+
+
+def test_support_height_is_the_tray_under_an_object_on_it():
+    tray = ([[0.24, 0.46], [-0.43, -0.12]], 0.06)
+    assert geometry.support_height([0.35, -0.29], 0.105, [tray], -0.03) == 0.06
+    assert geometry.support_height([0.35, -0.29], 0.06, [tray], -0.03) == 0.06    # the tray itself
+    assert geometry.support_height([-0.2, -0.5], 0.015, [tray], -0.03) == -0.03   # beside it
+
+
+# The final state of the failed pp_hard+move trial (ROBOAI-51): four cubes on the tray.
+_ON_TRAY = [(0.306, -0.195), (0.388, -0.168), (0.343, -0.289), (0.391, -0.352)]
+
+
+class _RayBackend:
+    def __init__(self, boxes):
+        self.boxes = boxes
+
+    def deproject(self, pixels):
+        return [_cast(self.boxes, u, v) for u, v in pixels]
+
+    def metres_per_pixel(self, point):
+        d = math.dist(point, _CAM[:3]) / 670.0
+        return d, d
+
+
+def test_cubes_on_the_tray_measure_as_cubes_standing_on_it():
+    from robo_reason_planner.agent.tools import Toolbox, ToolboxConfig
+    s = 0.045
+    tb = Toolbox(backend=_RayBackend([TRAY] + [_cube(x, y, z0=0.06, s=s) for x, y in _ON_TRAY]),
+                 config=ToolboxConfig(table_z=_TABLE_Z, limits={'x': (-0.6, 0.6), 'y': (-0.8, 0.0),
+                                                                'z': (-0.03, 0.55)}, grasp=GEO),
+                 log=lambda *_: None)
+    tb.full_size = tb.image_size = (1280, 720)
+    objects = [tb.refs[f['id']] for f in tb._detect() if f['kind'] == 'object']
+    assert len(objects) == 4
+    for m in objects:
+        assert abs(m['height_m'] - s) < 0.01                        # from the tray, not the table
+        assert m['grasp_point'][2] > 0.06 + 0.01                    # above the tray top
+        assert abs(m['width_m'] - s) < 0.012                        # the cube, not the tray around it
