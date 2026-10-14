@@ -9,7 +9,14 @@ scene:
   - a mask is a thing when most of its depth samples stand above the table;
   - a mask in separate pieces is one thing per piece;
   - a mask mostly covered by smaller things already kept is their union
-    (a pile, a group, the same thing found twice), not a thing of its own.
+    (a pile, a group, the same thing found twice), not a thing of its own;
+  - a mask lying inside a larger thing, not standing higher than its top, is
+    a part of it (a cube's top face, a tray's wall);
+  - a mask reaching into the robot's base, or touching one that does, is
+    the robot.
+
+What SAM can't separate from the table (a white tray on a white table) the
+depth still sees: Toolbox._sam_blobs adds the depth blobs no mask covers.
 
 The output has the shape of detect_blobs, so ids, stands_on, Set of Mark and
 the measurements downstream are the same for both segmenters.
@@ -74,6 +81,35 @@ def blob(mask, pixels, pts, floor: float, raised_m: float = 0.01, min_frac: floa
         'min_reach_m': round(min(math.hypot(p[0], p[1]) for p in valid), 4),
         'mask': mask,
     }
+
+
+def drop_robot(blobs: list, base_radius_m: float, touch_px: int = 3) -> list:
+    """Blobs that are not the robot: a mask with samples within base_radius_m
+    of the base axis is the robot (nothing on the table overlaps its base),
+    and so is a mask touching one of those (a link seen past the base)."""
+    import cv2
+    robot = [b for b in blobs if b['min_reach_m'] < base_radius_m]
+    if not robot:
+        return list(blobs)
+    union = np.zeros_like(robot[0]['mask'], dtype=np.uint8)
+    for b in robot:
+        union |= b['mask'].astype(np.uint8)
+    near = cv2.dilate(union, np.ones((2 * touch_px + 1, 2 * touch_px + 1), np.uint8)).astype(bool)
+    return [b for b in blobs if b['min_reach_m'] >= base_radius_m and not (b['mask'] & near).any()]
+
+
+def drop_parts(blobs: list, inside: float = 0.85, level_m: float = 0.01) -> list:
+    """Drop a blob whose mask lies (for at least `inside`) within the mask of
+    a larger blob kept, unless its top stands higher than that blob's top: a
+    cube on a tray is a thing, the tray's wall or a cube's top face a part."""
+    kept = []
+    for b in sorted(blobs, key=lambda b: -int(b['mask'].sum())):
+        m, z = b['mask'], b['top_center'][2]
+        if any((m & k['mask']).sum() >= inside * m.sum() and z <= k['top_center'][2] + level_m
+               for k in kept):
+            continue
+        kept.append(b)
+    return kept
 
 
 def drop_covered(blobs: list, max_cover: float = 0.85) -> list:

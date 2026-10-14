@@ -290,10 +290,8 @@ class Toolbox:
         cols, rows = int((fw - step) // step) + 1, int((fh - step) // step) + 1
         pixels = [(step / 2 + c * step, step / 2 + r * step) for r in range(rows) for c in range(cols)]
         pts = self._deproject(pixels)
-        sam = self.config.segmenter == 'sam'
-        if sam:
-            blobs = self._sam_blobs(pts)
-            step = 0      # mask boxes are tight already
+        if self.config.segmenter == 'sam':
+            blobs = self._sam_blobs(pixels, pts, cols, rows)
         else:
             blobs = geometry.detect_blobs([(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows)
         image = self._full_image()
@@ -326,12 +324,13 @@ class Toolbox:
             on_top = [blobs[j]['bbox_px'] for j, k in enumerate(belows) if k == i]
             support_z = self.surfaces[below][1] if below is not None else self.config.table_z
             x0, y0, x1, y1 = b['bbox_px']
-            box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
+            pad = 0 if 'mask' in b else step / 2      # mask boxes are tight already
+            box = [x0 - pad, y0 - pad, x1 + pad, y1 + pad]
             (xa, xb), (ya, yb) = b['xy_range']
             wide = b['narrow_m'] > self.config.max_grasp_width_m
             m = None
             if not wide and not on_top:
-                if sam:
+                if 'mask' in b:
                     # the mask is the outline already: a depth refine would
                     # join it again to a neighbour of the same height
                     m = self._measure_top(b, support_z)
@@ -345,7 +344,7 @@ class Toolbox:
                 m = {'top_center': top, 'height_m': round(top[2] - support_z, 4),
                      'width_m': round(xb - xa, 4), 'depth_m': round(yb - ya, 4),
                      'narrow_m': b['narrow_m'], 'looks_empty': False}
-            cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step or self.config.detect_step_px)
+            cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step)
             ref = self._store('o', self._entity(m, box, cut_off=cut))
             wide = not self.refs[ref]['pickable']
             entry = {'id': ref, 'color': _blob_colour(image, b) if image is not None else None,
@@ -362,9 +361,10 @@ class Toolbox:
             found.append(entry)
         return found
 
-    def _sam_blobs(self, grid_pts) -> list:
+    def _sam_blobs(self, grid_px, grid_pts, cols, rows) -> list:
         """detect_blobs entries from the SAM masks of the last frame
-        (agent/masks.py). The table height is the dominant one of the grid."""
+        (agent/masks.py), plus the depth blobs of the grid no mask covers.
+        The table height is the dominant one of the grid."""
         from robo_reason_planner.agent import masks as sam_masks
         valid = [p for p in grid_pts if p is not None]
         if not valid:
@@ -375,14 +375,18 @@ class Toolbox:
         samples = [sam_masks.sample_pixels(m, self.config.sam_max_samples) for m in pieces]
         flat = [px for s in samples for px in s]
         pts = iter(self._deproject(flat))
-        blobs = []
-        for mask, px in zip(pieces, samples):
-            b = sam_masks.blob(mask, px, [next(pts) for _ in px], floor)
-            # nothing on the table overlaps the robot's base: a mask reaching
-            # into it is the robot
-            if b is not None and b['min_reach_m'] >= self.config.robot_base_radius_m:
-                blobs.append(b)
-        return sam_masks.drop_covered(blobs)
+        blobs = [sam_masks.blob(mask, px, [next(pts) for _ in px], floor) for mask, px in zip(pieces, samples)]
+        blobs = [b for b in blobs if b is not None]
+        seen = [b['mask'] for b in blobs]    # the robot included: no depth blob there either
+        blobs = sam_masks.drop_robot(blobs, self.config.robot_base_radius_m)
+        blobs = sam_masks.drop_parts(sam_masks.drop_covered(blobs))
+        # what SAM merged into the table (no colour contrast) the depth still sees
+        for d in geometry.detect_blobs([(u, v, p) for (u, v), p in zip(grid_px, grid_pts)], cols, rows):
+            x0, y0, x1, y1 = d['bbox_px']
+            u, v = int((x0 + x1) / 2), int((y0 + y1) / 2)
+            if not any(m[v, u] for m in seen):
+                blobs.append(d)
+        return blobs
 
     def _measure_top(self, blob, support_z):
         """Measurement of a SAM thing from the depth samples of its top."""
