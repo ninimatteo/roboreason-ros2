@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import time
 from typing import Optional
@@ -13,7 +14,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Bool
 from robo_reason_interfaces.msg import PixelArray
-from robo_reason_interfaces.srv import Deproject, GetImage
+from robo_reason_interfaces.srv import Deproject, GetDepth, GetImage
 
 from std_srvs.srv import Trigger
 
@@ -182,6 +183,7 @@ class CameraServicesNode(Node):
         self._calibration_status_pub = self.create_publisher(Bool, calibration_status_topic, 10)
         self.create_service(GetImage, get_image_service, self._handle_get_image)
         self.create_service(Deproject, deproject_service, self._handle_deproject)
+        self.create_service(GetDepth, names.get_depth, self._handle_get_depth)
         self.create_service(Trigger, self.get_parameter("recalibrate_service").value,
                             self._handle_recalibrate)
 
@@ -439,6 +441,40 @@ class CameraServicesNode(Node):
             f"Deproject -> {len(points)} points in {response.frame_id}, "
             f"charuco_pose_available={response.charuco_pose_available}"
         )
+        return response
+
+    def _handle_get_depth(
+        self, _request: GetDepth.Request, response: GetDepth.Response
+    ) -> GetDepth.Response:
+        """The latest depth frame with what deprojection needs, so a debug run
+        can redo it offline (ROBOAI-59)."""
+        if self._latest_depth is None or self._latest_camera_info is None:
+            response.success = False
+            response.error_message = "Depth image or CameraInfo not received yet"
+            return response
+        if self._pose_tf_frame:
+            error = self._refresh_pose_from_tf()
+            if error:
+                response.success = False
+                response.error_message = error
+                return response
+        response.success = True
+        response.depth = self._latest_depth
+        response.camera_info = self._latest_camera_info
+        response.calibrated = self._T_base_camera is not None
+        if response.calibrated:
+            response.base_from_camera = [float(v) for v in np.asarray(self._T_base_camera).reshape(16)]
+        response.deproject_params = json.dumps({
+            "window_size": self._window_size,
+            "min_depth_m": self._min_depth_m,
+            "max_depth_m": self._max_depth_m,
+            "z_offset_m": self._z_offset_m,
+            "local_plane_centroid_enabled": self._local_plane_centroid_enabled,
+            "local_plane_centroid_radius_px": self._local_plane_centroid_radius_px,
+            "local_plane_centroid_z_tol_m": self._local_plane_centroid_z_tol_m,
+            "local_plane_centroid_min_points": self._local_plane_centroid_min_points,
+        })
+        response.error_message = ""
         return response
 
     def _refresh_pose_from_tf(self) -> Optional[str]:

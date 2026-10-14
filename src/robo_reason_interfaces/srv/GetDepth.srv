@@ -1,0 +1,15 @@
+# GetDepth.srv
+# Everything needed to redo /camera/deproject offline on a saved frame
+# (ROBOAI-59): the latest depth frame, aligned to the RGB one, its intrinsics,
+# the camera pose and the deprojection settings.
+#
+# Request: (empty — always returns the latest depth frame)
+---
+# Response
+bool success
+sensor_msgs/Image depth               # 16UC1 (mm) or 32FC1 (m), aligned to the RGB image
+sensor_msgs/CameraInfo camera_info
+bool calibrated                       # false: base_from_camera is not known yet
+float64[16] base_from_camera          # 4x4 row major, camera optical frame -> base_link
+string deproject_params               # JSON: window_size, min/max depth, z_offset_m, local_plane_centroid_*
+string error_message

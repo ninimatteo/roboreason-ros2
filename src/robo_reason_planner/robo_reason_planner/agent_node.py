@@ -47,12 +47,12 @@ from tf2_ros import Buffer, TransformListener
 from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.action import ExecuteSkill
-from robo_reason_interfaces.srv import CancelExecution, Deproject, ExecutePlan, GetImage, PlanTask
+from robo_reason_interfaces.srv import CancelExecution, Deproject, ExecutePlan, GetDepth, GetImage, PlanTask
 from robo_reason_planner.agent.geometry import GraspGeometry
 from robo_reason_planner.agent.session import AgentCancelled, AgentSession
 from robo_reason_planner.agent.tool_chat import ToolChatClient
 from robo_reason_planner.agent.tools import Toolbox, ToolboxConfig
-from robo_reason_planner.debug_recorder import DebugRun, fetch_terminal_logs
+from robo_reason_planner.debug_recorder import DebugRun, fetch_depth, fetch_terminal_logs, write_depth
 from robo_reason_planner.planning_cancel import PlanningCancellation, PlanningCancelled
 
 SKILL_TIMEOUT_S = 60.0
@@ -88,6 +88,7 @@ class AgentNode(Node):
         self._get_wrist_image = (self.create_client(GetImage, f'wrist/{names.get_image}', callback_group=cb)
                                  if settings.CAMERAS == 'fixed+wrist' else None)
         self._deproject = self.create_client(Deproject, names.deproject, callback_group=cb)
+        self._get_depth = self.create_client(GetDepth, names.get_depth, callback_group=cb)
         self._terminal_logs = self.create_client(Trigger, names.terminal_logs, callback_group=cb)
         self._skills = ActionClient(self, ExecuteSkill, names.execute_skill, callback_group=cb)
         self._log_pub = self.create_publisher(String, names.execution_log, 10)
@@ -354,6 +355,14 @@ class _RosBackend:
         self.count += 1
         path = self.frames / f'{self.count:03d}{"_wrist" if camera == "wrist" else ""}.png'
         self.node._cv2.imwrite(str(path), img)
+        if camera != 'wrist':
+            # the RGB camera on the wrist has no depth; the depth camera keeps its depth with the frame (ROBOAI-59)
+            depth = fetch_depth(self.node._get_depth)
+            try:
+                if depth is not None:
+                    write_depth(depth, path)
+            except (OSError, ValueError) as exc:
+                self.node.get_logger().warn(f'depth not saved with {path.name}: {exc}')
         return str(path), img.shape[1], img.shape[0]
 
     def deproject(self, pixels):

@@ -32,6 +32,7 @@ internal:
   terminal_logs: gui/get_terminal_logs
   get_image: camera/get_image
   deproject: camera/deproject
+  get_depth: camera/get_depth
   recalibrate: camera/recalibrate
   pixel_debug: camera/debug_pixels
   charuco_axis: camera/charuco_axis
