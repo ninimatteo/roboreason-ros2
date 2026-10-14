@@ -1372,3 +1372,33 @@ immediately before the deadline, not just of your own last diff.
 after the fact, check whether anything derives a *separate* hand-curated
 structure from that same text (here, `NOTE_CATEGORY`) — the two silently
 drifted apart until someone recomputed by hand.
+
+## 11. ROBOAI-56: the depth segmenter is replaced by SAM 2, not patched further (2026-10-14)
+
+The `pile` scene (ROBOAI-56) exposed three bugs in the depth blob segmenter of
+ROBOAI-55: a support is measured together with what stands on it, takes the
+colour of what stands on it, and an elongated object lying askew looked too
+wide to grasp because its bbox was axis aligned. Each new scene had needed a
+new rule; the colour fix in particular was specific to this scene and was
+removed before merging (4588ead). Kept: the narrowest oriented width for the
+grasp check, and a `pick` refusal on anything with something standing on it.
+
+A spike in `~/sam2_spike` (host venv, GTX 1660 Ti) compared the alternatives
+on sim frames of `pile`, `clutter`, `cylinders` and on real July/September
+debug frames:
+
+- SAM 2.1 b+ automatic masks (about 5 s/frame) plus a depth filter (table =
+  dominant height; keep a mask if at least 60% of its samples are >1 cm above
+  it) finds every raised object in the three sim scenes and drops flat clutter.
+  Two identical touching cubes still come out as one mask.
+- GroundingDINO tiny prompted with the nouns of the command splits the
+  touching cubes, but ignores colour words: identity stays with the VLM.
+- No method splits a pile seen from the fixed camera. A SAM point prompt on
+  each cube does, so the fix is a VLM driven point correction, not a rule.
+- Real frames could not be checked with the depth filter: debug runs save no
+  depth.
+
+Plan that follows: ROBOAI-59 (save depth in debug runs), ROBOAI-60 (GPU
+perception container), ROBOAI-61 (SAM detect behind a `PERCEPTION_SEGMENTER`
+flag), ROBOAI-62 (point correction in `inspect_object`). The learned grasp of
+ROBOAI-44 consumes these masks and lives in the same container.
