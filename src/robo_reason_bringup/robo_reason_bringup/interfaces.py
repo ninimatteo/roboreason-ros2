@@ -46,6 +46,7 @@ class Interfaces:
     get_image: str
     deproject: str
     get_depth: str
+    segment: str
     recalibrate: str
     pixel_debug: str
     charuco_axis: str

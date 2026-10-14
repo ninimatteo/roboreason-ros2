@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     # requests that are just slow, not stuck.
     REQUEST_TIMEOUT_S: float = 120.0
 
+    # ── GPU perception container (ROBOAI-60) ─────────────────────────────────
+    # Read by segment_node inside the container (docker/perception): paths are
+    # the container's. Thresholds are the ones validated in the ROBOAI-56 spike.
+    PERCEPTION_SAM2_CHECKPOINT: str = '/models/sam2/sam2.1_hiera_base_plus.pt'
+    PERCEPTION_SAM2_CONFIG: str = 'configs/sam2.1/sam2.1_hiera_b+.yaml'
+    PERCEPTION_DETECTOR: str = 'IDEA-Research/grounding-dino-tiny'
+    PERCEPTION_BOX_THRESHOLD: float = 0.30
+    PERCEPTION_TEXT_THRESHOLD: float = 0.25
+
     # ── Closed loop agent (mode AGENT, agent_node) ───────────────────────────
     # A vision model with native tool calling. kimi-k3 answered a tool call
     # with an image in about 1.5 s when probed on 2026-10-12.
