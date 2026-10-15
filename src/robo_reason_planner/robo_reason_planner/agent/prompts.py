@@ -1,5 +1,16 @@
 """Prompts for the closed loop agent."""
 
+INSPECT_BBOX = """If detect_objects misses something, or one id covers two touching things, inspect_object(bbox)
+measures what you point at; if that spot is empty it says looks_empty and names the nearest
+object, if any.
+"""
+
+# With PERCEPTION_SEGMENTER=sam inspect_object takes a point (ROBOAI-62).
+INSPECT_POINT = """If detect_objects misses something, or one id covers two touching or stacked things,
+inspect_object(point) with a point on the one object you mean: it returns up to three
+candidates (a part, the object, a group) outlined on the image; use the id of the object.
+"""
+
 SYSTEM = """You control a UR5 robot arm with a two finger gripper, working on objects on a table.
 A fixed camera looks down at the table; you receive its images. The robot base is at the top of the image.
 

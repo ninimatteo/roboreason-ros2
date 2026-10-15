@@ -53,7 +53,10 @@ class AgentSession:
         self._last_failure = (None, 0)   # (call signature, times in a row)
         self._compacted_until = 0
         self.log = log
-        self.messages = [{'role': 'system', 'content': prompts.SYSTEM}]
+        system = prompts.SYSTEM
+        if toolbox.config.segmenter == 'sam':
+            system = system.replace(prompts.INSPECT_BBOX, prompts.INSPECT_POINT)
+        self.messages = [{'role': 'system', 'content': system}]
         # Every message as sent, with image paths instead of base64, for the debug trace.
         self.transcript = []
         self.model_calls = 0
