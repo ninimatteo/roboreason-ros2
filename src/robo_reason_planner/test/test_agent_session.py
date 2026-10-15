@@ -486,6 +486,33 @@ def test_sam_inspect_point_on_the_bare_table_looks_empty(tmp_path):
     assert json.loads(tb.run('inspect_object', {'point': [320, 320]}).text)['looks_empty']
 
 
+class _StackBackend(_SamBackend):
+    """A 4 cm cube on a 4.5 cm one, seen obliquely: rows 80..100 the top
+    face at 8.5 cm, 101..120 its side down to 4.5 cm, 121..150 the side of
+    the cube below down to the table."""
+
+    def deproject(self, pixels):
+        def z(u, v):
+            if not 80 <= u <= 120 or not 80 <= v <= 150:
+                return 0.0
+            if v <= 100:
+                return 0.085
+            if v <= 120:
+                return 0.085 - (v - 100) * 0.002
+            return 0.045 - (v - 120) * 0.0015
+        return [[0.1 + (u - 100) * 0.001, -0.4 + (v - 100) * 0.001, z(u, v)] for u, v in pixels]
+
+
+def test_sam_inspect_point_measures_a_stacked_cube_from_the_one_below(tmp_path):
+    top_cube, stack = (80, 80, 120, 120), (80, 80, 120, 150)
+    tb = _sam_toolbox(_StackBackend(tmp_path, [], [[top_cube], [stack]]))
+    tb.capture()
+    cands = json.loads(tb.run('inspect_object', {'point': [100, 90]}).text)['candidates']
+    # the top cube, not the stack: low rather than high (the grasp stays above the cube below)
+    assert 0.02 <= cands[0]['height_m'] <= 0.045
+    assert abs(cands[1]['height_m'] - 0.085) < 0.005     # the stack stands on the table
+
+
 def test_sam_mode_gives_the_model_inspect_object_by_point(tmp_path):
     from robo_reason_planner.agent import prompts
     tb = _sam_toolbox(_SamBackend(tmp_path, [], []))
