@@ -79,6 +79,10 @@ def blob(mask, pixels, pts, floor: float, raised_m: float = 0.01, min_frac: floa
         'top_pixels': [px for px, t in zip(pixels, on_top) if t],
         # nearest the robot's base axis any sample of the mask comes
         'min_reach_m': round(min(math.hypot(p[0], p[1]) for p in valid), 4),
+        # where the mask ends at the bottom (a low percentile, not the minimum:
+        # an edge pixel can fall on the table): the side of a cube on the
+        # table reaches down to the table, that of a cube on a stack does not
+        'low_z': round(sorted(p[2] for p in valid)[len(valid) // 10], 4),
         'mask': mask,
     }
 

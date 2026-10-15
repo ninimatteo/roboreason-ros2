@@ -180,6 +180,9 @@ class ToolboxConfig:
     segmenter: str = 'depth'
     sam_min_area_px: int = 200
     sam_max_samples: int = 400        # depth samples per mask
+    # inspect_object(point): a mask whose bottom stays this far above the
+    # table stands on something there, not on the table
+    sam_off_table_m: float = 0.02
     refine_step_px: float = 2.0
     # Widest object the gripper can take (RG2: 0.11 m fully open). Anything
     # wider is still a thing in the scene, only not pickable: placing on it
@@ -565,6 +568,10 @@ class Toolbox:
             top = b['top_center']
             below = geometry.support_index(top, top[2], self.surfaces)
             support_z = self.surfaces[below][1] if below is not None else self.config.table_z
+            if b['low_z'] - floor > self.config.sam_off_table_m:
+                # the mask stops short of the table: a cube on a stack, which
+                # the last detect saw as one thing with the stack
+                support_z = max(support_z, b['low_z'])
             m = self._measure_top(b, support_z)
             cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, self.config.detect_step_px)
             ref = self._store('o', self._entity(m, list(b['bbox_px']), cut_off=cut))
