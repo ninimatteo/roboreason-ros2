@@ -513,6 +513,13 @@ def test_sam_inspect_point_measures_a_stacked_cube_from_the_one_below(tmp_path):
     assert abs(cands[1]['height_m'] - 0.085) < 0.005     # the stack stands on the table
 
 
+def test_depth_mode_tools_are_unchanged_by_sam(tmp_path):
+    tb = _toolbox(_GridBackend(tmp_path, []), [])
+    tools = {t['function']['name']: t['function'] for t in tb.execution_tools()}
+    assert tools['detect_objects']['parameters']['properties'] == {}
+    assert tools['inspect_object']['parameters']['required'] == ['bbox']
+
+
 def test_sam_mode_gives_the_model_inspect_object_by_point(tmp_path):
     from robo_reason_planner.agent import prompts
     tb = _sam_toolbox(_SamBackend(tmp_path, [], []))

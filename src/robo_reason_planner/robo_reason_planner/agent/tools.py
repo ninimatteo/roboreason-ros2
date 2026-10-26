@@ -80,6 +80,10 @@ DETECT_OBJECTS = _fn(
                'description': 'optional: kinds of thing the command names (cube, tray...), helps '
                               'separate touching ones'}})
 
+# names only help SAM (ROBOAI-61): with the depth segmenter the model sees
+# detect_objects as before
+DETECT_OBJECTS_DEPTH = _fn('detect_objects', DETECT_OBJECTS['function']['description'])
+
 LOOK = _fn('look', 'Fresh camera image (attached after the result).')
 # With an RGB camera on the wrist (CAMERAS=fixed+wrist, ROBOAI-47) look can
 # show its close view too; ids and bboxes always refer to the fixed camera.
@@ -240,6 +244,8 @@ class Toolbox:
             swap[LOOK['function']['name']] = LOOK_WRIST
         if self.config.segmenter == 'sam':
             swap['inspect_object'] = INSPECT_OBJECT_POINT
+        else:
+            swap['detect_objects'] = DETECT_OBJECTS_DEPTH
         return [swap.get(t['function']['name'], t) for t in EXECUTION_TOOLS]
 
     def capture(self) -> str:
