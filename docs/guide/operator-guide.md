@@ -554,6 +554,8 @@ docker logs -f roboreason_perception  # wait for "models loaded"
 
 The models (`models/sam2/sam2.1_hiera_base_plus.pt`, `models/hf/` for grounding-dino-tiny) must already be in `~/docker_ws/perception/models`: the container runs with `HF_HUB_OFFLINE=1`. DDS goes over UDP only (`fastdds_udp.xml`) because the two containers don't share `/dev/shm`. `ROS_LOCALHOST_ONLY=1` clients cannot reach it.
 
+In AGENT mode `ROBOREASON_PERCEPTION_SEGMENTER=sam` makes `detect_objects` cut things from the SAM 2 masks (the depth only decides whether a mask is a thing and measures it, see `agent/masks.py`); the default `depth` keeps the depth blobs and needs no service. With `sam` the service must be running: each detect takes about 7 s instead of 2 s, and `ROBOREASON_PERCEPTION_TIMEOUT_S` (30 s) bounds the call.
+
 ---
 
 ## Configuration via Environment Variables

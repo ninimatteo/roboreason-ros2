@@ -14,6 +14,7 @@ the deprojection and the skill executor:
   backend.deproject([(u, v), ...]) -> [[x, y, z] or None, ...]
   backend.run_skill(name, args: dict) -> (ok: bool, error: str)
   backend.metres_per_pixel([x, y, z]) -> (along_u, along_v) or None
+  backend.segment(image_path, names) -> [bool mask HxW, ...]   (segmenter 'sam' only)
 """
 
 import json
@@ -70,7 +71,10 @@ DETECT_OBJECTS = _fn(
     'Find everything standing on the table with the depth camera, trays and boxes included: one id '
     'each (o1...), drawn on the image that comes back, with colour, size, what it stands on and '
     'which image border cuts it off. "table" is the table. Use the ids with pick, place and '
-    'find_free_spot.')
+    'find_free_spot.',
+    {'names': {'type': 'array', 'items': {'type': 'string'},
+               'description': 'optional: kinds of thing the command names (cube, tray...), helps '
+                              'separate touching ones'}})
 
 LOOK = _fn('look', 'Fresh camera image (attached after the result).')
 # With an RGB camera on the wrist (CAMERAS=fixed+wrist, ROBOAI-47) look can
@@ -154,6 +158,12 @@ class ToolboxConfig:
     # detect_objects: depth grid step over the whole image, smallest blob kept.
     detect_step_px: float = 8.0
     detect_min_samples: int = 4
+    # 'depth' segments the depth grid (geometry.detect_blobs); 'sam' takes SAM 2
+    # masks from the perception service and keeps those standing above the
+    # table (agent/masks.py, ROBOAI-61).
+    segmenter: str = 'depth'
+    sam_min_area_px: int = 200
+    sam_max_samples: int = 400        # depth samples per mask
     refine_step_px: float = 2.0
     # Widest object the gripper can take (RG2: 0.11 m fully open). Anything
     # wider is still a thing in the scene, only not pickable: placing on it
@@ -190,6 +200,7 @@ class Toolbox:
     # what an object measured there stands on
     surfaces: list = field(default_factory=list)
     at_survey: bool = False                      # arm still where the last image was taken (survey mode)
+    detect_names: list = field(default_factory=list)   # names of the last detect_objects, reused by the checks
 
     # ── entry point ────────────────────────────────────────────────────────
 
@@ -261,7 +272,8 @@ class Toolbox:
         path = self.capture()
         return ToolResult('New image attached below.', image_path=path)
 
-    def _tool_detect_objects(self):
+    def _tool_detect_objects(self, names=None):
+        self.detect_names = [str(n) for n in names or []]
         found = self._detect()
         if len(found) <= 1:
             return ToolResult('Nothing found standing on the table.')
@@ -278,7 +290,10 @@ class Toolbox:
         cols, rows = int((fw - step) // step) + 1, int((fh - step) // step) + 1
         pixels = [(step / 2 + c * step, step / 2 + r * step) for r in range(rows) for c in range(cols)]
         pts = self._deproject(pixels)
-        blobs = geometry.detect_blobs([(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows)
+        if self.config.segmenter == 'sam':
+            blobs = self._sam_blobs(pixels, pts, cols, rows)
+        else:
+            blobs = geometry.detect_blobs([(u, v, p) for (u, v), p in zip(pixels, pts)], cols, rows)
         image = self._full_image()
         sx, sy = self.image_size[0] / fw, self.image_size[1] / fh
 
@@ -309,13 +324,19 @@ class Toolbox:
             on_top = [blobs[j]['bbox_px'] for j, k in enumerate(belows) if k == i]
             support_z = self.surfaces[below][1] if below is not None else self.config.table_z
             x0, y0, x1, y1 = b['bbox_px']
-            box = [x0 - step / 2, y0 - step / 2, x1 + step / 2, y1 + step / 2]
+            pad = 0 if 'mask' in b else step / 2      # mask boxes are tight already
+            box = [x0 - pad, y0 - pad, x1 + pad, y1 + pad]
             (xa, xb), (ya, yb) = b['xy_range']
             wide = b['narrow_m'] > self.config.max_grasp_width_m
             m = None
             if not wide and not on_top:
-                box = self._refine(box, top_z=b['top_center'][2]) or box
-                m = self._measure(box, support_z=support_z)
+                if 'mask' in b:
+                    # the mask is the outline already: a depth refine would
+                    # join it again to a neighbour of the same height
+                    m = self._measure_top(b, support_z)
+                else:
+                    box = self._refine(box, top_z=b['top_center'][2]) or box
+                    m = self._measure(box, support_z=support_z)
             if m is None:
                 # too wide to pick, or something stands on it and its box would
                 # measure that too: the blob's own top surface
@@ -326,7 +347,7 @@ class Toolbox:
             cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, step)
             ref = self._store('o', self._entity(m, box, cut_off=cut))
             wide = not self.refs[ref]['pickable']
-            entry = {'id': ref, 'color': _blob_colour(image, pixels, pts, b) if image is not None else None,
+            entry = {'id': ref, 'color': _blob_colour(image, b) if image is not None else None,
                      'bbox': shown(box), 'height_m': m['height_m'], 'width_m': m.get('width_m'),
                      'depth_m': m.get('depth_m')}
             if wide:
@@ -339,6 +360,40 @@ class Toolbox:
             entry['stands_on'] = ids[below] if below is not None else 'table'
             found.append(entry)
         return found
+
+    def _sam_blobs(self, grid_px, grid_pts, cols, rows) -> list:
+        """detect_blobs entries from the SAM masks of the last frame
+        (agent/masks.py), plus the depth blobs of the grid no mask covers.
+        The table height is the dominant one of the grid."""
+        from robo_reason_planner.agent import masks as sam_masks
+        valid = [p for p in grid_pts if p is not None]
+        if not valid:
+            return []
+        floor = geometry._dominant_height(valid, 0.01)
+        pieces = [piece for m in self.backend.segment(self.last_full, self.detect_names)
+                  for piece in sam_masks.split_pieces(m, self.config.sam_min_area_px)]
+        samples = [sam_masks.sample_pixels(m, self.config.sam_max_samples) for m in pieces]
+        flat = [px for s in samples for px in s]
+        pts = iter(self._deproject(flat))
+        blobs = [sam_masks.blob(mask, px, [next(pts) for _ in px], floor) for mask, px in zip(pieces, samples)]
+        blobs = [b for b in blobs if b is not None]
+        seen = [b['mask'] for b in blobs]    # the robot included: no depth blob there either
+        blobs = sam_masks.drop_robot(blobs, self.config.robot_base_radius_m)
+        blobs = sam_masks.drop_parts(sam_masks.drop_covered(blobs))
+        # what SAM merged into the table (no colour contrast) the depth still sees
+        for d in geometry.detect_blobs([(u, v, p) for (u, v), p in zip(grid_px, grid_pts)], cols, rows):
+            x0, y0, x1, y1 = d['bbox_px']
+            u, v = int((x0 + x1) / 2), int((y0 + y1) / 2)
+            if not any(m[v, u] for m in seen):
+                blobs.append(d)
+        return blobs
+
+    def _measure_top(self, blob, support_z):
+        """Measurement of a SAM thing from the depth samples of its top."""
+        m = geometry.object_measurement(blob['top_center'], {}, support_z, self.config.grasp)
+        (xa, xb), (ya, yb) = blob['xy_range']
+        m.update(width_m=round(xb - xa, 4), depth_m=round(yb - ya, 4), narrow_m=blob['narrow_m'])
+        return m
 
     def _marked(self, found):
         """The image the model last saw, with every id drawn at its thing
@@ -770,11 +825,17 @@ class Toolbox:
         return [max(x0 * fx, 0.0), max(y0 * fy, 0.0), min(x1 * fx, fw - 1.0), min(y1 * fy, fh - 1.0)]
 
 
-def _blob_colour(image, pixels, pts, blob):
-    """Median colour of the image inside a blob's bbox, as a word."""
-    x0, y0, x1, y1 = blob['bbox_px']
-    crop = image.crop((int(x0), int(y0), int(x1) + 1, int(y1) + 1))
-    data = sorted(crop.getdata(), key=sum)
+def _blob_colour(image, blob):
+    """Median colour of a blob's top surface (SAM) or of the image inside its
+    bbox, as a word. The top, not the whole mask: shaded sides make a white
+    cube gray."""
+    if blob.get('top_pixels'):
+        data = sorted((image.getpixel((min(int(u), image.width - 1), min(int(v), image.height - 1)))
+                       for u, v in blob['top_pixels']), key=sum)
+    else:
+        x0, y0, x1, y1 = blob['bbox_px']
+        crop = image.crop((int(x0), int(y0), int(x1) + 1, int(y1) + 1))
+        data = sorted(crop.getdata(), key=sum)
     if not data:
         return None
     mid = data[len(data) // 4: 3 * len(data) // 4] or data      # drop shadows and highlights

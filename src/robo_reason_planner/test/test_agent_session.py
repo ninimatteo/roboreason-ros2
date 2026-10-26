@@ -379,6 +379,84 @@ def test_a_box_on_one_of_two_touching_things_measures_that_one(tmp_path):
     assert tb.refs[res['id']]['grasp_point'][0] > 0.12               # the right hand cube
 
 
+class _SamBackend(_GridBackend):
+    """_GridBackend whose segmenter returns the given pixel boxes as masks."""
+
+    def __init__(self, tmp_path, cubes, masks):
+        super().__init__(tmp_path, cubes)
+        self.masks, self.asked = masks, []
+
+    def segment(self, image_path, names):
+        import numpy as np
+        self.asked.append(list(names))
+        out = []
+        for boxes in self.masks:
+            m = np.zeros((480, 640), bool)
+            for a, b, c, d in boxes:
+                m[b:d + 1, a:c + 1] = True
+            out.append(m)
+        return out
+
+
+def _sam_toolbox(backend):
+    tb = _toolbox(backend, [])
+    tb.config.segmenter = 'sam'
+    return tb
+
+
+def test_sam_separates_two_touching_things_of_the_same_height(tmp_path):
+    left, right = (80, 80, 120, 120), (121, 80, 160, 120)
+    # one mask per cube, both together (what the depth sees), and a patch of
+    # bare table: two things
+    backend = _SamBackend(tmp_path, [left, right], [[left], [right], [left, right], [(300, 300, 360, 360)]])
+    tb = _sam_toolbox(backend)
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {'names': ['cube']}).text)
+    assert backend.asked == [['cube']]
+    assert [f['id'] for f in found] == ['table', 'o1', 'o2']
+    assert all(abs(f['width_m'] - 0.04) < 0.01 and f['height_m'] == 0.04 for f in found[1:])
+    assert tb.refs['o1']['grasp_point'][0] < 0.12 < tb.refs['o2']['grasp_point'][0]
+    assert tb.run('pick', {'object': 'o2'}).text.startswith('pick completed')
+
+
+def test_sam_mask_in_two_pieces_is_two_things(tmp_path):
+    a, b = (80, 80, 120, 120), (300, 200, 340, 240)
+    tb = _sam_toolbox(_SamBackend(tmp_path, [a, b], [[a, b]]))
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {}).text)
+    assert len(found) == 3 and all(f['stands_on'] == 'table' for f in found[1:])
+
+
+def test_sam_a_part_inside_a_thing_is_not_another_thing(tmp_path):
+    cube = (80, 80, 120, 120)
+    # the whole cube and its top face only (what SAM gives as two masks)
+    tb = _sam_toolbox(_SamBackend(tmp_path, [cube], [[cube], [(90, 90, 110, 110)]]))
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {}).text)
+    assert len(found) == 2 and abs(found[1]['width_m'] - 0.04) < 0.01
+
+
+def test_sam_adds_what_only_the_depth_sees(tmp_path):
+    # a cube SAM merged into the table (no mask): the depth blob stands in
+    seen, unseen = (80, 80, 120, 120), (300, 200, 340, 240)
+    tb = _sam_toolbox(_SamBackend(tmp_path, [seen, unseen], [[seen]]))
+    tb.capture()
+    found = json.loads(tb.run('detect_objects', {}).text)
+    assert len(found) == 3 and all(f['height_m'] == 0.04 for f in found[1:])
+
+
+def test_sam_drops_the_robot_and_what_touches_it():
+    import numpy as np
+    from robo_reason_planner.agent import masks
+
+    def blob(box, reach):
+        m = np.zeros((100, 100), bool)
+        m[box[1]:box[3], box[0]:box[2]] = True
+        return {'mask': m, 'min_reach_m': reach}
+    base, link, cube = blob((40, 0, 60, 20), 0.05), blob((60, 0, 80, 10), 0.2), blob((40, 60, 50, 70), 0.5)
+    assert masks.drop_robot([base, link, cube], 0.15) == [cube]
+
+
 class LiveBackend(FakeBackend):
     """A cube that really moves: picked when the gripper closes on it (unless
     the grasp slips), carried, and set down where the gripper opens."""

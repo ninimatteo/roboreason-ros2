@@ -47,7 +47,7 @@ from tf2_ros import Buffer, TransformListener
 from robo_reason_bringup.config import settings
 from robo_reason_bringup.interfaces import names
 from robo_reason_interfaces.action import ExecuteSkill
-from robo_reason_interfaces.srv import CancelExecution, Deproject, ExecutePlan, GetDepth, GetImage, PlanTask
+from robo_reason_interfaces.srv import CancelExecution, Deproject, ExecutePlan, GetDepth, GetImage, PlanTask, Segment
 from robo_reason_planner.agent.geometry import GraspGeometry
 from robo_reason_planner.agent.session import AgentCancelled, AgentSession
 from robo_reason_planner.agent.tool_chat import ToolChatClient
@@ -89,6 +89,7 @@ class AgentNode(Node):
                                  if settings.CAMERAS == 'fixed+wrist' else None)
         self._deproject = self.create_client(Deproject, names.deproject, callback_group=cb)
         self._get_depth = self.create_client(GetDepth, names.get_depth, callback_group=cb)
+        self._segment = self.create_client(Segment, names.segment, callback_group=cb)
         self._terminal_logs = self.create_client(Trigger, names.terminal_logs, callback_group=cb)
         self._skills = ActionClient(self, ExecuteSkill, names.execute_skill, callback_group=cb)
         self._log_pub = self.create_publisher(String, names.execution_log, 10)
@@ -241,6 +242,7 @@ class AgentNode(Node):
             send_width=params['image_width'],
             wrist_camera=self._get_wrist_image is not None,
             survey=settings.CAMERAS == 'wrist',
+            segmenter=settings.PERCEPTION_SEGMENTER,
         )
 
         def log(line):
@@ -407,6 +409,20 @@ class _RosBackend:
         if depth <= 0:
             return None
         return depth / info.k[0], depth / info.k[4]
+
+    def segment(self, image_path, names_):
+        """SAM 2 masks of a saved frame from the perception service
+        (ROBOAI-60): automatic, plus one per thing found by name."""
+        import numpy as np
+        from robo_reason_perception import rle
+        img = self.node._cv2.imread(str(image_path))
+        req = Segment.Request(image=self.node._bridge.cv2_to_imgmsg(img, encoding='bgr8'),
+                              automatic=True, names=list(names_))
+        resp = self.node.call(self.node._segment, req, names.segment, timeout=settings.PERCEPTION_TIMEOUT_S)
+        if not resp.success:
+            raise RuntimeError(f'segment failed: {resp.error_message}')
+        h, w = img.shape[:2]
+        return [rle.decode(m.rle, h, w).astype(np.bool_) for m in resp.masks]
 
     def run_skill(self, name, args):
         if self.node._stop.is_set():
