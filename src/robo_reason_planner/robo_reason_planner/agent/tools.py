@@ -27,6 +27,10 @@ _BBOX = {
     'type': 'array', 'items': {'type': 'number'}, 'minItems': 4, 'maxItems': 4,
     'description': 'tight [x_min, y_min, x_max, y_max] in pixels of the latest image',
 }
+_POINT = {
+    'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2,
+    'description': '[x, y] in pixels of the latest image, on the object',
+}
 _XYZ = {
     'type': 'array', 'items': {'type': 'number'}, 'minItems': 3, 'maxItems': 3,
     'description': '[x, y, z] metres, copied from a perception result',
@@ -76,6 +80,10 @@ DETECT_OBJECTS = _fn(
                'description': 'optional: kinds of thing the command names (cube, tray...), helps '
                               'separate touching ones'}})
 
+# names only help SAM (ROBOAI-61): with the depth segmenter the model sees
+# detect_objects as before
+DETECT_OBJECTS_DEPTH = _fn('detect_objects', DETECT_OBJECTS['function']['description'])
+
 LOOK = _fn('look', 'Fresh camera image (attached after the result).')
 # With an RGB camera on the wrist (CAMERAS=fixed+wrist, ROBOAI-47) look can
 # show its close view too; ids and bboxes always refer to the fixed camera.
@@ -118,6 +126,18 @@ EXECUTION_TOOLS = [
     _fn('finish', 'End the task, once verified or impossible.',
         {'success': {'type': 'boolean'}, 'summary': {'type': 'string'}}, ['success', 'summary']),
 ]
+
+# With PERCEPTION_SEGMENTER=sam, inspect_object takes a point: SAM segments
+# what is under it at three levels (a face, the object, a group), the model
+# picks among them on the image; touching or stacked things no segmenter
+# separates on its own split this way (ROBOAI-62).
+INSPECT_OBJECT_POINT = _fn(
+    'inspect_object',
+    'Segment the thing under a point and measure it with the depth camera. Returns up to three '
+    'candidates of different extent (a part, the object, a group), each with an id (o1...) drawn '
+    'as an outline on the attached image, plus height_m, width_m, colour. Use the id whose '
+    'outline is exactly the one object you mean.',
+    {'point': _POINT}, ['point'])
 
 ACTION_TOOLS = ('pick', 'place', 'move_home')
 
@@ -164,6 +184,9 @@ class ToolboxConfig:
     segmenter: str = 'depth'
     sam_min_area_px: int = 200
     sam_max_samples: int = 400        # depth samples per mask
+    # inspect_object(point): a mask whose bottom stays this far above the
+    # table stands on something there, not on the table
+    sam_off_table_m: float = 0.02
     refine_step_px: float = 2.0
     # Widest object the gripper can take (RG2: 0.11 m fully open). Anything
     # wider is still a thing in the scene, only not pickable: placing on it
@@ -216,7 +239,14 @@ class Toolbox:
             return ToolResult(f'ERROR: {name} failed: {type(exc).__name__}: {exc}')
 
     def execution_tools(self) -> list:
-        return [LOOK_WRIST if t is LOOK and self.config.wrist_camera else t for t in EXECUTION_TOOLS]
+        swap = {}
+        if self.config.wrist_camera:
+            swap[LOOK['function']['name']] = LOOK_WRIST
+        if self.config.segmenter == 'sam':
+            swap['inspect_object'] = INSPECT_OBJECT_POINT
+        else:
+            swap['detect_objects'] = DETECT_OBJECTS_DEPTH
+        return [swap.get(t['function']['name'], t) for t in EXECUTION_TOOLS]
 
     def capture(self) -> str:
         """Grab a frame; returns the path of the image to show the model."""
@@ -471,7 +501,14 @@ class Toolbox:
             m['narrow_m'] = round(geometry.narrowest_width(top) + step * min(scale), 4)
         return m
 
-    def _tool_inspect_object(self, bbox):
+    def _tool_inspect_object(self, bbox=None, point=None):
+        if self.config.segmenter == 'sam':
+            if point is None and bbox is not None:
+                b = self._to_pixels(bbox)
+                return self._inspect_point(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))
+            return self._inspect_point(self._point_to_pixels(point))
+        if bbox is None:
+            raise ValueError('give bbox')
         given = self._to_pixels(bbox)
         m = self._measure(given)
         if m is None:
@@ -505,6 +542,92 @@ class Toolbox:
                     'bbox': [round(near[0] * sx), round(near[1] * sy), round(near[2] * sx), round(near[3] * sy)],
                     **_public(nm)}
         return ToolResult(json.dumps(out))
+
+    def _inspect_point(self, uv):
+        """Candidates for the thing under a full resolution pixel, one per
+        SAM mask at that point that stands above the table (agent/masks.py),
+        smallest first, each measured on its own top and stored under an id."""
+        from robo_reason_planner.agent import masks as sam_masks
+        u, v = int(round(uv[0])), int(round(uv[1]))
+        fw, fh = self.full_size
+        if not (0 <= u < fw and 0 <= v < fh):
+            raise ValueError(f'point {list(uv)} is outside the image')
+        floor = self.refs['table']['surface_z'] if 'table' in self.refs else self.config.table_z
+        shapes = []
+        for mask in self.backend.segment_point(self.last_full, (u, v)):
+            # the piece under the point; the same mask at two levels counts once
+            piece = next((p for p in sam_masks.split_pieces(mask, self.config.sam_min_area_px) if p[v, u]), None)
+            if piece is not None and not any((piece ^ s).sum() <= 0.1 * piece.sum() for s in shapes):
+                shapes.append(piece)
+        blobs = []
+        for piece in sorted(shapes, key=lambda m: int(m.sum())):
+            px = sam_masks.sample_pixels(piece, self.config.sam_max_samples)
+            b = sam_masks.blob(piece, px, self._deproject(px), floor)
+            if b is not None:
+                blobs.append(b)
+        if not blobs:
+            return ToolResult(json.dumps({'looks_empty': True, 'note': 'nothing standing above the table there'}))
+        image = self._full_image()
+        sx, sy = self.image_size[0] / fw, self.image_size[1] / fh
+        found = []
+        for b in blobs:
+            top = b['top_center']
+            below = geometry.support_index(top, top[2], self.surfaces)
+            support_z = self.surfaces[below][1] if below is not None else self.config.table_z
+            if (b['low_z'] - floor > self.config.sam_off_table_m
+                    and top[2] - b['low_z'] >= self.config.sam_off_table_m / 2):
+                # the mask shows a side and it stops short of the table: a
+                # cube on a stack, which the last detect saw as one thing
+                # with the stack (no side in view, from straight above: the
+                # surfaces decide as before)
+                support_z = max(support_z, b['low_z'])
+            m = self._measure_top(b, support_z)
+            cut = geometry.cut_off_sides(b['bbox_px'], fw, fh, self.config.detect_step_px)
+            ref = self._store('o', self._entity(m, list(b['bbox_px']), cut_off=cut))
+            x0, y0, x1, y1 = b['bbox_px']
+            entry = {'id': ref, 'color': _blob_colour(image, b) if image is not None else None,
+                     **_public(m), 'bbox': [round(x0 * sx), round(y0 * sy), round(x1 * sx), round(y1 * sy)]}
+            if not self.refs[ref]['pickable']:
+                entry['pickable'] = False
+            if cut:
+                entry['cut_off'] = cut
+            found.append((entry, b['mask']))
+        return ToolResult(json.dumps({'candidates': [e for e, _ in found]}),
+                          image_path=self._outlined(found, (u * sx, v * sy)))
+
+    def _outlined(self, found, point):
+        """The image the model last saw with each candidate's mask outline and
+        id, and the point asked about."""
+        try:
+            import cv2
+            import numpy as np
+            from PIL import Image, ImageDraw, ImageFont
+            im = Image.open(self.last_sent).convert('RGB')
+        except Exception:
+            return None
+        draw = ImageDraw.Draw(im)
+        font = ImageFont.load_default(size=max(11, im.size[0] // 40))
+        colours = [(255, 255, 0), (0, 255, 255), (255, 0, 255)]
+        for k, (entry, mask) in enumerate(found):
+            colour = colours[k % len(colours)]
+            small = cv2.resize(mask.astype(np.uint8), im.size, interpolation=cv2.INTER_NEAREST)
+            contours, _ = cv2.findContours(small, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c in contours:
+                if len(c) > 1:
+                    draw.line([tuple(int(t) for t in q[0]) for q in c] + [tuple(int(t) for t in c[0][0])],
+                              fill=colour, width=2)
+            # ids stacked down the left of the outline, one row per candidate
+            x0, y0 = entry['bbox'][0], entry['bbox'][1]
+            tx, ty = x0, max(y0 - (len(found) - k) * (font.size + 3), 0)
+            box = draw.textbbox((tx, ty), entry['id'], font=font)
+            draw.rectangle([box[0] - 1, box[1] - 1, box[2] + 1, box[3] + 1], fill=(0, 0, 0))
+            draw.text((tx, ty), entry['id'], fill=colour, font=font)
+        px, py = point
+        draw.ellipse([px - 3, py - 3, px + 3, py + 3], outline=(255, 0, 0), width=2)
+        path = str(self.last_sent).rsplit('.', 1)[0] + f'_inspect{len(self.images)}.png'
+        im.save(path)
+        self.images.append(path)
+        return path
 
     def _entity(self, m, box, **extra):
         """What is stored under an object id: the measurement, plus what
@@ -823,6 +946,13 @@ class Toolbox:
         fx, fy = self.full_size[0] / w, self.full_size[1] / h
         fw, fh = self.full_size
         return [max(x0 * fx, 0.0), max(y0 * fy, 0.0), min(x1 * fx, fw - 1.0), min(y1 * fy, fh - 1.0)]
+
+    def _point_to_pixels(self, point):
+        """A point of the image the model saw, at the captured resolution."""
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            raise ValueError(f'point must be [x, y], got {point!r}')
+        x0, y0, _, _ = self._to_pixels([point[0], point[1], point[0], point[1]])
+        return x0, y0
 
 
 def _blob_colour(image, blob):

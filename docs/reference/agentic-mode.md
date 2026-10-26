@@ -89,6 +89,22 @@ sola alta quanto la pila, perché la faccia superiore del cubo sotto è
 nascosta. La separano la posa per contatto (ROBOAI-53) o una seconda vista
 (ROBOAI-48, ROBOAI-57).
 
+### Segmentazione SAM (`PERCEPTION_SEGMENTER=sam`)
+
+Con il flag a `sam` le cose vengono dalle maschere SAM 2 del servizio di
+perception (ROBOAI-60) invece che dal grid di depth; la depth decide solo se
+una maschera è una cosa e la misura (`agent/masks.py`, ROBOAI-61). Due
+cubi a contatto alla stessa quota sono due cose.
+
+`inspect_object` prende allora un punto invece di una bbox (ROBOAI-62): SAM
+con prompt a punto dà tre maschere (una faccia, l'oggetto, un gruppo), quelle
+che stanno sopra il tavolo tornano come id candidati, dal più piccolo, con il
+contorno disegnato sull'immagine; il modello usa l'id dell'oggetto. Una
+maschera che mostra un lato e si ferma sopra il tavolo è un cubo su una pila:
+la sua altezza si misura dal fondo della maschera, non dal tavolo, e viene
+un po' più bassa del vero (la presa resta sopra il cubo sotto). Il cubo
+completamente nascosto in una pila resta fuori (ROBOAI-57).
+
 ## Architettura
 
 ```

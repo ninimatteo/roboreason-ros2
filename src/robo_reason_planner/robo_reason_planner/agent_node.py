@@ -424,6 +424,21 @@ class _RosBackend:
         h, w = img.shape[:2]
         return [rle.decode(m.rle, h, w).astype(np.bool_) for m in resp.masks]
 
+    def segment_point(self, image_path, uv):
+        """The three SAM 2 masks for a point prompt on a saved frame
+        (ROBOAI-62): part, object and group, in SAM's order."""
+        import numpy as np
+        from geometry_msgs.msg import Point
+        from robo_reason_perception import rle
+        img = self.node._cv2.imread(str(image_path))
+        req = Segment.Request(image=self.node._bridge.cv2_to_imgmsg(img, encoding='bgr8'),
+                              points=[Point(x=float(uv[0]), y=float(uv[1]))])
+        resp = self.node.call(self.node._segment, req, names.segment, timeout=settings.PERCEPTION_TIMEOUT_S)
+        if not resp.success:
+            raise RuntimeError(f'segment failed: {resp.error_message}')
+        h, w = img.shape[:2]
+        return [rle.decode(m.rle, h, w).astype(np.bool_) for m in resp.masks]
+
     def run_skill(self, name, args):
         if self.node._stop.is_set():
             return False, 'cancelled by the operator'

@@ -397,6 +397,10 @@ class _SamBackend(_GridBackend):
             out.append(m)
         return out
 
+    def segment_point(self, image_path, uv):
+        self.points = getattr(self, 'points', []) + [uv]
+        return self.segment(image_path, [])
+
 
 def _sam_toolbox(backend):
     tb = _toolbox(backend, [])
@@ -455,6 +459,75 @@ def test_sam_drops_the_robot_and_what_touches_it():
         return {'mask': m, 'min_reach_m': reach}
     base, link, cube = blob((40, 0, 60, 20), 0.05), blob((60, 0, 80, 10), 0.2), blob((40, 60, 50, 70), 0.5)
     assert masks.drop_robot([base, link, cube], 0.15) == [cube]
+
+
+def test_sam_inspect_point_offers_part_object_and_group(tmp_path):
+    left, right = (80, 80, 120, 120), (121, 80, 160, 120)
+    # SAM at a point on the right cube: its top face, the cube, both cubes
+    backend = _SamBackend(tmp_path, [left, right], [[(131, 90, 150, 110)], [right], [left, right]])
+    tb = _sam_toolbox(backend)
+    tb.capture()
+    from PIL import Image
+    Image.new('RGB', (640, 480), (200, 200, 200)).save(tb.last_sent)   # the fake's frame is a stub
+    res = tb.run('inspect_object', {'point': [140, 100]})
+    assert backend.points == [(140, 100)] and res.image_path.endswith('.png')
+    cands = json.loads(res.text)['candidates']
+    assert [round(c['width_m'], 2) for c in cands] == [0.02, 0.04, 0.08]     # smallest first
+    assert all(c['height_m'] == 0.04 for c in cands)
+    cube = cands[1]['id']
+    assert tb.refs[cube]['grasp_point'][0] > 0.12                         # the right hand cube
+    assert tb.run('pick', {'object': cube}).text.startswith('pick completed')
+
+
+def test_sam_inspect_point_on_the_bare_table_looks_empty(tmp_path):
+    cube = (80, 80, 120, 120)
+    tb = _sam_toolbox(_SamBackend(tmp_path, [cube], [[(300, 300, 340, 340)]]))
+    tb.capture()
+    assert json.loads(tb.run('inspect_object', {'point': [320, 320]}).text)['looks_empty']
+
+
+class _StackBackend(_SamBackend):
+    """A 4 cm cube on a 4.5 cm one, seen obliquely: rows 80..100 the top
+    face at 8.5 cm, 101..120 its side down to 4.5 cm, 121..150 the side of
+    the cube below down to the table."""
+
+    def deproject(self, pixels):
+        def z(u, v):
+            if not 80 <= u <= 120 or not 80 <= v <= 150:
+                return 0.0
+            if v <= 100:
+                return 0.085
+            if v <= 120:
+                return 0.085 - (v - 100) * 0.002
+            return 0.045 - (v - 120) * 0.0015
+        return [[0.1 + (u - 100) * 0.001, -0.4 + (v - 100) * 0.001, z(u, v)] for u, v in pixels]
+
+
+def test_sam_inspect_point_measures_a_stacked_cube_from_the_one_below(tmp_path):
+    top_cube, stack = (80, 80, 120, 120), (80, 80, 120, 150)
+    tb = _sam_toolbox(_StackBackend(tmp_path, [], [[top_cube], [stack]]))
+    tb.capture()
+    cands = json.loads(tb.run('inspect_object', {'point': [100, 90]}).text)['candidates']
+    # the top cube, not the stack: low rather than high (the grasp stays above the cube below)
+    assert 0.02 <= cands[0]['height_m'] <= 0.045
+    assert abs(cands[1]['height_m'] - 0.085) < 0.005     # the stack stands on the table
+
+
+def test_depth_mode_tools_are_unchanged_by_sam(tmp_path):
+    tb = _toolbox(_GridBackend(tmp_path, []), [])
+    tools = {t['function']['name']: t['function'] for t in tb.execution_tools()}
+    assert tools['detect_objects']['parameters']['properties'] == {}
+    assert tools['inspect_object']['parameters']['required'] == ['bbox']
+
+
+def test_sam_mode_gives_the_model_inspect_object_by_point(tmp_path):
+    from robo_reason_planner.agent import prompts
+    tb = _sam_toolbox(_SamBackend(tmp_path, [], []))
+    tool = next(t for t in tb.execution_tools() if t['function']['name'] == 'inspect_object')
+    assert tool['function']['parameters']['required'] == ['point']
+    session = AgentSession(ScriptedClient([]), tb, 'x')
+    assert prompts.INSPECT_POINT in session.messages[0]['content']
+    assert prompts.INSPECT_BBOX not in session.messages[0]['content']
 
 
 class LiveBackend(FakeBackend):
